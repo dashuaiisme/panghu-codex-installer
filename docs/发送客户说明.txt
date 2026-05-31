@@ -1,0 +1,19 @@
+胖虎AI Codex 一键安装工具 - Windows 客户版
+
+发送给客户：
+1. 直接把整个 PanghuAI-Codex-Installer 文件夹发给客户。
+2. 或者发送 PanghuAI-Codex-Installer.zip。
+
+客户使用：
+1. 解压 zip。
+2. 打开 PanghuAI-Codex-Installer 文件夹。
+3. 双击 PanghuAI-Codex-Installer.exe。
+4. 粘贴胖虎AI API Key。
+5. 点击“一键配置”。
+
+注意：
+- 不要只单独发送 exe，必须连同 _internal 文件夹一起发送。
+- 如果要单文件 exe，后续可以改 PyInstaller 参数为 --onefile。
+- 本工具负责配置胖虎AI中转和中文回答规则。
+- 工具默认使用公开客户域名 https://aitokenapi.cc。
+- 官方 Codex App 菜单是否中文，仍取决于 Codex App 官方自身。
