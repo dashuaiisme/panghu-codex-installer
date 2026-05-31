@@ -7,6 +7,7 @@
 - 规范源码目录：`C:\Users\Administrator\Documents\codex\panghu-codex-installer`
 - 原客户发布包位置：`J:\桌面收纳\工具\codex一键安装工具\release\PanghuAI-Codex-Installer-Windows.zip`
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
+- GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/tag/v0.1.0`
 - 仓库只保存源码、脚本和说明；`build/`、`release/`、缓存和 exe/zip 发布产物不提交。
 
 ## 目录说明
