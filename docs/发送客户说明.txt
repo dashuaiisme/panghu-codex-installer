@@ -8,12 +8,26 @@
 1. 解压 zip。
 2. 打开 PanghuAI-Codex-Installer 文件夹。
 3. 双击 PanghuAI-Codex-Installer.exe。
-4. 粘贴胖虎AI API Key。
-5. 点击“一键配置”。
+4. 如果电脑还没装 Codex，先点击“安装/修复 Codex 本体”。
+5. 粘贴胖虎AI API Key。
+6. 点击“一键配置”。
+
+Codex 本体安装：
+- 如果客户电脑能正常访问 Microsoft Store，工具会自动调用官方安装方式。
+- 如果客户电脑第二步下载失败，可以把官方签名的 Codex 离线安装包放到工具目录的 offline 文件夹里，再让客户点击“安装/修复 Codex 本体”。
+- 支持的旁挂文件类型：.msixbundle、.msix、.appx、.appxbundle、.appinstaller。
+- 工具会校验离线包的 Windows 签名；签名无效或来源不明的文件不会安装。
+- 只检测到 codex 命令不代表 Codex App 本体已经装好，工具会继续修复 Windows App 本体。
+- 不要把非官方、改过名但来源不明的 Codex 文件放进去。
 
 注意：
 - 不要只单独发送 exe，必须连同 _internal 文件夹一起发送。
+- 如果要附带官方 Codex 离线包，可以新建 offline 文件夹一起发送。
 - 如果要单文件 exe，后续可以改 PyInstaller 参数为 --onefile。
-- 本工具负责配置胖虎AI中转和中文回答规则。
+- 本工具负责配置胖虎AI中转和中文回答规则，会备份旧配置；接口测试失败时会恢复本次写入前的配置。
+- 中文回答规则会合并写入，不会直接清空客户原来的 AGENTS.md。
+- 如果客户配置后想退回旧状态，可以点击“恢复最近备份”。
+- 出问题时可以点击“复制日志”，把日志发回来排查。
+- 本工具只安装官方签名 Codex 包或打开官方入口，不内置、不修改、不伪装 Codex 本体文件。
 - 工具默认使用公开客户域名 https://aitokenapi.cc。
 - 官方 Codex App 菜单是否中文，仍取决于 Codex App 官方自身。
