@@ -55,11 +55,27 @@ Codex 配置写入当前用户目录：
 ~/Documents/胖虎AI-Agent工作区/AGENTS.md
 ```
 
-Codex 配置按 `panghuAI` provider 写入，接口固定为：
+Codex 配置会先备份旧文件，再用下面这段完整覆盖 `config.toml`：
 
-```text
-https://aitokenapi.cc/v1
+```toml
+model_provider = "panghuAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit =600000
+
+[model_providers.panghuAI]
+name = "panghuAI"
+base_url = "https://aitokenapi.cc/v1"
+wire_api = "responses"
+requires_openai_auth = true
 ```
+
+`auth.json` 会自动创建或更新 `auth_mode=chatgpt` 和客户填写的 `OPENAI_API_KEY`。
 
 通用说明文件写入：
 

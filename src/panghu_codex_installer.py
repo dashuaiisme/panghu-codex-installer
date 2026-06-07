@@ -21,7 +21,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, 
 
 
 APP_NAME = "胖虎AI多 Agent 一键部署工具"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
@@ -523,32 +523,21 @@ def restore_latest_backups(log) -> bool:
 
 
 def build_config(api_key: str, base_url: str, model: str) -> str:
-    safe_base_url = toml_escape(CODEX_BASE_URL)
-    safe_model = toml_escape(model or DEFAULT_MODEL)
-    safe_provider = toml_escape(CODEX_PROVIDER_NAME)
-    safe_workspace = str(workspace_root()).lower().replace("\\", "\\\\")
-    return f'''model_provider = "{safe_provider}"
-model = "{safe_model}"
-review_model = "{safe_model}"
+    return '''model_provider = "panghuAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
 windows_wsl_setup_acknowledged = true
 model_context_window = 1000000
-model_auto_compact_token_limit = 600000
+model_auto_compact_token_limit =600000
 
-[model_providers.{safe_provider}]
-name = "{safe_provider}"
-base_url = "{safe_base_url}"
+[model_providers.panghuAI]
+name = "panghuAI"
+base_url = "https://aitokenapi.cc/v1"
 wire_api = "responses"
 requires_openai_auth = true
-
-[projects.'{safe_workspace}']
-trust_level = "trusted"
-
-[desktop]
-appearanceTheme = "dark"
-conversationDetailMode = "STEPS_PROSE"
 '''
 
 
@@ -641,62 +630,7 @@ def update_or_append_section(lines: list[str], name: str, values: list[str], key
 
 
 def merge_config(existing: str, api_key: str, base_url: str, model: str) -> str:
-    if not existing.strip():
-        return build_config(api_key, base_url, model)
-
-    safe_base_url = toml_escape(CODEX_BASE_URL)
-    safe_model = toml_escape(model or DEFAULT_MODEL)
-    safe_provider = toml_escape(CODEX_PROVIDER_NAME)
-    safe_workspace = str(workspace_root()).lower().replace("\\", "\\\\")
-    lines = existing.splitlines()
-    lines = remove_sections(lines, {"model_providers.panghuai", "model_providers.panghuAI", f"projects.'{safe_workspace}'"})
-    lines = update_top_level_keys(
-        lines,
-        [
-            f'model_provider = "{safe_provider}"',
-            f'model = "{safe_model}"',
-            f'review_model = "{safe_model}"',
-            'model_reasoning_effort = "xhigh"',
-            "disable_response_storage = true",
-            'network_access = "enabled"',
-            "windows_wsl_setup_acknowledged = true",
-            "model_context_window = 1000000",
-            "model_auto_compact_token_limit = 600000",
-        ],
-        {
-            "model_provider",
-            "model",
-            "review_model",
-            "model_reasoning_effort",
-            "disable_response_storage",
-            "network_access",
-            "windows_wsl_setup_acknowledged",
-            "model_context_window",
-            "model_auto_compact_token_limit",
-        },
-    )
-    lines = update_or_append_section(
-        lines,
-        "desktop",
-        ['appearanceTheme = "dark"', 'conversationDetailMode = "STEPS_PROSE"'],
-        {"appearanceTheme", "conversationDetailMode"},
-    )
-    while lines and not lines[-1].strip():
-        lines.pop()
-    lines.extend(
-        [
-            "",
-            f"[model_providers.{safe_provider}]",
-            f'name = "{safe_provider}"',
-            f'base_url = "{safe_base_url}"',
-            'wire_api = "responses"',
-            "requires_openai_auth = true",
-            "",
-            f"[projects.'{safe_workspace}']",
-            'trust_level = "trusted"',
-        ]
-    )
-    return "\n".join(lines) + "\n"
+    return build_config(api_key, base_url, model)
 
 
 def build_auth_json(existing: str, api_key: str) -> str:
@@ -2320,10 +2254,24 @@ def self_test() -> None:
     assert "刚才在本工具里填写的 API Key" in build_agent_setup_guide_content([], "sk-test-secret-123456")
     assert "已禁止继续安装" in "\n".join(risk_plugin_report_lines([RiskPluginFinding("CCSwitch", "命令", "ccswitch", "")]))
     config = build_config("sk-test", DEFAULT_BASE_URL, DEFAULT_MODEL)
-    assert 'model_provider = "panghuAI"' in config
-    assert 'model = "gpt-5.4"' in config
-    assert 'review_model = "gpt-5.4"' in config
-    assert 'base_url = "https://aitokenapi.cc/v1"' in config
+    expected_config = '''model_provider = "panghuAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit =600000
+
+[model_providers.panghuAI]
+name = "panghuAI"
+base_url = "https://aitokenapi.cc/v1"
+wire_api = "responses"
+requires_openai_auth = true
+'''
+    assert config == expected_config
+    assert merge_config("old = true\n[desktop]\nappearanceTheme = \"light\"\n", "sk-test", "bad", "bad") == expected_config
     assert "experimental_bearer_token" not in config
     auth = json.loads(build_auth_json("", "sk-test"))
     assert auth["auth_mode"] == "chatgpt"
