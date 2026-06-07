@@ -21,7 +21,8 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, 
 
 
 APP_NAME = "胖虎AI多 Agent 一键部署工具"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
+HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
@@ -690,7 +691,7 @@ def open_json_with_cookies(
     data = json.dumps(body or {}).encode("utf-8") if body is not None else None
     request_headers = {
         "Accept": "application/json",
-        "User-Agent": "PanghuAI-Agent-Deployer/1.0",
+        "User-Agent": HTTP_USER_AGENT,
         **(headers or {}),
     }
     if data is not None:
@@ -708,7 +709,7 @@ def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.Cook
     req = Request(
         LOGIN_URL,
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "PanghuAI-Agent-Deployer/1.0"},
+        headers={"Content-Type": "application/json", "User-Agent": HTTP_USER_AGENT},
         method="POST",
     )
     try:
@@ -828,7 +829,7 @@ def downloads_dir() -> Path:
 
 def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
     try:
-        req = Request(PUBLIC_UPDATE_MANIFEST_URL, headers={"Accept": "application/json", "User-Agent": APP_NAME})
+        req = Request(PUBLIC_UPDATE_MANIFEST_URL, headers={"Accept": "application/json", "User-Agent": HTTP_USER_AGENT})
         with urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception:
@@ -854,7 +855,7 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
             return False, f"下载更新失败：{exc}", None, release_url
         return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
 
-    req = Request(GITHUB_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": APP_NAME})
+    req = Request(GITHUB_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": HTTP_USER_AGENT})
     try:
         with urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
