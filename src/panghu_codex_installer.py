@@ -1,3 +1,5 @@
+import http.cookiejar
+import hashlib
 import json
 import os
 import platform
@@ -8,22 +10,161 @@ import sys
 import threading
 import time
 import tkinter as tk
+import uuid
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import messagebox, ttk
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, urlretrieve
 
 
-APP_NAME = "胖虎AI Codex 一键安装工具"
+APP_NAME = "胖虎AI多 Agent 一键部署工具"
+APP_VERSION = "1.0.0"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.4"
+CODEX_PROVIDER_NAME = "panghuAI"
+CODEX_BASE_URL = "https://aitokenapi.cc/v1"
+GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
+WINDOWS_RELEASE_ASSET_NAME = "PanghuAI-Agent-Deployer-Windows.zip"
+LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
+DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
+DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
+REGISTER_URL = f"{DEFAULT_BASE_URL}/register"
+KEY_CREATE_URL = f"{DEFAULT_BASE_URL}/login?next=/console/token"
 CODEX_WINDOWS_STORE_URL = "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
 CODEX_DOWNLOAD_URL = "https://developers.openai.com/codex/"
+CLAUDE_CODE_DOCS_URL = "https://docs.anthropic.com/en/docs/claude-code/setup"
+OPENCLAW_DOCS_URL = "https://docs.openclaw.ai/start/getting-started"
+HERMES_DOCS_URL = "https://hermes-agent.nousresearch.com/docs/zh-Hans/getting-started/installation"
 OFFICIAL_PACKAGE_SUFFIXES = (".msixbundle", ".msix", ".appx", ".appxbundle", ".appinstaller")
 PANGHU_AGENTS_START = "<!-- PANGHUAI_CODEX_RULES_START -->"
 PANGHU_AGENTS_END = "<!-- PANGHUAI_CODEX_RULES_END -->"
+APP_BG = "#edf3f8"
+CARD_BG = "#ffffff"
+PANEL_BG = "#f8fbfd"
+INK = "#102033"
+MUTED = "#607086"
+PRIMARY = "#155e75"
+PRIMARY_DARK = "#0f3f50"
+ACCENT = "#0f9f7a"
+BORDER = "#d7e2ea"
+WARNING_BG = "#fff7ed"
+GOLD = "#d6a648"
+GOLD_SOFT = "#fff8e5"
+
+
+@dataclass(frozen=True)
+class AgentMode:
+    id: str
+    label: str
+    note: str
+    supports_auto_install: bool = True
+    supports_config: bool = False
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    id: str
+    name: str
+    description: str
+    verify_command: tuple[str, ...]
+    modes: tuple[AgentMode, ...]
+    config_note: str
+
+
+@dataclass(frozen=True)
+class RiskPluginSpec:
+    id: str
+    name: str
+    aliases: tuple[str, ...]
+    npm_packages: tuple[str, ...]
+    marker_paths: tuple[Path, ...]
+    uninstall_hint: str
+
+
+@dataclass(frozen=True)
+class RiskPluginFinding:
+    name: str
+    source: str
+    detail: str
+    uninstall_hint: str
+
+
+AGENTS = (
+    AgentSpec(
+        id="codex",
+        name="Codex",
+        description="OpenAI 官方 Codex Agent，支持 CLI 与 Windows 客户端安装/修复。",
+        verify_command=("codex", "--version"),
+        modes=(
+            AgentMode("cli", "CLI", "安装官方 Codex CLI。", supports_config=True),
+            AgentMode("client", "客户端", "Windows 走官方 Store/App 包；其他系统打开官方入口。", supports_config=True),
+        ),
+        config_note="可自动写入胖虎AI API Key、接口、模型、中文规则和默认工作区。",
+    ),
+    AgentSpec(
+        id="claude_code",
+        name="ClaudeCode",
+        description="Anthropic 官方 Claude Code Agent。本工具只安装，不写配置。",
+        verify_command=("claude", "--version"),
+        modes=(
+            AgentMode("cli", "CLI", "使用官方 npm 包安装 Claude Code。"),
+            AgentMode("client", "客户端", "打开 Claude Code 官方安装入口；不伪造第三方客户端。", supports_auto_install=False),
+        ),
+        config_note="只安装 Agent，不写 Key，不改 ClaudeCode 账号或配置。",
+    ),
+    AgentSpec(
+        id="openclaw",
+        name="OpenClaw",
+        description="OpenClaw Agent，优先走官方在线安装与官方客户端入口。",
+        verify_command=("openclaw", "--version"),
+        modes=(
+            AgentMode("cli", "CLI", "使用 OpenClaw 官方在线脚本安装。"),
+            AgentMode("client", "客户端", "打开 OpenClaw 官方客户端/Hub 入口。", supports_auto_install=False),
+        ),
+        config_note="当前只在官方安全路径明确时配置；本版先安装并给出中文配置指引。",
+    ),
+    AgentSpec(
+        id="hermes",
+        name="Hermes",
+        description="Nous Research Hermes Agent，优先走官方在线安装。",
+        verify_command=("hermes", "--version"),
+        modes=(
+            AgentMode("cli", "CLI", "使用 Hermes 官方在线安装入口。"),
+            AgentMode("client", "客户端", "打开 Hermes 官方文档；不伪造桌面客户端。", supports_auto_install=False),
+        ),
+        config_note="当前只在官方安全路径明确时配置；本版先安装并给出中文配置指引。",
+    ),
+)
+
+RISK_PLUGIN_SPECS = (
+    RiskPluginSpec(
+        id="ccswitch",
+        name="CCSwitch",
+        aliases=("ccswitch", "cc-switch", "claude-code-switch"),
+        npm_packages=("ccswitch", "cc-switch", "claude-code-switch"),
+        marker_paths=(Path.home() / ".ccswitch", Path.home() / ".claude-code-switch"),
+        uninstall_hint="如果是 npm 安装，请执行 npm uninstall -g ccswitch cc-switch claude-code-switch；如果是单独客户端，请在系统应用列表里卸载。",
+    ),
+    RiskPluginSpec(
+        id="codex_plus_plus",
+        name="Codex++",
+        aliases=("codex++", "codexpp", "codex-plus-plus", "codex-plusplus"),
+        npm_packages=("codex++", "codexpp", "codex-plus-plus", "codex-plusplus"),
+        marker_paths=(Path.home() / ".codex++", Path.home() / ".codexpp", Path.home() / ".codex-plus-plus"),
+        uninstall_hint="如果是 npm 安装，请执行 npm uninstall -g codex++ codexpp codex-plus-plus codex-plusplus；如果是压缩包或客户端安装，请删除对应程序并移除 PATH。",
+    ),
+    RiskPluginSpec(
+        id="claude_code_router",
+        name="Claude Code Router / CCR",
+        aliases=("ccr", "claude-code-router"),
+        npm_packages=("ccr", "claude-code-router", "@musistudio/claude-code-router"),
+        marker_paths=(Path.home() / ".claude-code-router", Path.home() / ".config" / "claude-code-router"),
+        uninstall_hint="如果是 npm 安装，请执行 npm uninstall -g ccr claude-code-router @musistudio/claude-code-router；如果仍在运行，请先退出该工具。",
+    ),
+)
 
 
 def toml_escape(value: str) -> str:
@@ -38,12 +179,25 @@ def mask_key(value: str) -> str:
     return f"{value[:6]}...{value[-4:]}"
 
 
+def sanitize_log_text(message: str, *known_secrets: str) -> str:
+    text = str(message)
+    for secret in known_secrets:
+        secret = str(secret or "").strip()
+        if secret:
+            text = text.replace(secret, mask_key(secret))
+    return re.sub(r"\bsk[-_][A-Za-z0-9][A-Za-z0-9._-]{8,}\b", lambda match: mask_key(match.group(0)), text)
+
+
 def codex_home() -> Path:
     return Path.home() / ".codex"
 
 
+def codex_auth_path() -> Path:
+    return codex_home() / "auth.json"
+
+
 def workspace_root() -> Path:
-    return Path.home() / "Documents" / "胖虎AI-Codex工作区"
+    return Path.home() / "Documents" / "胖虎AI-Agent工作区"
 
 
 def app_root() -> Path:
@@ -52,44 +206,163 @@ def app_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def codex_command_exists() -> tuple[bool, str]:
-    exe = shutil.which("codex")
-    if not exe:
+def current_system_id() -> str:
+    name = platform.system()
+    if name == "Windows":
+        return "windows"
+    if name == "Darwin":
+        return "mac"
+    return "other"
+
+
+def run_command(command: list[str], timeout: int = 900) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+    except FileNotFoundError:
+        return False, f"未找到命令：{command[0]}"
+    except subprocess.TimeoutExpired:
+        return False, "命令执行超时。"
+    except Exception as exc:
+        return False, f"命令执行失败：{exc}"
+    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+    if result.returncode == 0:
+        return True, output or "命令执行完成。"
+    return False, output or f"命令退出码：{result.returncode}"
+
+
+def command_exists(command: str) -> tuple[bool, str]:
+    exe = shutil.which(command)
+    return bool(exe), exe or ""
+
+
+def version_for(command: tuple[str, ...]) -> tuple[bool, str]:
+    if not shutil.which(command[0]):
         return False, ""
+    ok, output = run_command(list(command), timeout=12)
+    return ok, output.splitlines()[0] if output else ""
+
+
+def npm_global_packages() -> set[str]:
+    if not shutil.which("npm"):
+        return set()
     try:
         result = subprocess.run(
-            ["codex", "--version"],
+            ["npm", "list", "-g", "--depth=0", "--json"],
             text=True,
             capture_output=True,
             timeout=8,
         )
-        version = (result.stdout or result.stderr).strip()
-        return True, version
     except Exception:
-        return True, ""
+        return set()
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return set()
+    dependencies = payload.get("dependencies") or {}
+    if not isinstance(dependencies, dict):
+        return set()
+    return {str(name).lower() for name in dependencies}
+
+
+def running_process_text() -> str:
+    if platform.system() == "Windows":
+        ok, output = run_command(["tasklist", "/FO", "CSV", "/NH"], timeout=5)
+    else:
+        ok, output = run_command(["ps", "-ax", "-o", "command="], timeout=5)
+    return output.lower() if ok else ""
+
+
+def process_text_contains_alias(process_text: str, alias: str) -> bool:
+    alias = alias.strip().lower()
+    if not process_text or not alias:
+        return False
+    pattern = rf"(?<![a-z0-9_.+\-]){re.escape(alias)}(?![a-z0-9_.+\-])"
+    return re.search(pattern, process_text.lower()) is not None
+
+
+def detect_risk_plugins() -> list[RiskPluginFinding]:
+    findings: list[RiskPluginFinding] = []
+    npm_packages = npm_global_packages()
+    process_text = running_process_text()
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(spec: RiskPluginSpec, source: str, detail: str) -> None:
+        key = (spec.id, source, detail)
+        if key in seen:
+            return
+        seen.add(key)
+        findings.append(RiskPluginFinding(spec.name, source, detail, spec.uninstall_hint))
+
+    for spec in RISK_PLUGIN_SPECS:
+        for alias in spec.aliases:
+            exists, path = command_exists(alias)
+            if exists:
+                add(spec, "命令", f"{alias} -> {path}")
+            if process_text_contains_alias(process_text, alias):
+                add(spec, "运行中", f"检测到进程关键字：{alias}")
+        for package_name in spec.npm_packages:
+            if package_name.lower() in npm_packages:
+                add(spec, "npm 全局包", package_name)
+        for marker_path in spec.marker_paths:
+            if marker_path.exists():
+                add(spec, "配置目录", str(marker_path))
+    return findings
+
+
+def risk_plugin_report_lines(findings: list[RiskPluginFinding]) -> list[str]:
+    if not findings:
+        return ["风险插件：未发现 ccswitch、codex++、CCR 等第三方配置切换工具。"]
+    lines = [
+        "风险插件：发现第三方配置切换工具，已禁止继续安装。",
+        "原因：这类工具可能接管或改写 Codex / ClaudeCode 配置，导致胖虎AI写入的配置被改坏。",
+    ]
+    for finding in findings:
+        lines.append(f"- {finding.name}：{finding.source}，{finding.detail}")
+    lines.append("请先卸载或禁用这些工具，重新打开本工具后再部署。")
+    return lines
+
+
+def format_risk_plugin_block_message(findings: list[RiskPluginFinding]) -> str:
+    lines = [
+        "检测到会改写 Agent 配置的第三方插件，已停止安装。",
+        "",
+        "为了防止这些软件把 Codex / ClaudeCode 配置改坏，请先卸载或禁用后再继续。",
+        "",
+        "发现项目：",
+    ]
+    for finding in findings:
+        lines.append(f"- {finding.name}（{finding.source}）：{finding.detail}")
+    hints = []
+    for finding in findings:
+        if finding.uninstall_hint not in hints:
+            hints.append(finding.uninstall_hint)
+    if hints:
+        lines.extend(["", "处理建议："])
+        lines.extend(f"- {hint}" for hint in hints)
+    lines.extend(["", "处理完成后，请重新打开本工具并重新检测环境。"])
+    return "\n".join(lines)
+
+
+def codex_command_exists() -> tuple[bool, str]:
+    return version_for(("codex", "--version"))
 
 
 def codex_app_package_exists() -> tuple[bool, str]:
     if platform.system() != "Windows":
         return False, ""
-    try:
-        result = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1 -ExpandProperty PackageFullName",
-            ],
-            text=True,
-            capture_output=True,
-            timeout=12,
-        )
-        package = (result.stdout or "").strip()
-        return bool(package), package
-    except Exception:
-        return False, ""
+    ok, output = run_command(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1 -ExpandProperty PackageFullName",
+        ],
+        timeout=12,
+    )
+    package = output.strip() if ok else ""
+    return bool(package), package
 
 
 def write_text(path: Path, text: str) -> None:
@@ -127,6 +400,7 @@ def latest_backup_for(path: Path) -> Path | None:
 def restore_latest_backups(log) -> bool:
     targets = [
         codex_home() / "config.toml",
+        codex_auth_path(),
         codex_home() / "AGENTS.md",
         workspace_root() / "AGENTS.md",
     ]
@@ -143,21 +417,24 @@ def restore_latest_backups(log) -> bool:
 
 
 def build_config(api_key: str, base_url: str, model: str) -> str:
-    safe_base_url = toml_escape(base_url.rstrip("/"))
-    safe_model = toml_escape(model)
-    safe_api_key = toml_escape(api_key)
+    safe_base_url = toml_escape(CODEX_BASE_URL)
+    safe_model = toml_escape(model or DEFAULT_MODEL)
+    safe_provider = toml_escape(CODEX_PROVIDER_NAME)
     safe_workspace = str(workspace_root()).lower().replace("\\", "\\\\")
-    return f'''model_provider = "panghuai"
+    return f'''model_provider = "{safe_provider}"
 model = "{safe_model}"
-model_reasoning_effort = "medium"
-approval_policy = "never"
-sandbox_mode = "workspace-write"
+review_model = "{safe_model}"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 600000
 
-[model_providers.panghuai]
-name = "胖虎AI中转"
+[model_providers.{safe_provider}]
+name = "{safe_provider}"
 base_url = "{safe_base_url}"
 wire_api = "responses"
-experimental_bearer_token = "{safe_api_key}"
 requires_openai_auth = true
 
 [projects.'{safe_workspace}']
@@ -170,7 +447,7 @@ conversationDetailMode = "STEPS_PROSE"
 
 
 def chinese_rules() -> str:
-    return """# 胖虎AI Codex 客户默认规则
+    return """# 胖虎AI Agent 客户默认规则
 
 - 默认使用简体中文回答。
 - 用户没有明确要求英文时，不要切换到英文。
@@ -261,22 +538,36 @@ def merge_config(existing: str, api_key: str, base_url: str, model: str) -> str:
     if not existing.strip():
         return build_config(api_key, base_url, model)
 
-    safe_base_url = toml_escape(base_url.rstrip("/"))
-    safe_model = toml_escape(model)
-    safe_api_key = toml_escape(api_key)
+    safe_base_url = toml_escape(CODEX_BASE_URL)
+    safe_model = toml_escape(model or DEFAULT_MODEL)
+    safe_provider = toml_escape(CODEX_PROVIDER_NAME)
     safe_workspace = str(workspace_root()).lower().replace("\\", "\\\\")
     lines = existing.splitlines()
-    lines = remove_sections(lines, {"model_providers.panghuai", f"projects.'{safe_workspace}'"})
+    lines = remove_sections(lines, {"model_providers.panghuai", "model_providers.panghuAI", f"projects.'{safe_workspace}'"})
     lines = update_top_level_keys(
         lines,
         [
-            'model_provider = "panghuai"',
+            f'model_provider = "{safe_provider}"',
             f'model = "{safe_model}"',
-            'model_reasoning_effort = "medium"',
-            'approval_policy = "never"',
-            'sandbox_mode = "workspace-write"',
+            f'review_model = "{safe_model}"',
+            'model_reasoning_effort = "xhigh"',
+            "disable_response_storage = true",
+            'network_access = "enabled"',
+            "windows_wsl_setup_acknowledged = true",
+            "model_context_window = 1000000",
+            "model_auto_compact_token_limit = 600000",
         ],
-        {"model_provider", "model", "model_reasoning_effort", "approval_policy", "sandbox_mode"},
+        {
+            "model_provider",
+            "model",
+            "review_model",
+            "model_reasoning_effort",
+            "disable_response_storage",
+            "network_access",
+            "windows_wsl_setup_acknowledged",
+            "model_context_window",
+            "model_auto_compact_token_limit",
+        },
     )
     lines = update_or_append_section(
         lines,
@@ -289,11 +580,10 @@ def merge_config(existing: str, api_key: str, base_url: str, model: str) -> str:
     lines.extend(
         [
             "",
-            "[model_providers.panghuai]",
-            'name = "胖虎AI中转"',
+            f"[model_providers.{safe_provider}]",
+            f'name = "{safe_provider}"',
             f'base_url = "{safe_base_url}"',
             'wire_api = "responses"',
-            f'experimental_bearer_token = "{safe_api_key}"',
             "requires_openai_auth = true",
             "",
             f"[projects.'{safe_workspace}']",
@@ -301,6 +591,20 @@ def merge_config(existing: str, api_key: str, base_url: str, model: str) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def build_auth_json(existing: str, api_key: str) -> str:
+    payload: dict = {}
+    if existing.strip():
+        try:
+            parsed = json.loads(existing)
+            if isinstance(parsed, dict):
+                payload = parsed
+        except json.JSONDecodeError:
+            payload = {}
+    payload["auth_mode"] = "chatgpt"
+    payload["OPENAI_API_KEY"] = api_key.strip()
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
 def test_api(base_url: str, api_key: str) -> tuple[bool, str]:
@@ -317,6 +621,142 @@ def test_api(base_url: str, api_key: str) -> tuple[bool, str]:
         return False, f"接口测试失败：{exc}"
 
 
+def current_platform_for_license() -> str:
+    system = current_system_id()
+    return system if system in {"windows", "mac"} else "unknown"
+
+
+def device_fingerprint() -> str:
+    raw = "|".join(
+        [
+            platform.node(),
+            platform.system(),
+            platform.release(),
+            platform.machine(),
+            str(uuid.getnode()),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def open_json_with_cookies(
+    cookie_jar: http.cookiejar.CookieJar,
+    url: str,
+    method: str,
+    body: dict | None = None,
+    headers: dict | None = None,
+) -> dict:
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    data = json.dumps(body or {}).encode("utf-8") if body is not None else None
+    request_headers = {
+        "Accept": "application/json",
+        "User-Agent": "PanghuAI-Agent-Deployer/1.0",
+        **(headers or {}),
+    }
+    if data is not None:
+        request_headers["Content-Type"] = "application/json"
+    req = Request(url, data=data, headers=request_headers, method=method)
+    with opener.open(req, timeout=20) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.CookieJar) -> tuple[bool, str, dict]:
+    if not username.strip() or not password:
+        return False, "请输入胖虎AI账号和密码。", {}
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    body = json.dumps({"username": username.strip(), "password": password}).encode("utf-8")
+    req = Request(
+        LOGIN_URL,
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": "PanghuAI-Agent-Deployer/1.0"},
+        method="POST",
+    )
+    try:
+        with opener.open(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        return False, f"登录接口返回错误：HTTP {exc.code}", {}
+    except URLError as exc:
+        return False, f"登录接口连接失败：{exc.reason}", {}
+    except json.JSONDecodeError:
+        return False, "登录接口返回内容无法解析。", {}
+    except Exception as exc:
+        return False, f"登录失败：{exc}", {}
+
+    if not payload.get("success"):
+        return False, str(payload.get("message") or "账号或密码错误。"), {}
+    data = payload.get("data") or {}
+    return True, "登录成功。", data
+
+
+def activate_deployer(user: dict, cookie_jar: http.cookiejar.CookieJar) -> tuple[bool, str, dict]:
+    user_id = str(user.get("id") or "").strip()
+    if not user_id:
+        return False, "登录返回缺少用户 ID，无法申请部署授权。", {}
+    try:
+        payload = open_json_with_cookies(
+            cookie_jar,
+            DEPLOYER_ACTIVATE_URL,
+            "POST",
+            {
+                "device_id": device_fingerprint(),
+                "platform": current_platform_for_license(),
+                "app_version": APP_VERSION,
+            },
+            {"New-Api-User": user_id},
+        )
+    except HTTPError as exc:
+        return False, f"部署授权接口返回错误：HTTP {exc.code}", {}
+    except URLError as exc:
+        return False, f"部署授权接口连接失败：{exc.reason}", {}
+    except json.JSONDecodeError:
+        return False, "部署授权接口返回内容无法解析。", {}
+    except Exception as exc:
+        return False, f"部署授权失败：{exc}", {}
+    if not payload.get("success"):
+        return False, str(payload.get("message") or "部署授权被拒绝。"), {}
+    data = payload.get("data") or {}
+    token = str(data.get("token") or "")
+    if not token:
+        return False, "部署授权返回缺少 token。", {}
+    return True, "部署授权已通过。", data
+
+
+def fetch_deployer_manifest(user: dict, cookie_jar: http.cookiejar.CookieJar, deployer_token: str) -> tuple[bool, str, dict]:
+    user_id = str(user.get("id") or "").strip()
+    if not user_id or not deployer_token:
+        return False, "缺少部署授权，请重新登录。", {}
+    try:
+        payload = open_json_with_cookies(
+            cookie_jar,
+            DEPLOYER_MANIFEST_URL,
+            "GET",
+            None,
+            {"New-Api-User": user_id, "X-Panghu-Deployer-Token": deployer_token},
+        )
+    except HTTPError as exc:
+        return False, f"部署清单接口返回错误：HTTP {exc.code}", {}
+    except URLError as exc:
+        return False, f"部署清单接口连接失败：{exc.reason}", {}
+    except json.JSONDecodeError:
+        return False, "部署清单接口返回内容无法解析。", {}
+    except Exception as exc:
+        return False, f"部署清单获取失败：{exc}", {}
+    if not payload.get("success"):
+        return False, str(payload.get("message") or "部署清单被拒绝。"), {}
+    return True, "部署清单校验通过。", payload.get("data") or {}
+
+
+def manifest_allowed_agents(manifest: dict) -> list[str]:
+    agents = manifest.get("agents") or []
+    allowed: list[str] = []
+    if isinstance(agents, list):
+        for item in agents:
+            if isinstance(item, dict) and item.get("id"):
+                allowed.append(str(item["id"]))
+    return allowed
+
+
 def open_path(path: Path) -> None:
     if platform.system() == "Windows":
         os.startfile(str(path))
@@ -326,11 +766,68 @@ def open_path(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
+def open_url(url: str) -> None:
+    webbrowser.open(url)
+
+
+def normalize_version(value: str) -> tuple[int, ...]:
+    cleaned = value.strip().lower().lstrip("v")
+    parts: list[int] = []
+    for item in re.split(r"[^0-9]+", cleaned):
+        if item:
+            parts.append(int(item))
+    return tuple(parts or [0])
+
+
+def downloads_dir() -> Path:
+    path = Path.home() / "Downloads"
+    if path.exists():
+        return path
+    return Path.home() / "下载"
+
+
+def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
+    req = Request(GITHUB_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": APP_NAME})
+    try:
+        with urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return False, f"检查更新失败：{exc}", None, None
+
+    latest_tag = str(payload.get("tag_name") or "").strip()
+    release_url = str(payload.get("html_url") or "https://github.com/dashuaiisme/panghu-codex-installer/releases")
+    if not latest_tag:
+        return False, "检查更新失败：GitHub Release 没有版本号。", None, release_url
+    if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
+        return False, f"当前已是最新版本：{APP_VERSION}", None, release_url
+
+    asset_url = ""
+    for asset in payload.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "")
+        if name == WINDOWS_RELEASE_ASSET_NAME:
+            asset_url = str(asset.get("browser_download_url") or "")
+            break
+    if not asset_url:
+        return False, f"发现新版本 {latest_tag}，但未找到 Windows 更新包，已打开发布页。", None, release_url
+
+    target_dir = downloads_dir() / "胖虎AI工具更新"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{latest_tag}-{WINDOWS_RELEASE_ASSET_NAME}"
+    log(f"发现新版本 {latest_tag}，开始下载更新包。")
+    try:
+        urlretrieve(asset_url, target)
+    except Exception as exc:
+        return False, f"下载更新失败：{exc}", None, release_url
+    return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
+
+
 def open_codex_download_page() -> None:
     if platform.system() == "Windows":
-        webbrowser.open(CODEX_WINDOWS_STORE_URL)
+        open_url(CODEX_WINDOWS_STORE_URL)
     else:
-        webbrowser.open(CODEX_DOWNLOAD_URL)
+        open_url(CODEX_DOWNLOAD_URL)
 
 
 def find_official_codex_package() -> Path | None:
@@ -367,17 +864,14 @@ def validate_official_package_signature(package_path: Path) -> tuple[bool, str]:
         "Issuer=if($sig.SignerCertificate){$sig.SignerCertificate.Issuer}else{''}"
         "} | ConvertTo-Json -Compress"
     )
-    result = subprocess.run(
+    ok, output = run_command(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-        text=True,
-        capture_output=True,
         timeout=30,
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        return False, f"签名校验失败：{detail or f'退出码 {result.returncode}'}"
+    if not ok:
+        return False, f"签名校验失败：{output}"
     try:
-        data = json.loads((result.stdout or "").strip())
+        data = json.loads(output.strip())
     except json.JSONDecodeError:
         return False, "签名校验失败：无法解析 Windows 签名信息。"
     status = str(data.get("Status", ""))
@@ -404,22 +898,16 @@ def install_official_package(package_path: Path) -> tuple[bool, str]:
         install_command = f"Add-AppxPackage -AppInstallerFile '{safe_path}'"
     else:
         install_command = f"Add-AppxPackage -Path '{safe_path}'"
-    result = subprocess.run(
+    return run_command(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_command],
-        text=True,
-        capture_output=True,
         timeout=600,
     )
-    if result.returncode == 0:
-        return True, "官方离线包安装命令已完成。"
-    detail = (result.stderr or result.stdout or "").strip()
-    return False, f"官方离线包安装失败：{detail or f'退出码 {result.returncode}'}"
 
 
 def install_with_winget() -> tuple[bool, str]:
     if not shutil.which("winget"):
         return False, "未检测到 winget，无法自动调用 Microsoft Store 命令行安装。"
-    result = subprocess.run(
+    return run_command(
         [
             "winget",
             "install",
@@ -429,14 +917,8 @@ def install_with_winget() -> tuple[bool, str]:
             "--accept-source-agreements",
             "--accept-package-agreements",
         ],
-        text=True,
-        capture_output=True,
         timeout=900,
     )
-    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-    if result.returncode == 0:
-        return True, "Microsoft Store 命令行安装已完成。"
-    return False, f"winget 安装失败：{output or f'退出码 {result.returncode}'}"
 
 
 def wait_for_codex_ready(timeout_seconds: int = 90, require_windows_app: bool = False) -> tuple[bool, str]:
@@ -450,26 +932,16 @@ def wait_for_codex_ready(timeout_seconds: int = 90, require_windows_app: bool = 
         last_package = package or last_package
         if require_windows_app and platform.system() == "Windows":
             if package_ok:
-                details = []
-                if version:
-                    details.append(version)
-                if package:
-                    details.append(package)
-                return True, "已检测到 Codex Windows App 本体：" + ("；".join(details) if details else "已安装")
+                return True, "已检测到 Codex Windows App 本体：" + (package or "已安装")
         elif cli_ok or package_ok:
-            details = []
-            if version:
-                details.append(version)
-            if package:
-                details.append(package)
+            details = [item for item in (version, package) if item]
             return True, "已检测到 Codex：" + ("；".join(details) if details else "已安装")
         time.sleep(3)
-    detail = last_version or last_package
-    return False, f"等待 Codex 安装完成超时。{detail}".strip()
+    return False, f"等待 Codex 安装完成超时。{last_version or last_package}".strip()
 
 
 def install_codex_app(log) -> bool:
-    log("开始检测 Codex 本体。")
+    log("开始检测 Codex 客户端。")
     cli_ok, version = codex_command_exists()
     package_ok, package = codex_app_package_exists()
     if package_ok:
@@ -479,13 +951,12 @@ def install_codex_app(log) -> bool:
         return True
     if cli_ok:
         log(f"已检测到 Codex CLI：{version or '已安装'}")
-        if platform.system() == "Windows":
-            log("未检测到 Codex Windows App 本体，将继续安装/修复 App。")
-        else:
+        if platform.system() != "Windows":
             return True
+        log("未检测到 Codex Windows App 本体，将继续安装/修复 App。")
 
     if platform.system() != "Windows":
-        log("当前系统暂不支持自动安装 Codex 本体，请从官方入口手动安装。")
+        log("当前系统没有可确认的自动客户端安装路径，已打开 Codex 官方入口。")
         open_codex_download_page()
         return False
 
@@ -494,20 +965,17 @@ def install_codex_app(log) -> bool:
         log(f"发现官方离线包：{package_path}")
         signature_ok, signature_msg = validate_official_package_signature(package_path)
         log(signature_msg)
-        if not signature_ok:
+        if signature_ok:
+            ok, msg = install_official_package(package_path)
+            log(msg)
+            if ok:
+                ready, ready_msg = wait_for_codex_ready(require_windows_app=True)
+                log(ready_msg)
+                return ready
+        else:
             log("离线包未通过签名校验，将尝试 Microsoft Store 命令行安装。")
-            package_path = None
-    if package_path:
-        ok, msg = install_official_package(package_path)
-        log(msg)
-        if ok:
-            ready, ready_msg = wait_for_codex_ready(require_windows_app=True)
-            log(ready_msg)
-            return ready
-        log("离线包安装失败，将尝试 Microsoft Store 命令行安装。")
     else:
         log("未发现官方离线包，将尝试 Microsoft Store 命令行安装。")
-        log("可把官方签名的 Codex 安装包放在本工具同目录、offline 或 codex-official 文件夹。")
 
     ok, msg = install_with_winget()
     log(msg)
@@ -519,6 +987,75 @@ def install_codex_app(log) -> bool:
     log("自动安装失败，已打开官方 Codex 下载页，请按页面提示安装。")
     open_codex_download_page()
     return False
+
+
+def install_codex_cli(log) -> bool:
+    exists, version = codex_command_exists()
+    if exists:
+        log(f"Codex CLI 已安装：{version or '已安装'}")
+        return True
+    if platform.system() == "Windows":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "irm https://chatgpt.com/codex/install.ps1 | iex",
+        ]
+    else:
+        command = ["/bin/bash", "-lc", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"]
+    ok, output = run_command(command, timeout=900)
+    log(output)
+    return ok
+
+
+def install_claude_code_cli(log) -> bool:
+    if not shutil.which("npm"):
+        log("未检测到 npm，已打开 ClaudeCode 官方安装文档。")
+        open_url(CLAUDE_CODE_DOCS_URL)
+        return False
+    ok, output = run_command(["npm", "install", "-g", "@anthropic-ai/claude-code"], timeout=900)
+    log(output)
+    return ok
+
+
+def install_openclaw_cli(log) -> bool:
+    if platform.system() == "Windows":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "iwr -useb https://openclaw.ai/install.ps1 | iex",
+        ]
+    else:
+        command = ["/bin/bash", "-lc", "curl -fsSL https://openclaw.ai/install.sh | sh"]
+    ok, output = run_command(command, timeout=900)
+    log(output)
+    return ok
+
+
+def install_hermes_cli(log) -> bool:
+    if platform.system() == "Windows":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "iwr -useb https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex",
+        ]
+    else:
+        command = [
+            "/bin/bash",
+            "-lc",
+            "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | sh",
+        ]
+    ok, output = run_command(command, timeout=900)
+    log(output)
+    return ok
 
 
 def codex_thread_url(workdir: Path) -> str:
@@ -540,14 +1077,7 @@ def open_codex_app(workdir: Path) -> tuple[bool, str]:
         return False, f"自动打开 Codex App 失败：{exc}"
 
 
-def install_codex_config(
-    api_key: str,
-    base_url: str,
-    model: str,
-    skip_test: bool,
-    open_app: bool,
-    log,
-) -> bool:
+def install_codex_config(api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool, log) -> bool:
     if not api_key.strip():
         raise ValueError("请先输入胖虎AI API Key。")
     if not base_url.strip():
@@ -558,64 +1088,55 @@ def install_codex_config(
     api_key = api_key.strip()
     base_url = base_url.strip()
     model = model.strip()
-
     home = codex_home()
     workdir = workspace_root()
     config_path = home / "config.toml"
+    auth_path = codex_auth_path()
     global_agents = home / "AGENTS.md"
     workspace_agents = workdir / "AGENTS.md"
 
-    log("开始配置胖虎AI Codex。")
-
-    exists, version = codex_command_exists()
-    if exists:
-        log(f"已检测到 Codex：{version or '已安装'}")
-    else:
-        log("未检测到 codex 命令。配置仍会写入，稍后安装 Codex App 后可继续使用。")
-
+    log("开始应用 Codex 胖虎AI配置。")
     home.mkdir(parents=True, exist_ok=True)
     workdir.mkdir(parents=True, exist_ok=True)
-    log(f"配置目录：{home}")
-    log(f"默认工作区：{workdir}")
 
     existed_before = {
         config_path: config_path.exists(),
+        auth_path: auth_path.exists(),
         global_agents: global_agents.exists(),
         workspace_agents: workspace_agents.exists(),
     }
     backups = {
         config_path: backup_file(config_path),
+        auth_path: backup_file(auth_path),
         global_agents: backup_file(global_agents),
         workspace_agents: backup_file(workspace_agents),
     }
-    if backups[config_path]:
-        log(f"已备份旧配置：{backups[config_path]}")
-    else:
-        log("未发现旧配置，将创建新配置。")
-    for agents_path in (global_agents, workspace_agents):
-        if backups[agents_path]:
-            log(f"已备份旧中文规则文件：{backups[agents_path]}")
+    for target, backup in backups.items():
+        if backup:
+            log(f"已备份旧文件：{backup}")
+        else:
+            log(f"将创建新文件：{target}")
 
     old_config = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    old_auth = auth_path.read_text(encoding="utf-8") if auth_path.exists() else ""
     write_text(config_path, merge_config(old_config, api_key, base_url, model))
+    write_text(auth_path, build_auth_json(old_auth, api_key))
     for agents_path in (global_agents, workspace_agents):
         old_agents = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
         write_text(agents_path, merge_agents_rules(old_agents))
     log(f"已写入 Codex 配置：{config_path}")
-    log(f"接口地址：{base_url}")
+    log(f"已写入 Codex 登录授权文件：{auth_path}")
+    log(f"接口地址：{CODEX_BASE_URL}")
     log(f"模型：{model}")
     log(f"Key：{mask_key(api_key)}")
-    log("已写入中文回答规则。")
 
     ok = True
     if skip_test:
         log("已跳过接口测试。")
     else:
-        log("正在测试胖虎AI接口...")
         ok, msg = test_api(base_url, api_key)
         log(msg)
         if not ok:
-            log("常见原因：Key 填错、余额不足、客户网络不通、后台账号池未分配。")
             for target, backup in backups.items():
                 restore_backup(target, backup, existed_before[target])
             log("接口测试失败，已自动恢复本次写入前的配置备份。")
@@ -624,32 +1145,119 @@ def install_codex_config(
         _, msg = open_codex_app(workdir)
         log(msg)
 
-    log(f"配置完成。以后请使用工作区：{workdir}")
     return ok
+
+
+def build_agent_setup_guide_content(selected: list[tuple[AgentSpec, str]], api_key: str) -> str:
+    names = "、".join(f"{agent.name}({mode})" for agent, mode in selected)
+    return f"""胖虎AI Agent 配置说明
+
+已选择 Agent：{names}
+胖虎AI接口地址：{DEFAULT_BASE_URL}
+胖虎AI API Key：{mask_key(api_key)}
+
+说明：
+1. Codex 已由本工具自动写入配置。
+2. ClaudeCode 只负责官方安装，不写入配置；请按 ClaudeCode 官方流程自行登录或配置。
+3. OpenClaw / Hermes 当前版本先安装并提供说明；如果官方客户端要求在界面里粘贴 Key，请使用胖虎AI接口和你刚才在本工具里填写的 API Key。
+4. 本工具不会把 API Key 明文写入日志。
+"""
+
+
+def write_agent_setup_guide(selected: list[tuple[AgentSpec, str]], api_key: str, log) -> None:
+    guide = workspace_root() / "胖虎AI-Agent配置说明.txt"
+    content = build_agent_setup_guide_content(selected, api_key)
+    write_text(guide, content)
+    log(f"已生成配置说明：{guide}")
+
+
+def install_agent(agent: AgentSpec, mode_id: str, log) -> bool:
+    log(f"开始处理 {agent.name} / {mode_id}。")
+    if agent.id == "codex" and mode_id == "cli":
+        ok = install_codex_cli(log)
+    elif agent.id == "codex" and mode_id == "client":
+        ok = install_codex_app(log)
+    elif agent.id == "claude_code" and mode_id == "cli":
+        ok = install_claude_code_cli(log)
+    elif agent.id == "claude_code" and mode_id == "client":
+        open_url(CLAUDE_CODE_DOCS_URL)
+        log("ClaudeCode 没有在本工具中伪造客户端安装，已打开官方入口。")
+        ok = False
+    elif agent.id == "openclaw" and mode_id == "cli":
+        ok = install_openclaw_cli(log)
+    elif agent.id == "openclaw" and mode_id == "client":
+        open_url(OPENCLAW_DOCS_URL)
+        log("已打开 OpenClaw 官方客户端/Hub 入口。")
+        ok = False
+    elif agent.id == "hermes" and mode_id == "cli":
+        ok = install_hermes_cli(log)
+    elif agent.id == "hermes" and mode_id == "client":
+        open_url(HERMES_DOCS_URL)
+        log("已打开 Hermes 官方安装文档。")
+        ok = False
+    else:
+        log("未知 Agent 或安装方式。")
+        return False
+
+    verified, version = version_for(agent.verify_command)
+    if verified:
+        log(f"{agent.name} 检测通过：{version or '已安装'}")
+        return True
+    if ok:
+        log(f"{agent.name} 安装命令已执行，但当前 PATH 暂未检测到命令，可能需要重开终端或重启软件。")
+        return True
+    return False
+
+
+def detect_environment() -> list[str]:
+    system = current_system_id()
+    lines = [
+        f"系统：{platform.system()} {platform.release()}",
+        f"架构：{platform.machine()}",
+        f"识别结果：{'Windows' if system == 'windows' else 'Mac' if system == 'mac' else '其他系统'}",
+    ]
+    for command in ("powershell", "winget", "npm", "node", "codex", "claude", "openclaw", "hermes"):
+        exists, path = command_exists(command)
+        lines.append(f"{command}: {'已找到 ' + path if exists else '未找到'}")
+    lines.extend(risk_plugin_report_lines(detect_risk_plugins()))
+    return lines
 
 
 class InstallerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_NAME)
-        root.geometry("820x660")
-        root.minsize(760, 600)
-        root.configure(bg="#f8fafc")
+        root.geometry("1000x860")
+        root.minsize(940, 740)
+        root.configure(bg=APP_BG)
 
+        self.cookie_jar = http.cookiejar.CookieJar()
+        self.logged_in_user: dict | None = None
+        self.deployer_auth: dict | None = None
+        self.deployer_manifest: dict | None = None
+        self.saved_key_ok = False
+        self.saved_key_signature: tuple[str, str, str, bool] | None = None
+        self.worker_running = False
+
+        self.login_username = tk.StringVar()
+        self.login_password = tk.StringVar()
         self.api_key = tk.StringVar()
         self.base_url = tk.StringVar(value=DEFAULT_BASE_URL)
         self.model = tk.StringVar(value=DEFAULT_MODEL)
         self.show_key = tk.BooleanVar(value=False)
         self.skip_test = tk.BooleanVar(value=False)
         self.open_app = tk.BooleanVar(value=True)
-        self.status = tk.StringVar(value="状态：等待配置")
-        self.worker_running = False
+        self.selected_system = tk.StringVar(value=current_system_id())
+        self.status = tk.StringVar(value="状态：请先登录胖虎AI账号")
+        self.step = tk.IntVar(value=1)
+        self.agent_enabled: dict[str, tk.BooleanVar] = {}
+        self.agent_mode: dict[str, tk.StringVar] = {}
+        for variable in (self.api_key, self.base_url, self.model, self.skip_test):
+            variable.trace_add("write", self.mark_key_dirty)
 
         self._build_ui()
-        self.log("请粘贴胖虎AI API Key，然后点击“一键配置”。")
-        self.log("如客户还没装 Codex，可先点“安装/修复 Codex 本体”。")
         self.log(f"默认接口：{DEFAULT_BASE_URL}")
-        self.log(f"默认模型：{DEFAULT_MODEL}")
+        self.log("请先用胖虎AI注册账号登录软件。")
 
     def _build_ui(self) -> None:
         style = ttk.Style()
@@ -657,137 +1265,509 @@ class InstallerApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("Primary.TButton", font=("Microsoft YaHei UI", 11, "bold"))
+        self.root.option_add("*Font", ("Microsoft YaHei UI", 10))
+        style.configure("TEntry", fieldbackground="#ffffff", bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
+        style.configure("TCombobox", fieldbackground="#ffffff", bordercolor=BORDER)
+        style.configure("TCheckbutton", background=CARD_BG, foreground=INK)
+        style.configure("TRadiobutton", background=CARD_BG, foreground=INK)
 
-        container = tk.Frame(self.root, bg="#f8fafc", padx=28, pady=24)
-        container.pack(fill="both", expand=True)
+        self.container = tk.Frame(self.root, bg=APP_BG, padx=28, pady=22)
+        self.container.pack(fill="both", expand=True)
 
-        title = tk.Label(
-            container,
-            text=APP_NAME,
-            font=("Microsoft YaHei UI", 22, "bold"),
-            fg="#0f172a",
-            bg="#f8fafc",
+        self.header = tk.Frame(self.container, bg=APP_BG)
+        self.header.pack(fill="x")
+        top_row = tk.Frame(self.header, bg=APP_BG)
+        top_row.pack(fill="x")
+        tk.Label(
+            top_row,
+            text="胖虎AI",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            fg=PRIMARY,
+            bg=APP_BG,
+        ).pack(side="left", anchor="w")
+        self.user_label = tk.Label(
+            top_row,
+            text="未登录",
+            bg="#dceaf1",
+            fg=PRIMARY_DARK,
+            padx=14,
+            pady=6,
+            font=("Microsoft YaHei UI", 10, "bold"),
         )
-        title.pack(anchor="w")
+        self.user_label.pack(side="right")
+        self.update_button = self._button(top_row, "检查更新", self.start_update_check, "secondary")
+        self.update_button.pack(side="right", padx=(0, 10))
+        tk.Label(
+            self.header,
+            text="多 Agent 一键部署工具",
+            font=("Microsoft YaHei UI", 21, "bold"),
+            fg=INK,
+            bg=APP_BG,
+        ).pack(anchor="w", pady=(8, 0))
 
-        subtitle = tk.Label(
-            container,
-            text="输入胖虎AI API Key，自动配置 Codex 中转、默认工作区和中文回答规则。",
-            font=("Microsoft YaHei UI", 10),
-            fg="#475569",
-            bg="#f8fafc",
-        )
-        subtitle.pack(anchor="w", pady=(6, 22))
+        self.body = tk.Frame(self.container, bg=APP_BG)
+        self.body.pack(fill="both", expand=True, pady=(18, 0))
 
-        key_row = tk.Frame(container, bg="#f8fafc")
-        key_row.pack(fill="x")
-        tk.Label(key_row, text="胖虎AI API Key", bg="#f8fafc", fg="#0f172a").pack(anchor="w")
-        key_input_row = tk.Frame(key_row, bg="#f8fafc")
-        key_input_row.pack(fill="x", pady=(6, 14))
-        self.key_entry = ttk.Entry(key_input_row, textvariable=self.api_key, show="*")
-        self.key_entry.pack(side="left", fill="x", expand=True)
-        ttk.Checkbutton(
-            key_input_row,
-            text="显示",
-            variable=self.show_key,
-            command=self.toggle_key,
-        ).pack(side="left", padx=(10, 0))
+        self.login_frame = tk.Frame(self.body, bg=CARD_BG, relief="flat", highlightthickness=1, highlightbackground=BORDER)
+        self.login_frame.pack(fill="both", expand=True, ipady=0)
+        self._build_login_frame(self.login_frame)
 
-        fields = tk.Frame(container, bg="#f8fafc")
-        fields.pack(fill="x")
-
-        base_frame = tk.Frame(fields, bg="#f8fafc")
-        base_frame.pack(side="left", fill="x", expand=True, padx=(0, 18))
-        tk.Label(base_frame, text="接口地址", bg="#f8fafc", fg="#0f172a").pack(anchor="w")
-        ttk.Entry(base_frame, textvariable=self.base_url).pack(fill="x", pady=(6, 14))
-
-        model_frame = tk.Frame(fields, bg="#f8fafc", width=220)
-        model_frame.pack(side="left", fill="x")
-        tk.Label(model_frame, text="模型", bg="#f8fafc", fg="#0f172a").pack(anchor="w")
-        model_combo = ttk.Combobox(
-            model_frame,
-            textvariable=self.model,
-            values=["gpt-5.5", "gpt-5.4", "gpt-4.1"],
-        )
-        model_combo.pack(fill="x", pady=(6, 14))
-
-        checks = tk.Frame(container, bg="#f8fafc")
-        checks.pack(fill="x", pady=(0, 12))
-        ttk.Checkbutton(checks, text="跳过接口测试", variable=self.skip_test).pack(side="left")
-        ttk.Checkbutton(checks, text="配置完成后打开 Codex App", variable=self.open_app).pack(
-            side="left", padx=(24, 0)
-        )
-
-        buttons = tk.Frame(container, bg="#f8fafc")
-        buttons.pack(fill="x", pady=(4, 14))
-        self.install_button = ttk.Button(
-            buttons,
-            text="一键配置",
-            style="Primary.TButton",
-            command=self.start_install,
-        )
-        self.install_button.pack(side="left", ipadx=20, ipady=7)
-        self.codex_app_button = ttk.Button(
-            buttons,
-            text="安装/修复 Codex 本体",
-            command=self.start_codex_app_install,
-        )
-        self.codex_app_button.pack(side="left", padx=(14, 0), ipadx=12, ipady=7)
-        ttk.Button(buttons, text="打开官方下载页", command=open_codex_download_page).pack(
-            side="left", padx=(14, 0), ipadx=12, ipady=7
-        )
-
-        file_buttons = tk.Frame(container, bg="#f8fafc")
-        file_buttons.pack(fill="x", pady=(0, 14))
-        ttk.Button(file_buttons, text="打开工作区", command=self.open_workspace).pack(
-            side="left", padx=(14, 0), ipadx=12, ipady=7
-        )
-        ttk.Button(file_buttons, text="打开配置目录", command=self.open_config_dir).pack(
-            side="left", padx=(14, 0), ipadx=12, ipady=7
-        )
-        self.restore_button = ttk.Button(file_buttons, text="恢复最近备份", command=self.restore_backups)
-        self.restore_button.pack(side="left", padx=(14, 0), ipadx=12, ipady=7)
-        ttk.Button(file_buttons, text="复制日志", command=self.copy_logs).pack(
-            side="left", padx=(14, 0), ipadx=12, ipady=7
-        )
-
-        note = tk.Label(
-            container,
-            text="提示：本工具只安装官方签名 Codex 或打开官方入口；不内置、修改或伪装 Codex 本体文件。",
-            font=("Microsoft YaHei UI", 9),
-            fg="#64748b",
-            bg="#f8fafc",
-        )
-        note.pack(anchor="w", pady=(0, 8))
+        self.wizard_frame = tk.Frame(self.body, bg=APP_BG)
+        self._build_wizard_frame(self.wizard_frame)
 
         self.log_box = tk.Text(
-            container,
-            height=13,
-            bg="#ffffff",
-            fg="#0f172a",
-            relief="solid",
-            borderwidth=1,
+            self.container,
+            height=3,
+            bg="#07151c",
+            fg="#d7f9ea",
+            insertbackground="#d7f9ea",
+            relief="flat",
+            borderwidth=0,
+            padx=14,
+            pady=10,
             wrap="word",
-            font=("Consolas", 10),
+            font=("Cascadia Mono", 9),
         )
-        self.log_box.pack(fill="both", expand=True)
+        self.log_box.pack(fill="both", expand=False, pady=(14, 0))
         self.log_box.configure(state="disabled")
 
+        tk.Label(self.container, textvariable=self.status, bg=APP_BG, fg=MUTED).pack(anchor="w", pady=(8, 0))
+
+    def _button(self, parent: tk.Widget, text: str, command, kind: str = "secondary") -> tk.Button:
+        if kind == "primary":
+            bg, fg, active = PRIMARY, "#ffffff", PRIMARY_DARK
+        elif kind == "success":
+            bg, fg, active = ACCENT, "#ffffff", "#08745b"
+        else:
+            bg, fg, active = "#e7eef3", INK, "#d3e0e8"
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=active,
+            activeforeground=fg,
+            relief="flat",
+            bd=0,
+            padx=18,
+            pady=9,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+
+    def _build_login_frame(self, parent: tk.Frame) -> None:
+        parent.configure(padx=0, pady=0)
+        hero = tk.Frame(parent, bg=PRIMARY_DARK, width=340, height=250)
+        hero.pack(side="left", fill="y")
+        hero.pack_propagate(False)
+        tk.Label(hero, text="PANGHUAI", font=("Microsoft YaHei UI", 12, "bold"), bg=PRIMARY_DARK, fg="#6ee7b7").pack(
+            anchor="w", padx=26, pady=(26, 0)
+        )
         tk.Label(
-            container,
-            textvariable=self.status,
-            bg="#f8fafc",
-            fg="#475569",
-        ).pack(anchor="w", pady=(10, 0))
+            hero,
+            text="客户部署中枢",
+            font=("Microsoft YaHei UI", 22, "bold"),
+            bg=PRIMARY_DARK,
+            fg="#ffffff",
+        ).pack(anchor="w", padx=26, pady=(18, 0))
+        tk.Label(
+            hero,
+            text="登录后完成 Key 创建、环境检测、Agent 安装和安全配置应用。",
+            font=("Microsoft YaHei UI", 10),
+            bg=PRIMARY_DARK,
+            fg="#bdebe2",
+            wraplength=250,
+            justify="left",
+        ).pack(anchor="w", padx=26, pady=(14, 0))
+        hero_notes = tk.Frame(hero, bg=PRIMARY_DARK)
+        hero_notes.pack(anchor="w", fill="x", padx=26, pady=(30, 0))
+        for label, value in (("支持 Agent", "Codex / ClaudeCode / OpenClaw / Hermes"), ("安装来源", "官方在线入口"), ("客户流程", "登录后按 4 步完成")):
+            item = tk.Frame(hero_notes, bg=PRIMARY_DARK)
+            item.pack(fill="x", pady=(0, 15))
+            tk.Label(item, text=label, bg=PRIMARY_DARK, fg="#7dd3c7", font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
+            tk.Label(item, text=value, bg=PRIMARY_DARK, fg="#ffffff", wraplength=275, justify="left").pack(anchor="w", pady=(3, 0))
+        tk.Label(
+            hero,
+            text="客户版  |  Windows / Mac",
+            bg=GOLD,
+            fg=PRIMARY_DARK,
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="bottom", anchor="w", padx=26, pady=28)
+
+        form_panel = tk.Frame(parent, bg=CARD_BG, padx=42, pady=36)
+        form_panel.pack(side="left", fill="both", expand=True)
+        tk.Label(form_panel, text="登录胖虎AI账号", font=("Microsoft YaHei UI", 17, "bold"), bg=CARD_BG, fg=INK).pack(anchor="w")
+        tk.Label(
+            form_panel,
+            text="只有胖虎AI注册用户可以使用部署工具；没有账号请先注册。",
+            bg=CARD_BG,
+            fg=MUTED,
+        ).pack(anchor="w", pady=(6, 14))
+
+        fields = tk.Frame(form_panel, bg=CARD_BG)
+        fields.pack(fill="x")
+        account = tk.Frame(fields, bg=CARD_BG)
+        account.pack(fill="x")
+        tk.Label(account, text="用户名或邮箱", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        ttk.Entry(account, textvariable=self.login_username, font=("Microsoft YaHei UI", 11)).pack(fill="x", ipady=7, pady=(6, 0))
+
+        password = tk.Frame(fields, bg=CARD_BG)
+        password.pack(fill="x", pady=(12, 0))
+        tk.Label(password, text="密码", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        ttk.Entry(password, textvariable=self.login_password, show="*", font=("Microsoft YaHei UI", 11)).pack(fill="x", ipady=7, pady=(6, 0))
+
+        buttons = tk.Frame(form_panel, bg=CARD_BG)
+        buttons.pack(fill="x", pady=(18, 0))
+        self.login_button = self._button(buttons, "登录并激活工具", self.start_login, "primary")
+        self.login_button.pack(side="left")
+        self._button(buttons, "去胖虎AI注册账号", lambda: open_url(REGISTER_URL)).pack(side="left", padx=(12, 0))
+
+        divider = tk.Frame(form_panel, bg=BORDER, height=1)
+        divider.pack(fill="x", pady=(30, 22))
+        tk.Label(form_panel, text="客户使用流程", font=("Microsoft YaHei UI", 12, "bold"), bg=CARD_BG, fg=INK).pack(anchor="w")
+        flow = tk.Frame(form_panel, bg=CARD_BG)
+        flow.pack(fill="x", pady=(12, 0))
+        flow.grid_columnconfigure(0, weight=1)
+        flow.grid_columnconfigure(1, weight=1)
+        for idx, text in enumerate(("创建 Key", "检测系统", "选择 Agent", "一键部署")):
+            item = tk.Frame(flow, bg=PANEL_BG, padx=12, pady=10, highlightthickness=1, highlightbackground=BORDER)
+            item.grid(row=idx // 2, column=idx % 2, sticky="ew", padx=(0, 10 if idx % 2 == 0 else 0), pady=(0, 10))
+            tk.Label(item, text=f"0{idx + 1}", bg=PANEL_BG, fg=GOLD, font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
+            tk.Label(item, text=text, bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w", pady=(5, 0))
+
+    def _build_wizard_frame(self, parent: tk.Frame) -> None:
+        shell = tk.Frame(parent, bg=APP_BG)
+        shell.pack(fill="both", expand=True)
+
+        rail = tk.Frame(shell, bg=PRIMARY_DARK, width=220)
+        rail.pack(side="left", fill="y", padx=(0, 16))
+        rail.pack_propagate(False)
+        tk.Label(rail, text="部署流程", bg=PRIMARY_DARK, fg="#ffffff", font=("Microsoft YaHei UI", 16, "bold")).pack(
+            anchor="w", padx=22, pady=(24, 4)
+        )
+        tk.Label(
+            rail,
+            text="按顺序完成 Key、环境、Agent 和配置应用。",
+            bg=PRIMARY_DARK,
+            fg="#bdebe2",
+            wraplength=190,
+            justify="left",
+        ).pack(anchor="w", padx=22, pady=(0, 18))
+
+        self.step_buttons: dict[int, tk.Button] = {}
+        for idx, title, subtitle in (
+            (1, "创建 Key", "验证胖虎AI接口"),
+            (2, "检测系统", "确认电脑环境"),
+            (3, "选择 Agent", "选择 CLI 或客户端"),
+            (4, "安装配置", "执行安装和应用"),
+        ):
+            btn = self._step_button(rail, idx, title, subtitle)
+            btn.pack(fill="x", padx=16, pady=(0, 10))
+            self.step_buttons[idx] = btn
+
+        panel = tk.Frame(shell, bg=CARD_BG, highlightthickness=1, highlightbackground=BORDER)
+        panel.pack(side="left", fill="both", expand=True)
+        self.steps_host = tk.Frame(panel, bg=CARD_BG, padx=22, pady=20)
+        self.steps_host.pack(fill="both", expand=True)
+        self.step_frames: dict[int, tk.Frame] = {}
+        self._build_step_1()
+        self._build_step_2()
+        self._build_step_3()
+        self._build_step_4()
+
+        for frame in self.step_frames.values():
+            frame.place(in_=self.steps_host, x=0, y=0, relwidth=1, relheight=1)
+        self.refresh_steps()
+
+    def _step_button(self, parent: tk.Frame, idx: int, title: str, subtitle: str) -> tk.Button:
+        text = f"{idx}. {title}\n{subtitle}"
+
+        def activate() -> None:
+            self.step.set(idx)
+            self.refresh_steps()
+
+        return tk.Button(
+            parent,
+            text=text,
+            command=activate,
+            anchor="w",
+            justify="left",
+            bg=PRIMARY_DARK,
+            fg="#c8f3ea",
+            activebackground=PRIMARY,
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=12,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+
+    def _step_title(self, parent: tk.Frame, title: str, desc: str) -> None:
+        tk.Label(parent, text=title, font=("Microsoft YaHei UI", 17, "bold"), bg=CARD_BG, fg=INK).pack(anchor="w")
+        tk.Label(parent, text=desc, bg=CARD_BG, fg=MUTED, wraplength=650, justify="left").pack(anchor="w", pady=(7, 16))
+
+    def _field_label(self, parent: tk.Frame, text: str, bg: str = CARD_BG) -> None:
+        tk.Label(parent, text=text, bg=bg, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+
+    def _build_step_1(self) -> None:
+        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
+        self.step_frames[1] = frame
+        self._step_title(
+            frame,
+            "第一步：创建并保存胖虎AI API Key",
+            "客户先去胖虎AI控制台创建 Key，再粘贴到这里。软件会用 /v1/models 做一次可用性验证。",
+        )
+
+        guide = tk.Frame(frame, bg=WARNING_BG, padx=16, pady=13, highlightthickness=1, highlightbackground="#fed7aa")
+        guide.pack(fill="x")
+        tk.Label(guide, text="操作路径", bg=WARNING_BG, fg="#9a3412", font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        tk.Label(
+            guide,
+            text="点击按钮打开胖虎AI登录页；如果浏览器没有登录，网站会先要求登录，然后进入 Key 创建页面。",
+            bg=WARNING_BG,
+            fg="#7c2d12",
+            wraplength=560,
+            justify="left",
+        ).pack(side="left", anchor="w", pady=(5, 0))
+        self._button(guide, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL), "secondary").pack(
+            side="right", padx=(14, 0)
+        )
+
+        key_row = tk.Frame(frame, bg=CARD_BG)
+        key_row.pack(fill="x", pady=(18, 0))
+        self._field_label(key_row, "胖虎AI API Key")
+        entry_row = tk.Frame(key_row, bg=CARD_BG)
+        entry_row.pack(fill="x", pady=(6, 0))
+        self.key_entry = ttk.Entry(entry_row, textvariable=self.api_key, show="*", font=("Microsoft YaHei UI", 11))
+        self.key_entry.pack(side="left", fill="x", expand=True, ipady=7)
+        ttk.Checkbutton(entry_row, text="显示", variable=self.show_key, command=self.toggle_key).pack(
+            side="left", padx=(10, 0)
+        )
+
+        form = tk.Frame(frame, bg=CARD_BG)
+        form.pack(fill="x", pady=(14, 0))
+        base_frame = tk.Frame(form, bg=CARD_BG)
+        base_frame.pack(side="left", fill="x", expand=True, padx=(0, 16))
+        self._field_label(base_frame, "接口地址")
+        ttk.Entry(base_frame, textvariable=self.base_url, font=("Microsoft YaHei UI", 11)).pack(fill="x", ipady=7, pady=(6, 0))
+        model_frame = tk.Frame(form, bg=CARD_BG, width=220)
+        model_frame.pack(side="left", fill="x")
+        self._field_label(model_frame, "默认模型")
+        ttk.Combobox(model_frame, textvariable=self.model, values=["gpt-5.5", "gpt-5.4", "gpt-4.1"]).pack(
+            fill="x", ipady=5, pady=(6, 0)
+        )
+
+        options = tk.Frame(frame, bg=CARD_BG)
+        options.pack(fill="x", pady=(18, 0))
+        ttk.Checkbutton(options, text="跳过接口测试", variable=self.skip_test).pack(side="left")
+        self._button(options, "保存并测试 Key", self.start_save_key, "primary").pack(side="left", padx=(16, 0))
+
+    def _build_step_2(self) -> None:
+        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
+        self.step_frames[2] = frame
+        self._step_title(
+            frame,
+            "第二步：选择系统并检测环境",
+            "自动识别客户电脑系统，检查基础环境，并拦截 ccswitch、codex++、CCR 等可能改坏配置的第三方工具。",
+        )
+        choices = tk.Frame(frame, bg=PANEL_BG, padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
+        choices.pack(fill="x")
+        ttk.Radiobutton(choices, text="自动识别", value=current_system_id(), variable=self.selected_system).pack(
+            side="left", padx=(0, 16)
+        )
+        ttk.Radiobutton(choices, text="Windows", value="windows", variable=self.selected_system).pack(
+            side="left", padx=(0, 16)
+        )
+        ttk.Radiobutton(choices, text="Mac", value="mac", variable=self.selected_system).pack(side="left")
+        self._button(choices, "检测环境", self.run_environment_check, "primary").pack(side="right")
+        self.env_text = tk.Text(
+            frame,
+            height=15,
+            bg="#07151c",
+            fg="#d7f9ea",
+            insertbackground="#d7f9ea",
+            relief="flat",
+            borderwidth=0,
+            padx=14,
+            pady=12,
+            wrap="word",
+            font=("Cascadia Mono", 9),
+        )
+        self.env_text.pack(fill="both", expand=True, pady=(14, 0))
+        self.env_text.configure(state="disabled")
+
+    def _agent_card_copy(self, agent: AgentSpec) -> tuple[str, str]:
+        copies = {
+            "codex": ("官方 Codex Agent，可应用胖虎AI配置。", "可写入 Key、接口、模型和中文规则。"),
+            "claude_code": ("Claude Code，只安装不写配置。", "不写 Key，不改账号或 ClaudeCode 配置。"),
+            "openclaw": ("OpenClaw，官方入口安装。", "安全路径未确认时，仅生成中文配置指引。"),
+            "hermes": ("Hermes，官方入口安装。", "安全路径未确认时，仅生成中文配置指引。"),
+        }
+        return copies.get(agent.id, (agent.description, agent.config_note))
+
+    def _build_step_3(self) -> None:
+        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
+        self.step_frames[3] = frame
+        self._step_title(
+            frame,
+            "第三步：选择 Agent 和安装方式",
+            "ClaudeCode 只安装不配置；其他 Agent 只有在官方路径明确、安全可写时才自动应用胖虎AI配置。",
+        )
+
+        list_frame = tk.Frame(frame, bg=CARD_BG)
+        list_frame.pack(fill="both", expand=True)
+        list_frame.grid_columnconfigure(0, weight=1)
+        for index, agent in enumerate(AGENTS):
+            row = tk.Frame(list_frame, bg=PANEL_BG, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
+            row.grid(row=index, column=0, sticky="ew", pady=(0, 7))
+            row.grid_columnconfigure(1, weight=1)
+            enabled = tk.BooleanVar(value=agent.id == "codex")
+            mode = tk.StringVar(value="cli")
+            self.agent_enabled[agent.id] = enabled
+            self.agent_mode[agent.id] = mode
+            card_description, _card_note = self._agent_card_copy(agent)
+            header = tk.Frame(row, bg=PANEL_BG)
+            header.grid(row=0, column=0, sticky="nw", padx=(0, 14))
+            tk.Checkbutton(
+                header,
+                text=f"选择 {agent.name}",
+                variable=enabled,
+                indicatoron=False,
+                bg="#e6f0f5",
+                fg=INK,
+                activebackground="#d9e9ef",
+                activeforeground=INK,
+                selectcolor="#d8f3e9",
+                relief="flat",
+                bd=0,
+                padx=10,
+                pady=4,
+                cursor="hand2",
+                font=("Microsoft YaHei UI", 9, "bold"),
+            ).pack(anchor="w")
+            tk.Label(
+                header,
+                text="可配置" if agent.id == "codex" else "仅安装" if agent.id == "claude_code" else "先安装",
+                bg=GOLD_SOFT if agent.id == "codex" else "#e7eef3",
+                fg="#8a5b00" if agent.id == "codex" else MUTED,
+                padx=9,
+                pady=4,
+                font=("Microsoft YaHei UI", 9, "bold"),
+            ).pack(anchor="w", pady=(4, 0))
+            text_area = tk.Frame(row, bg=PANEL_BG)
+            text_area.grid(row=0, column=1, sticky="ew")
+            tk.Label(
+                text_area,
+                text=card_description,
+                bg=PANEL_BG,
+                fg=INK,
+                font=("Microsoft YaHei UI", 9, "bold"),
+                wraplength=280,
+                justify="left",
+            ).pack(anchor="w")
+            mode_area = tk.Frame(row, bg=PANEL_BG)
+            mode_area.grid(row=0, column=2, sticky="ne", padx=(12, 0))
+            tk.Label(mode_area, text="安装方式", bg=PANEL_BG, fg=MUTED, font=("Microsoft YaHei UI", 9, "bold")).pack(
+                anchor="e", pady=(0, 5)
+            )
+            for item in agent.modes:
+                tk.Radiobutton(
+                    mode_area,
+                    text=item.label,
+                    value=item.id,
+                    variable=mode,
+                    indicatoron=False,
+                    bg="#ffffff",
+                    fg=INK,
+                    activebackground="#e7eef3",
+                    activeforeground=INK,
+                    selectcolor="#d8f3e9",
+                    relief="flat",
+                    bd=0,
+                    padx=9,
+                    pady=4,
+                    cursor="hand2",
+                    font=("Microsoft YaHei UI", 9, "bold"),
+                ).pack(side="left", padx=(0, 6))
+
+    def _build_step_4(self) -> None:
+        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
+        self.step_frames[4] = frame
+        self._step_title(
+            frame,
+            "第四步：一键安装并应用配置",
+            "安装只调用官方在线入口。开始前会再次检查第三方配置插件，发现风险工具会先要求卸载。",
+        )
+        summary = tk.Frame(frame, bg=PANEL_BG, padx=16, pady=14, highlightthickness=1, highlightbackground=BORDER)
+        summary.pack(fill="x")
+        tk.Label(summary, text="执行前确认", bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
+        tk.Label(
+            summary,
+            text="未保存有效 Key 时不会进入配置应用。若发现 ccswitch、codex++、CCR 等工具，会停止安装并提示先卸载，防止它们改坏 Agent 配置。",
+            bg=PANEL_BG,
+            fg=MUTED,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", pady=(7, 0))
+        ttk.Checkbutton(frame, text="完成后尝试打开 Codex App", variable=self.open_app).pack(anchor="w")
+        help_box = tk.Frame(frame, bg="#f5f8fb", padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
+        help_box.pack(fill="x", pady=(14, 0))
+        tk.Label(help_box, text="按钮怎么选", bg="#f5f8fb", fg=INK, font=("Microsoft YaHei UI", 11, "bold")).pack(
+            anchor="w"
+        )
+        tk.Label(
+            help_box,
+            text=(
+                "首次给客户电脑安装 Agent：点“开始一键部署”。\n"
+                "Agent 已经装好了，只是 Codex 配置坏了或换了 Key：点“仅修复 Codex 配置”。\n"
+                "想撤回本次写入：点“恢复最近备份”。\n"
+                "软件有新版本或你通知客户升级：点“检查更新”。\n"
+                "排查问题时：点“复制日志”发给客服。"
+            ),
+            bg="#f5f8fb",
+            fg=MUTED,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", pady=(7, 0))
+        actions = tk.Frame(frame, bg="#ffffff")
+        actions.pack(fill="x", pady=(18, 0))
+        self.deploy_button = self._button(actions, "开始一键部署", self.start_deploy, "success")
+        self.deploy_button.pack(side="left")
+        self.config_button = self._button(actions, "仅修复 Codex 配置", self.start_config_only, "primary")
+        self.config_button.pack(side="left", padx=(10, 0))
+        self.restore_button = self._button(actions, "恢复最近备份", self.restore_backups, "secondary")
+        self.restore_button.pack(side="left", padx=(10, 0))
+        self._button(actions, "复制日志", self.copy_logs, "secondary").pack(side="left", padx=(10, 0))
+        self._button(actions, "打开工作区", self.open_workspace, "secondary").pack(side="left", padx=(10, 0))
+        self._button(actions, "打开配置目录", self.open_config_dir, "secondary").pack(side="left", padx=(10, 0))
+        self._button(actions, "检查更新", self.start_update_check, "secondary").pack(side="left", padx=(10, 0))
+
+    def refresh_steps(self) -> None:
+        for idx, frame in self.step_frames.items():
+            if idx == self.step.get():
+                frame.lift()
+        for idx, button in getattr(self, "step_buttons", {}).items():
+            active = idx == self.step.get()
+            button.configure(
+                bg=PRIMARY if active else PRIMARY_DARK,
+                fg="#ffffff" if active else "#c8f3ea",
+                activebackground=PRIMARY,
+                activeforeground="#ffffff",
+            )
 
     def toggle_key(self) -> None:
         self.key_entry.configure(show="" if self.show_key.get() else "*")
 
     def log(self, message: str) -> None:
+        safe = sanitize_log_text(message, self.api_key.get().strip())
         now = time.strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{now}] {message}\n")
+        self.log_box.insert("end", f"[{now}] {safe}\n")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
         self.root.update_idletasks()
@@ -810,9 +1790,300 @@ class InstallerApp:
     def set_busy(self, busy: bool) -> None:
         self.worker_running = busy
         state = "disabled" if busy else "normal"
-        self.install_button.configure(state=state)
-        self.codex_app_button.configure(state=state)
-        self.restore_button.configure(state=state)
+        for button in (self.login_button, self.deploy_button, self.config_button, self.restore_button, self.update_button):
+            button.configure(state=state)
+
+    def current_key_signature(self) -> tuple[str, str, str, bool]:
+        return (
+            self.api_key.get().strip(),
+            self.base_url.get().strip(),
+            self.model.get().strip(),
+            self.skip_test.get(),
+        )
+
+    def mark_key_dirty(self, *_args) -> None:
+        if self.saved_key_ok or self.saved_key_signature:
+            self.saved_key_ok = False
+            self.saved_key_signature = None
+            self.status.set("状态：Key 已修改，请重新保存")
+
+    def start_login(self) -> None:
+        if self.worker_running:
+            return
+        username = self.login_username.get()
+        password = self.login_password.get()
+        self.set_busy(True)
+        self.status.set("状态：正在登录胖虎AI...")
+        threading.Thread(target=self._login_worker, args=(username, password), daemon=True).start()
+
+    def _login_worker(self, username: str, password: str) -> None:
+        try:
+            ok, msg, data = login_panghuai(username, password, self.cookie_jar)
+            self.log_from_worker(msg)
+            if not ok:
+                self.set_status_from_worker("状态：登录失败")
+                self.show_error_from_worker("登录失败", msg)
+                return
+            auth_ok, auth_msg, auth_data = activate_deployer(data, self.cookie_jar)
+            self.log_from_worker(auth_msg)
+            if not auth_ok:
+                self.set_status_from_worker("状态：部署授权失败")
+                self.show_error_from_worker("部署授权失败", auth_msg)
+                return
+            self.logged_in_user = data
+            self.deployer_auth = auth_data
+            display_name = str(data.get("username") or username)
+            display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
+            self.root.after(0, lambda: self.user_label.configure(text=f"已登录：{display_username}"))
+            self.root.after(0, self.show_wizard)
+            self.set_status_from_worker("状态：已登录，请按步骤部署")
+        finally:
+            self.root.after(0, lambda: self.set_busy(False))
+
+    def start_update_check(self) -> None:
+        if self.worker_running:
+            return
+        self.set_busy(True)
+        self.status.set("状态：正在检查更新...")
+        threading.Thread(target=self._update_worker, daemon=True).start()
+
+    def _update_worker(self) -> None:
+        try:
+            ok, msg, path, release_url = check_and_download_update(self.log_from_worker)
+            self.log_from_worker(msg)
+            if ok and path:
+                self.set_status_from_worker("状态：更新包已下载")
+                self.root.after(0, lambda: open_path(path.parent))
+                self.show_info_from_worker("更新已下载", f"{msg}\n\n位置：{path}")
+            elif release_url and "未找到 Windows 更新包" in msg:
+                self.set_status_from_worker("状态：发现新版本，请到发布页下载")
+                self.root.after(0, lambda: open_url(release_url))
+                self.show_warning_from_worker("发现新版本", msg)
+            elif "当前已是最新版本" in msg:
+                self.set_status_from_worker("状态：当前已是最新版本")
+                self.show_info_from_worker("检查更新", msg)
+            else:
+                self.set_status_from_worker("状态：检查更新失败")
+                self.show_warning_from_worker("检查更新", msg)
+        finally:
+            self.root.after(0, lambda: self.set_busy(False))
+
+    def show_wizard(self) -> None:
+        self.login_frame.pack_forget()
+        self.wizard_frame.pack(fill="both", expand=True)
+        self.step.set(1)
+        self.refresh_steps()
+
+    def start_save_key(self) -> None:
+        if self.worker_running:
+            return
+        if not self.logged_in_user:
+            messagebox.showwarning("请先登录", "请先登录胖虎AI账号。")
+            return
+        if not self.deployer_auth:
+            messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
+            return
+        api_key = self.api_key.get()
+        base_url = self.base_url.get()
+        model = self.model.get()
+        skip_test = self.skip_test.get()
+        self.set_busy(True)
+        self.status.set("状态：正在测试 API Key...")
+        threading.Thread(target=self._save_key_worker, args=(api_key, base_url, model, skip_test), daemon=True).start()
+
+    def _save_key_worker(self, api_key: str, base_url: str, model: str, skip_test: bool) -> None:
+        try:
+            if not api_key.strip():
+                raise ValueError("请先填写胖虎AI API Key。")
+            if skip_test:
+                ok, msg = True, "已保存 Key，接口测试被跳过。"
+            else:
+                ok, msg = test_api(base_url, api_key)
+            self.log_from_worker(msg)
+            self.saved_key_ok = ok
+            if ok:
+                self.saved_key_signature = (api_key.strip(), base_url.strip(), model.strip(), skip_test)
+                self.set_status_from_worker("状态：Key 已保存")
+                self.root.after(0, lambda: self.step.set(2))
+                self.root.after(0, self.refresh_steps)
+            else:
+                self.set_status_from_worker("状态：Key 测试失败")
+                self.show_warning_from_worker("Key 测试失败", msg)
+        except Exception as exc:
+            self.set_status_from_worker("状态：Key 保存失败")
+            self.show_error_from_worker("Key 保存失败", str(exc))
+        finally:
+            self.root.after(0, lambda: self.set_busy(False))
+
+    def run_environment_check(self) -> None:
+        lines = detect_environment()
+        self.env_text.configure(state="normal")
+        self.env_text.delete("1.0", "end")
+        self.env_text.insert("end", "\n".join(lines))
+        self.env_text.configure(state="disabled")
+        for line in lines:
+            self.log(line)
+        self.status.set("状态：环境检测完成")
+
+    def selected_agents(self) -> list[tuple[AgentSpec, str]]:
+        selected = []
+        for agent in AGENTS:
+            if self.agent_enabled[agent.id].get():
+                selected.append((agent, self.agent_mode[agent.id].get()))
+        return selected
+
+    def validate_config_ready(self) -> tuple[bool, tuple[str, str, str, bool] | None]:
+        if self.worker_running:
+            return False, None
+        if not self.logged_in_user:
+            messagebox.showwarning("请先登录", "请先登录胖虎AI账号。")
+            return False, None
+        if not self.deployer_auth:
+            messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
+            return False, None
+        current_key_signature = self.current_key_signature()
+        if not current_key_signature[0]:
+            messagebox.showwarning("请先填写 Key", "请先在第一步填写胖虎AI API Key。")
+            self.step.set(1)
+            self.refresh_steps()
+            return False, None
+        if not self.saved_key_ok or self.saved_key_signature != current_key_signature:
+            messagebox.showwarning("请先保存 Key", "请先在第一步保存当前胖虎AI API Key，然后再开始部署。")
+            self.step.set(1)
+            self.refresh_steps()
+            return False, None
+        return True, current_key_signature
+
+    def validate_system_and_risk_plugins(self) -> bool:
+        actual_system = current_system_id()
+        if self.selected_system.get() != actual_system:
+            readable = {"windows": "Windows", "mac": "Mac", "other": "其他系统"}
+            messagebox.showwarning(
+                "系统选择不一致",
+                f"当前电脑识别为 {readable.get(actual_system, actual_system)}，"
+                f"但你选择的是 {readable.get(self.selected_system.get(), self.selected_system.get())}。请回到第二步选择当前电脑系统。",
+            )
+            self.step.set(2)
+            self.refresh_steps()
+            return False
+        risk_findings = detect_risk_plugins()
+        if risk_findings:
+            for line in risk_plugin_report_lines(risk_findings):
+                self.log(line)
+            messagebox.showwarning("请先卸载第三方插件", format_risk_plugin_block_message(risk_findings))
+            self.status.set("状态：发现第三方配置插件，请先卸载后再部署")
+            self.step.set(2)
+            self.refresh_steps()
+            return False
+        return True
+
+    def start_deploy(self) -> None:
+        ok, _current_key_signature = self.validate_config_ready()
+        if not ok:
+            return
+        selected = self.selected_agents()
+        if not selected:
+            messagebox.showwarning("请选择 Agent", "请至少选择一个 Agent。")
+            return
+        if not self.validate_system_and_risk_plugins():
+            return
+        user = dict(self.logged_in_user or {})
+        deployer_auth = dict(self.deployer_auth or {})
+        api_key = self.api_key.get()
+        base_url = self.base_url.get()
+        model = self.model.get()
+        skip_test = self.skip_test.get()
+        open_app = self.open_app.get()
+        self.set_busy(True)
+        self.status.set("状态：正在部署 Agent...")
+        threading.Thread(
+            target=self._deploy_worker,
+            args=(selected, user, deployer_auth, api_key, base_url, model, skip_test, open_app),
+            daemon=True,
+        ).start()
+
+    def start_config_only(self) -> None:
+        ok, _current_key_signature = self.validate_config_ready()
+        if not ok:
+            return
+        if not self.validate_system_and_risk_plugins():
+            return
+        api_key = self.api_key.get()
+        base_url = self.base_url.get()
+        model = self.model.get()
+        skip_test = self.skip_test.get()
+        open_app = self.open_app.get()
+        self.set_busy(True)
+        self.status.set("状态：正在修复 Codex 配置...")
+        threading.Thread(
+            target=self._config_only_worker,
+            args=(api_key, base_url, model, skip_test, open_app),
+            daemon=True,
+        ).start()
+
+    def _config_only_worker(self, api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool) -> None:
+        try:
+            ok = install_codex_config(api_key, base_url, model, skip_test, open_app, self.log_from_worker)
+            if ok:
+                self.set_status_from_worker("状态：Codex 配置修复完成")
+                self.show_info_from_worker("配置完成", "Codex 配置已重新写入，不会重新安装 Agent。")
+            else:
+                self.set_status_from_worker("状态：Codex 配置测试失败，已恢复备份")
+                self.show_warning_from_worker("配置测试失败", "配置写入后接口测试失败，已自动恢复备份。请检查 Key、余额或网络。")
+        except Exception as exc:
+            self.set_status_from_worker("状态：Codex 配置修复失败")
+            self.log_from_worker(f"Codex 配置修复失败：{exc}")
+            self.show_error_from_worker("配置修复失败", str(exc))
+        finally:
+            self.root.after(0, lambda: self.set_busy(False))
+
+    def _deploy_worker(
+        self,
+        selected: list[tuple[AgentSpec, str]],
+        user: dict,
+        deployer_auth: dict,
+        api_key: str,
+        base_url: str,
+        model: str,
+        skip_test: bool,
+        open_app: bool,
+    ) -> None:
+        try:
+            token = str(deployer_auth.get("token") or "")
+            ok, msg, manifest = fetch_deployer_manifest(user, self.cookie_jar, token)
+            self.log_from_worker(msg)
+            if not ok:
+                raise RuntimeError(msg)
+            self.deployer_manifest = manifest
+            allowed_agents = set(manifest_allowed_agents(manifest))
+            blocked = [agent.name for agent, _ in selected if agent.id not in allowed_agents]
+            if blocked:
+                raise RuntimeError("当前账号未授权安装：" + "、".join(blocked))
+            self.log_from_worker("开始一键部署：" + "、".join(f"{a.name}/{m}" for a, m in selected))
+            success_count = 0
+            for agent, mode in selected:
+                if install_agent(agent, mode, self.log_from_worker):
+                    success_count += 1
+            if any(agent.id == "codex" for agent, _ in selected):
+                ok = install_codex_config(
+                    api_key,
+                    base_url,
+                    model,
+                    skip_test,
+                    open_app,
+                    self.log_from_worker,
+                )
+                if ok:
+                    self.log_from_worker("Codex 胖虎AI配置已应用。")
+            write_agent_setup_guide(selected, api_key, self.log_from_worker)
+            self.set_status_from_worker(f"状态：部署完成，成功处理 {success_count}/{len(selected)} 个 Agent")
+            self.show_info_from_worker("部署完成", "Agent 部署流程已完成，请查看日志确认每个 Agent 的状态。")
+        except Exception as exc:
+            self.set_status_from_worker("状态：部署失败")
+            self.log_from_worker(f"部署失败：{exc}")
+            self.show_error_from_worker("部署失败", str(exc))
+        finally:
+            self.root.after(0, lambda: self.set_busy(False))
 
     def open_workspace(self) -> None:
         path = workspace_root()
@@ -841,70 +2112,38 @@ class InstallerApp:
         self.root.clipboard_append(text)
         self.status.set("状态：日志已复制")
 
-    def start_install(self) -> None:
-        if self.worker_running:
-            return
-        self.set_busy(True)
-        self.status.set("状态：正在配置...")
-        thread = threading.Thread(target=self._install_worker, daemon=True)
-        thread.start()
 
-    def start_codex_app_install(self) -> None:
-        if self.worker_running:
-            return
-        self.set_busy(True)
-        self.status.set("状态：正在安装/检测 Codex 本体...")
-        thread = threading.Thread(target=self._codex_app_install_worker, daemon=True)
-        thread.start()
-
-    def _install_worker(self) -> None:
-        try:
-            ok = install_codex_config(
-                self.api_key.get(),
-                self.base_url.get(),
-                self.model.get(),
-                self.skip_test.get(),
-                self.open_app.get(),
-                self.log_from_worker,
-            )
-            self.set_status_from_worker("状态：配置完成")
-            if ok:
-                self.show_info_from_worker("胖虎AI Codex", "配置完成。以后请使用：文档/胖虎AI-Codex工作区")
-            else:
-                self.show_warning_from_worker(
-                    "胖虎AI Codex",
-                    "配置已写入，但接口测试失败。请根据日志检查 Key、余额、网络或后台账号池。",
-                )
-        except Exception as exc:
-            self.set_status_from_worker("状态：配置失败")
-            self.log_from_worker(f"配置失败：{exc}")
-            self.show_error_from_worker("配置失败", str(exc))
-        finally:
-            self.root.after(0, lambda: self.set_busy(False))
-
-    def _codex_app_install_worker(self) -> None:
-        try:
-            ok = install_codex_app(self.log_from_worker)
-            if ok:
-                self.set_status_from_worker("状态：Codex 本体已就绪")
-                self.show_info_from_worker("Codex 本体", "Codex 已安装或已检测到。现在可以继续一键配置胖虎AI。")
-            else:
-                self.set_status_from_worker("状态：Codex 本体需要手动处理")
-                self.show_warning_from_worker(
-                    "Codex 本体",
-                    "自动安装未完成。已打开官方入口，请按日志提示继续安装。",
-                )
-        except Exception as exc:
-            self.set_status_from_worker("状态：Codex 本体安装失败")
-            self.log_from_worker(f"Codex 本体安装失败：{exc}")
-            self.show_error_from_worker("Codex 本体安装失败", str(exc))
-        finally:
-            self.root.after(0, lambda: self.set_busy(False))
+def self_test() -> None:
+    assert any(agent.id == "codex" for agent in AGENTS)
+    assert any(agent.id == "claude_code" for agent in AGENTS)
+    assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)
+    assert any(spec.id == "codex_plus_plus" for spec in RISK_PLUGIN_SPECS)
+    assert LOGIN_URL.endswith("/api/user/login?turnstile=")
+    assert DEPLOYER_ACTIVATE_URL.endswith("/api/deployer/activate")
+    assert manifest_allowed_agents({"agents": [{"id": "codex"}, {"id": "hermes"}]}) == ["codex", "hermes"]
+    assert process_text_contains_alias("node ccr start", "ccr")
+    assert not process_text_contains_alias("screenrecorder.exe", "ccr")
+    assert "sk-test-secret-123456" not in sanitize_log_text("Key sk-test-secret-123456", "sk-test-secret-123456")
+    assert "刚才在本工具里填写的 API Key" in build_agent_setup_guide_content([], "sk-test-secret-123456")
+    assert "已禁止继续安装" in "\n".join(risk_plugin_report_lines([RiskPluginFinding("CCSwitch", "命令", "ccswitch", "")]))
+    config = build_config("sk-test", DEFAULT_BASE_URL, DEFAULT_MODEL)
+    assert 'model_provider = "panghuAI"' in config
+    assert 'model = "gpt-5.4"' in config
+    assert 'review_model = "gpt-5.4"' in config
+    assert 'base_url = "https://aitokenapi.cc/v1"' in config
+    assert "experimental_bearer_token" not in config
+    auth = json.loads(build_auth_json("", "sk-test"))
+    assert auth["auth_mode"] == "chatgpt"
+    assert auth["OPENAI_API_KEY"] == "sk-test"
+    assert normalize_version("v1.2.3") > normalize_version("1.0.9")
+    merged = merge_agents_rules("# old")
+    assert PANGHU_AGENTS_START in merged and PANGHU_AGENTS_END in merged
+    print("UI self-test OK")
 
 
 def main() -> int:
     if "--self-test" in sys.argv:
-        print("UI self-test OK")
+        self_test()
         return 0
     root = tk.Tk()
     InstallerApp(root)

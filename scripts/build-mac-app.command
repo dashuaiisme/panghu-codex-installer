@@ -5,5 +5,5 @@ if [ ! -d ".venv" ]; then
 fi
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements-build.txt
-.venv/bin/python -m PyInstaller --noconfirm --clean --windowed --name "胖虎AI-Codex一键安装工具" --distpath release --workpath build --specpath build src/panghu_codex_installer.py
+.venv/bin/python -m PyInstaller --noconfirm --clean --windowed --name "胖虎AI多Agent一键部署工具" --distpath release --workpath build --specpath build src/panghu_codex_installer.py
 echo "Build finished. App is under release/"
