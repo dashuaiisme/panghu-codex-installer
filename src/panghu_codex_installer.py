@@ -1333,8 +1333,7 @@ class InstallerApp:
         self.load_profile_into_ui()
         self._build_ui()
         self.apply_restored_login_state()
-        self.log(f"默认接口：{DEFAULT_BASE_URL}")
-        self.log("请先用胖虎AI注册账号登录软件。")
+        self.log("系统提示：请先登录胖虎AI账号。登录后再填写 Key、检测环境并安装 Agent。", replace=True)
 
     def set_window_icon(self) -> None:
         ico = asset_path("panghu-avatar.ico")
@@ -1396,80 +1395,90 @@ class InstallerApp:
         style.configure("TCheckbutton", background=CARD_BG, foreground=INK)
         style.configure("TRadiobutton", background=CARD_BG, foreground=INK)
 
-        self.container = tk.Frame(self.root, bg=APP_BG, padx=28, pady=22)
+        self.container = tk.Frame(self.root, bg=APP_BG, padx=24, pady=20)
         self.container.pack(fill="both", expand=True)
 
-        self.header = tk.Frame(self.container, bg=APP_BG)
+        self.header = tk.Frame(self.container, bg="#ffffff", highlightthickness=1, highlightbackground=BORDER)
         self.header.pack(fill="x")
-        top_row = tk.Frame(self.header, bg=APP_BG)
+        top_row = tk.Frame(self.header, bg="#ffffff", height=92)
         top_row.pack(fill="x")
+        top_row.pack_propagate(False)
         top_row.grid_columnconfigure(0, weight=1)
-        brand_area = tk.Frame(top_row, bg=APP_BG)
-        brand_area.grid(row=0, column=0, sticky="nw")
+        top_row.grid_columnconfigure(1, weight=0)
+        brand_area = tk.Frame(top_row, bg="#ffffff")
+        brand_area.grid(row=0, column=0, sticky="nsew", padx=(22, 18), pady=14)
         avatar = self.load_ui_image("panghu-avatar-64.png")
         if avatar:
-            tk.Label(brand_area, image=avatar, bg=APP_BG).pack(side="left", anchor="n", padx=(0, 12))
-        brand_text = tk.Frame(brand_area, bg=APP_BG)
-        brand_text.pack(side="left", anchor="n")
+            tk.Label(brand_area, image=avatar, bg="#ffffff").pack(side="left", anchor="center", padx=(0, 14))
+        brand_text = tk.Frame(brand_area, bg="#ffffff")
+        brand_text.pack(side="left", anchor="center")
         tk.Label(
             brand_text,
             text="胖虎AI",
-            font=("Microsoft YaHei UI", 12, "bold"),
+            font=("Microsoft YaHei UI", 10, "bold"),
             fg=PRIMARY,
-            bg=APP_BG,
+            bg="#ffffff",
         ).pack(anchor="w")
         tk.Label(
             brand_text,
             text="多 Agent 一键部署工具",
             font=("Microsoft YaHei UI", 21, "bold"),
             fg=INK,
-            bg=APP_BG,
-        ).pack(anchor="w", pady=(8, 0))
-        ad_panel = tk.Frame(top_row, bg="#fff8e5", padx=18, pady=12, width=282, height=126, highlightthickness=1, highlightbackground="#f1d48b")
-        ad_panel.pack_propagate(False)
-        ad_panel.grid(row=0, column=1, sticky="ne", padx=(18, 14))
+            bg="#ffffff",
+        ).pack(anchor="w", pady=(2, 0))
         tk.Label(
-            ad_panel,
-            text="胖虎AI 客户服务",
-            bg="#fff8e5",
-            fg="#8a5b00",
-            font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="w")
-        tk.Label(
-            ad_panel,
-            text="GPT Plus / Pro 代充值\n国外手机卡验证服务",
-            bg="#fff8e5",
-            fg=INK,
-            justify="left",
-            font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="w", pady=(4, 0))
-        tk.Label(
-            ad_panel,
-            text="胖虎微信：panghuwanAI",
-            bg="#fff8e5",
-            fg=PRIMARY_DARK,
-            justify="left",
-            font=("Microsoft YaHei UI", 10, "bold"),
+            brand_text,
+            text="登录胖虎AI账号后，按流程完成 Agent 安装与本机配置。",
+            font=("Microsoft YaHei UI", 9),
+            fg=MUTED,
+            bg="#ffffff",
         ).pack(anchor="w", pady=(5, 0))
-        action_area = tk.Frame(top_row, bg=APP_BG)
-        action_area.grid(row=0, column=2, sticky="ne")
+
+        action_area = tk.Frame(top_row, bg="#ffffff")
+        action_area.grid(row=0, column=1, sticky="e", padx=(0, 22), pady=24)
+        self.update_button = tk.Button(
+            action_area,
+            text="检查更新",
+            command=self.start_update_check,
+            bg="#eef5f8",
+            fg=PRIMARY_DARK,
+            activebackground="#d2e3eb",
+            activeforeground=PRIMARY_DARK,
+            relief="flat",
+            bd=0,
+            padx=16,
+            pady=7,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        self.update_button.pack(side="left")
         self.user_label = tk.Label(
             action_area,
             text="未登录",
-            bg="#dceaf1",
-            fg=PRIMARY_DARK,
-            padx=14,
-            pady=6,
+            bg=GOLD_SOFT,
+            fg="#8a5b00",
+            padx=15,
+            pady=7,
             font=("Microsoft YaHei UI", 10, "bold"),
         )
-        self.user_label.pack(side="right")
-        self.update_button = self._button(action_area, "检查更新", self.start_update_check, "secondary")
-        self.update_button.pack(side="right", padx=(0, 10))
+        self.user_label.pack(side="left", padx=(10, 0))
+
+        support_bar = tk.Frame(self.header, bg="#f7fbfd", height=36)
+        support_bar.pack(fill="x")
+        support_bar.pack_propagate(False)
+        tk.Frame(support_bar, bg=BORDER, height=1).pack(fill="x")
+        tk.Label(
+            support_bar,
+            text="客服微信：panghuwanAI  ·  Plus / Pro 代充  ·  国外手机验证",
+            bg="#f7fbfd",
+            fg=PRIMARY_DARK,
+            font=("Microsoft YaHei UI", 9, "bold"),
+        ).pack(side="left", padx=22, pady=(7, 0))
 
         self.body = tk.Frame(self.container, bg=APP_BG)
-        self.body.pack(fill="both", expand=True, pady=(18, 0))
+        self.body.pack(fill="both", expand=True, pady=(14, 0))
 
-        self.login_frame = tk.Frame(self.body, bg=CARD_BG, relief="flat", highlightthickness=1, highlightbackground=BORDER)
+        self.login_frame = tk.Frame(self.body, bg=APP_BG, relief="flat", highlightthickness=0)
         self.login_frame.pack(fill="both", expand=True, ipady=0)
         self._build_login_frame(self.login_frame)
 
@@ -1478,18 +1487,18 @@ class InstallerApp:
 
         self.log_box = tk.Text(
             self.container,
-            height=3,
-            bg="#07151c",
-            fg="#d7f9ea",
-            insertbackground="#d7f9ea",
+            height=2,
+            bg="#ffffff",
+            fg="#33536a",
+            insertbackground="#33536a",
             relief="flat",
             borderwidth=0,
-            padx=14,
-            pady=10,
+            padx=12,
+            pady=6,
             wrap="word",
-            font=("Cascadia Mono", 9),
+            font=("Microsoft YaHei UI", 9),
         )
-        self.log_box.pack(fill="both", expand=False, pady=(14, 0))
+        self.log_box.pack(fill="both", expand=False, pady=(10, 0))
         self.log_box.configure(state="disabled")
 
         tk.Label(self.container, textvariable=self.status, bg=APP_BG, fg=MUTED).pack(anchor="w", pady=(8, 0))
@@ -1519,53 +1528,23 @@ class InstallerApp:
 
     def _build_login_frame(self, parent: tk.Frame) -> None:
         parent.configure(padx=0, pady=0)
-        hero = tk.Frame(parent, bg=PRIMARY_DARK, width=340, height=250)
-        hero.pack(side="left", fill="y")
-        hero.pack_propagate(False)
+        login_card = tk.Frame(parent, bg=CARD_BG, padx=30, pady=28, highlightthickness=1, highlightbackground=BORDER)
+        login_card.pack(side="left", fill="both", expand=True, padx=(0, 14))
         tk.Label(
-            hero,
-            text="客户部署中枢",
-            font=("Microsoft YaHei UI", 22, "bold"),
-            bg=PRIMARY_DARK,
-            fg="#ffffff",
-        ).pack(anchor="w", padx=26, pady=(42, 0))
+            login_card,
+            text="登录胖虎AI账号",
+            font=("Microsoft YaHei UI", 19, "bold"),
+            bg=CARD_BG,
+            fg=INK,
+        ).pack(anchor="w")
         tk.Label(
-            hero,
-            text="登录后完成 Key 创建、环境检测、Agent 安装和安全配置应用。",
-            font=("Microsoft YaHei UI", 10),
-            bg=PRIMARY_DARK,
-            fg="#bdebe2",
-            wraplength=250,
-            justify="left",
-        ).pack(anchor="w", padx=26, pady=(14, 0))
-        hero_notes = tk.Frame(hero, bg=PRIMARY_DARK)
-        hero_notes.pack(anchor="w", fill="x", padx=26, pady=(30, 0))
-        for label, value in (("支持 Agent", "Codex / ClaudeCode / OpenClaw / Hermes"), ("安装来源", "官方在线入口"), ("客户流程", "登录后按 4 步完成")):
-            item = tk.Frame(hero_notes, bg=PRIMARY_DARK)
-            item.pack(fill="x", pady=(0, 15))
-            tk.Label(item, text=label, bg=PRIMARY_DARK, fg="#7dd3c7", font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
-            tk.Label(item, text=value, bg=PRIMARY_DARK, fg="#ffffff", wraplength=275, justify="left").pack(anchor="w", pady=(3, 0))
-        tk.Label(
-            hero,
-            text="客户版  |  Windows / Mac",
-            bg=GOLD,
-            fg=PRIMARY_DARK,
-            padx=12,
-            pady=7,
-            font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(side="bottom", anchor="w", padx=26, pady=28)
-
-        form_panel = tk.Frame(parent, bg=CARD_BG, padx=42, pady=36)
-        form_panel.pack(side="left", fill="both", expand=True)
-        tk.Label(form_panel, text="登录胖虎AI账号", font=("Microsoft YaHei UI", 17, "bold"), bg=CARD_BG, fg=INK).pack(anchor="w")
-        tk.Label(
-            form_panel,
+            login_card,
             text="只有胖虎AI注册用户可以使用部署工具；没有账号请先注册。",
             bg=CARD_BG,
             fg=MUTED,
-        ).pack(anchor="w", pady=(6, 14))
+        ).pack(anchor="w", pady=(8, 20))
 
-        fields = tk.Frame(form_panel, bg=CARD_BG)
+        fields = tk.Frame(login_card, bg=CARD_BG)
         fields.pack(fill="x")
         account = tk.Frame(fields, bg=CARD_BG)
         account.pack(fill="x")
@@ -1577,24 +1556,72 @@ class InstallerApp:
         tk.Label(password, text="密码", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
         ttk.Entry(password, textvariable=self.login_password, show="*", font=("Microsoft YaHei UI", 11)).pack(fill="x", ipady=7, pady=(6, 0))
 
-        buttons = tk.Frame(form_panel, bg=CARD_BG)
-        buttons.pack(fill="x", pady=(18, 0))
+        buttons = tk.Frame(login_card, bg=CARD_BG)
+        buttons.pack(fill="x", pady=(20, 0))
         self.login_button = self._button(buttons, "登录并激活工具", self.start_login, "primary")
         self.login_button.pack(side="left")
         self._button(buttons, "去胖虎AI注册账号", lambda: open_url(REGISTER_URL)).pack(side="left", padx=(12, 0))
 
-        divider = tk.Frame(form_panel, bg=BORDER, height=1)
-        divider.pack(fill="x", pady=(30, 22))
-        tk.Label(form_panel, text="客户使用流程", font=("Microsoft YaHei UI", 12, "bold"), bg=CARD_BG, fg=INK).pack(anchor="w")
-        flow = tk.Frame(form_panel, bg=CARD_BG)
-        flow.pack(fill="x", pady=(12, 0))
-        flow.grid_columnconfigure(0, weight=1)
-        flow.grid_columnconfigure(1, weight=1)
-        for idx, text in enumerate(("创建 Key", "检测系统", "选择 Agent", "一键部署")):
-            item = tk.Frame(flow, bg=PANEL_BG, padx=12, pady=10, highlightthickness=1, highlightbackground=BORDER)
-            item.grid(row=idx // 2, column=idx % 2, sticky="ew", padx=(0, 10 if idx % 2 == 0 else 0), pady=(0, 10))
-            tk.Label(item, text=f"0{idx + 1}", bg=PANEL_BG, fg=GOLD, font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
-            tk.Label(item, text=text, bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w", pady=(5, 0))
+        tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(26, 14))
+        tk.Label(
+            login_card,
+            text="支持系统：Windows / Mac",
+            bg=CARD_BG,
+            fg=PRIMARY_DARK,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            login_card,
+            text="支持 Agent：Codex、ClaudeCode、OpenClaw、Hermes。安装来源全部使用官方在线入口。",
+            bg=CARD_BG,
+            fg=MUTED,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(5, 0))
+        tk.Label(
+            login_card,
+            text="安全说明：密码只用于登录验证；API Key 只写入本机 Agent 配置，日志会自动隐藏明文 Key。",
+            bg=CARD_BG,
+            fg=MUTED,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(10, 0))
+
+        guide_card = tk.Frame(parent, bg="#ffffff", padx=26, pady=24, width=340, highlightthickness=1, highlightbackground=BORDER)
+        guide_card.pack(side="left", fill="y")
+        guide_card.pack_propagate(False)
+        tk.Label(guide_card, text="客户使用流程", font=("Microsoft YaHei UI", 17, "bold"), bg="#ffffff", fg=INK).pack(anchor="w")
+        tk.Label(
+            guide_card,
+            text="按顺序完成，软件会提示下一步。",
+            bg="#ffffff",
+            fg=MUTED,
+            wraplength=275,
+            justify="left",
+        ).pack(anchor="w", pady=(5, 16))
+        for idx, (title, desc) in enumerate((
+            ("创建 Key", "填写胖虎AI API Key"),
+            ("检测系统", "识别 Windows / Mac 和依赖环境"),
+            ("选择 Agent", "选择要安装的 Agent 和安装方式"),
+            ("一键部署", "安装完成后应用安全配置"),
+        )):
+            item = tk.Frame(guide_card, bg="#ffffff")
+            item.pack(fill="x", pady=(0, 12))
+            tk.Label(
+                item,
+                text=str(idx + 1),
+                bg=GOLD,
+                fg=PRIMARY_DARK,
+                width=3,
+                pady=3,
+                font=("Microsoft YaHei UI", 9, "bold"),
+            ).pack(side="left", anchor="n", padx=(0, 12))
+            copy = tk.Frame(item, bg="#ffffff")
+            copy.pack(side="left", fill="x", expand=True)
+            tk.Label(copy, text=title, bg="#ffffff", fg=INK, font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+            tk.Label(copy, text=desc, bg="#ffffff", fg=MUTED, wraplength=245, justify="left").pack(anchor="w", pady=(3, 0))
+            if idx < 3:
+                tk.Frame(guide_card, bg="#e7eef3", height=1).pack(fill="x", pady=(0, 12))
 
     def _build_wizard_frame(self, parent: tk.Frame) -> None:
         shell = tk.Frame(parent, bg=APP_BG)
@@ -1873,37 +1900,38 @@ class InstallerApp:
             justify="left",
         ).pack(anchor="w", pady=(7, 0))
         ttk.Checkbutton(frame, text="完成后尝试打开 Codex App", variable=self.open_app).pack(anchor="w")
-        help_box = tk.Frame(frame, bg="#f5f8fb", padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
+
+        actions = tk.Frame(frame, bg=CARD_BG)
+        actions.pack(fill="x", pady=(14, 0))
+
+        primary_actions = tk.Frame(actions, bg=CARD_BG)
+        primary_actions.pack(fill="x")
+        self.deploy_button = self._button(primary_actions, "开始一键部署", self.start_deploy, "success")
+        self.deploy_button.pack(side="left")
+        self.config_button = self._button(primary_actions, "仅修复 Codex 配置", self.start_config_only, "primary")
+        self.config_button.pack(side="left", padx=(10, 0))
+        self.restore_button = self._button(primary_actions, "恢复最近备份", self.restore_backups, "secondary")
+        self.restore_button.pack(side="left", padx=(10, 0))
+
+        utility_actions = tk.Frame(actions, bg=CARD_BG)
+        utility_actions.pack(fill="x", pady=(10, 0))
+        self._button(utility_actions, "复制日志", self.copy_logs, "secondary").pack(side="left")
+        self._button(utility_actions, "打开工作区", self.open_workspace, "secondary").pack(side="left", padx=(10, 0))
+        self._button(utility_actions, "打开配置目录", self.open_config_dir, "secondary").pack(side="left", padx=(10, 0))
+
+        help_box = tk.Frame(frame, bg="#f5f8fb", padx=12, pady=8, highlightthickness=1, highlightbackground=BORDER)
         help_box.pack(fill="x", pady=(14, 0))
-        tk.Label(help_box, text="按钮怎么选", bg="#f5f8fb", fg=INK, font=("Microsoft YaHei UI", 11, "bold")).pack(
-            anchor="w"
-        )
         tk.Label(
             help_box,
             text=(
-                "首次给客户电脑安装 Agent：点“开始一键部署”。\n"
-                "Agent 已经装好了，只是 Codex 配置坏了或换了 Key：点“仅修复 Codex 配置”。\n"
-                "想撤回本次写入：点“恢复最近备份”。\n"
-                "软件有新版本或你通知客户升级：点“检查更新”。\n"
-                "排查问题时：点“复制日志”发给客服。"
+                "提示：首次安装用“一键部署”；只换 Key 或配置损坏用“仅修复”；撤回写入用“恢复备份”；"
+                "升级入口在顶部“检查更新”。"
             ),
             bg="#f5f8fb",
             fg=MUTED,
             wraplength=760,
             justify="left",
-        ).pack(anchor="w", pady=(7, 0))
-        actions = tk.Frame(frame, bg="#ffffff")
-        actions.pack(fill="x", pady=(18, 0))
-        self.deploy_button = self._button(actions, "开始一键部署", self.start_deploy, "success")
-        self.deploy_button.pack(side="left")
-        self.config_button = self._button(actions, "仅修复 Codex 配置", self.start_config_only, "primary")
-        self.config_button.pack(side="left", padx=(10, 0))
-        self.restore_button = self._button(actions, "恢复最近备份", self.restore_backups, "secondary")
-        self.restore_button.pack(side="left", padx=(10, 0))
-        self._button(actions, "复制日志", self.copy_logs, "secondary").pack(side="left", padx=(10, 0))
-        self._button(actions, "打开工作区", self.open_workspace, "secondary").pack(side="left", padx=(10, 0))
-        self._button(actions, "打开配置目录", self.open_config_dir, "secondary").pack(side="left", padx=(10, 0))
-        self._button(actions, "检查更新", self.start_update_check, "secondary").pack(side="left", padx=(10, 0))
+        ).pack(anchor="w")
 
     def refresh_steps(self) -> None:
         for idx, frame in self.step_frames.items():
@@ -1921,11 +1949,15 @@ class InstallerApp:
     def toggle_key(self) -> None:
         self.key_entry.configure(show="" if self.show_key.get() else "*")
 
-    def log(self, message: str) -> None:
+    def log(self, message: str, replace: bool = False) -> None:
         safe = sanitize_log_text(message, self.api_key.get().strip())
-        now = time.strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{now}] {safe}\n")
+        if replace:
+            self.log_box.delete("1.0", "end")
+            self.log_box.insert("end", safe)
+        else:
+            now = time.strftime("%H:%M:%S")
+            self.log_box.insert("end", f"[{now}] {safe}\n")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
         self.root.update_idletasks()
