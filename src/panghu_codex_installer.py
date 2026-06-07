@@ -20,8 +20,8 @@ from urllib.parse import quote
 from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, urlretrieve
 
 
-APP_NAME = "胖虎AI多 Agent 一键部署工具"
-APP_VERSION = "1.0.3"
+APP_NAME = "胖虎AI多Agent一键部署工具"
+APP_VERSION = "1.0.4"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
@@ -29,7 +29,8 @@ CODEX_PROVIDER_NAME = "panghuAI"
 CODEX_BASE_URL = "https://aitokenapi.cc/v1"
 GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
 PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
-WINDOWS_RELEASE_ASSET_NAME = "PanghuAI-Agent-Deployer-Windows.zip"
+WINDOWS_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
+WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
 DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
@@ -220,6 +221,9 @@ def app_root() -> Path:
 
 
 def asset_path(name: str) -> Path:
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        return Path(bundled_root) / "assets" / name
     return app_root() / "assets" / name
 
 
@@ -635,16 +639,7 @@ def merge_config(existing: str, api_key: str, base_url: str, model: str) -> str:
 
 
 def build_auth_json(existing: str, api_key: str) -> str:
-    payload: dict = {}
-    if existing.strip():
-        try:
-            parsed = json.loads(existing)
-            if isinstance(parsed, dict):
-                payload = parsed
-        except json.JSONDecodeError:
-            payload = {}
-    payload["auth_mode"] = "chatgpt"
-    payload["OPENAI_API_KEY"] = api_key.strip()
+    payload = {"OPENAI_API_KEY": api_key.strip()}
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
@@ -1304,9 +1299,10 @@ class InstallerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_NAME)
-        root.geometry("1000x860")
-        root.minsize(940, 740)
+        root.geometry("1120x860")
+        root.minsize(1040, 740)
         root.configure(bg=APP_BG)
+        self.ui_images: list[tk.PhotoImage] = []
         self.set_window_icon()
 
         self.cookie_jar = http.cookiejar.CookieJar()
@@ -1340,8 +1336,8 @@ class InstallerApp:
         self.log("请先用胖虎AI注册账号登录软件。")
 
     def set_window_icon(self) -> None:
-        ico = asset_path("panghu.ico")
-        png = asset_path("panghu.png")
+        ico = asset_path("panghu-avatar.ico")
+        png = asset_path("panghu-avatar-64.png")
         try:
             if ico.exists() and platform.system() == "Windows":
                 self.root.iconbitmap(str(ico))
@@ -1350,6 +1346,17 @@ class InstallerApp:
                 self.root.iconphoto(True, self.window_icon)
         except Exception:
             self.window_icon = None
+
+    def load_ui_image(self, name: str) -> tk.PhotoImage | None:
+        path = asset_path(name)
+        if not path.exists():
+            return None
+        try:
+            image = tk.PhotoImage(file=str(path))
+            self.ui_images.append(image)
+            return image
+        except Exception:
+            return None
 
     def load_profile_into_ui(self) -> None:
         profile = load_saved_profile()
@@ -1395,15 +1402,58 @@ class InstallerApp:
         self.header.pack(fill="x")
         top_row = tk.Frame(self.header, bg=APP_BG)
         top_row.pack(fill="x")
+        top_row.grid_columnconfigure(0, weight=1)
+        brand_area = tk.Frame(top_row, bg=APP_BG)
+        brand_area.grid(row=0, column=0, sticky="nw")
+        avatar = self.load_ui_image("panghu-avatar-64.png")
+        if avatar:
+            tk.Label(brand_area, image=avatar, bg=APP_BG).pack(side="left", anchor="n", padx=(0, 12))
+        brand_text = tk.Frame(brand_area, bg=APP_BG)
+        brand_text.pack(side="left", anchor="n")
         tk.Label(
-            top_row,
+            brand_text,
             text="胖虎AI",
             font=("Microsoft YaHei UI", 12, "bold"),
             fg=PRIMARY,
             bg=APP_BG,
-        ).pack(side="left", anchor="w")
+        ).pack(anchor="w")
+        tk.Label(
+            brand_text,
+            text="多 Agent 一键部署工具",
+            font=("Microsoft YaHei UI", 21, "bold"),
+            fg=INK,
+            bg=APP_BG,
+        ).pack(anchor="w", pady=(8, 0))
+        ad_panel = tk.Frame(top_row, bg="#fff8e5", padx=18, pady=12, width=282, height=126, highlightthickness=1, highlightbackground="#f1d48b")
+        ad_panel.pack_propagate(False)
+        ad_panel.grid(row=0, column=1, sticky="ne", padx=(18, 14))
+        tk.Label(
+            ad_panel,
+            text="胖虎AI 客户服务",
+            bg="#fff8e5",
+            fg="#8a5b00",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            ad_panel,
+            text="GPT Plus / Pro 代充值\n国外手机卡验证服务",
+            bg="#fff8e5",
+            fg=INK,
+            justify="left",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(
+            ad_panel,
+            text="胖虎微信：panghuwanAI",
+            bg="#fff8e5",
+            fg=PRIMARY_DARK,
+            justify="left",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(anchor="w", pady=(5, 0))
+        action_area = tk.Frame(top_row, bg=APP_BG)
+        action_area.grid(row=0, column=2, sticky="ne")
         self.user_label = tk.Label(
-            top_row,
+            action_area,
             text="未登录",
             bg="#dceaf1",
             fg=PRIMARY_DARK,
@@ -1412,15 +1462,8 @@ class InstallerApp:
             font=("Microsoft YaHei UI", 10, "bold"),
         )
         self.user_label.pack(side="right")
-        self.update_button = self._button(top_row, "检查更新", self.start_update_check, "secondary")
+        self.update_button = self._button(action_area, "检查更新", self.start_update_check, "secondary")
         self.update_button.pack(side="right", padx=(0, 10))
-        tk.Label(
-            self.header,
-            text="多 Agent 一键部署工具",
-            font=("Microsoft YaHei UI", 21, "bold"),
-            fg=INK,
-            bg=APP_BG,
-        ).pack(anchor="w", pady=(8, 0))
 
         self.body = tk.Frame(self.container, bg=APP_BG)
         self.body.pack(fill="both", expand=True, pady=(18, 0))
@@ -1478,16 +1521,13 @@ class InstallerApp:
         hero = tk.Frame(parent, bg=PRIMARY_DARK, width=340, height=250)
         hero.pack(side="left", fill="y")
         hero.pack_propagate(False)
-        tk.Label(hero, text="PANGHUAI", font=("Microsoft YaHei UI", 12, "bold"), bg=PRIMARY_DARK, fg="#6ee7b7").pack(
-            anchor="w", padx=26, pady=(26, 0)
-        )
         tk.Label(
             hero,
             text="客户部署中枢",
             font=("Microsoft YaHei UI", 22, "bold"),
             bg=PRIMARY_DARK,
             fg="#ffffff",
-        ).pack(anchor="w", padx=26, pady=(18, 0))
+        ).pack(anchor="w", padx=26, pady=(42, 0))
         tk.Label(
             hero,
             text="登录后完成 Key 创建、环境检测、Agent 安装和安全配置应用。",
@@ -2275,7 +2315,7 @@ requires_openai_auth = true
     assert merge_config("old = true\n[desktop]\nappearanceTheme = \"light\"\n", "sk-test", "bad", "bad") == expected_config
     assert "experimental_bearer_token" not in config
     auth = json.loads(build_auth_json("", "sk-test"))
-    assert auth["auth_mode"] == "chatgpt"
+    assert list(auth.keys()) == ["OPENAI_API_KEY"]
     assert auth["OPENAI_API_KEY"] == "sk-test"
     assert normalize_version("v1.2.3") > normalize_version("1.0.9")
     merged = merge_agents_rules("# old")

@@ -6,7 +6,7 @@
 
 - 规范源码目录：`C:\Users\Administrator\Documents\codex\panghu-codex-installer`
 - 原客户发布包位置：`J:\桌面收纳\工具\codex一键安装工具\release\PanghuAI-Codex-Installer-Windows.zip`
-- 新版推荐发布包名：`PanghuAI-Agent-Deployer-Windows.zip`
+- 新版推荐发布包名：`胖虎AI多Agent一键部署工具-Windows.zip`
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
 - GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/latest`
 - 公开更新清单：`https://aitokenapi.cc/deployer/latest.json`
