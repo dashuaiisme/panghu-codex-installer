@@ -31,6 +31,7 @@ GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-inst
 PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
 WINDOWS_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
 WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
+WINDOWS_RELEASE_ASSET_ALIASES = (WINDOWS_RELEASE_ASSET_NAME, "AI.Agent.-Windows.zip")
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
 DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
@@ -869,7 +870,7 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
         if not isinstance(asset, dict):
             continue
         name = str(asset.get("name") or "")
-        if name == WINDOWS_RELEASE_ASSET_NAME:
+        if name in WINDOWS_RELEASE_ASSET_ALIASES:
             asset_url = str(asset.get("browser_download_url") or "")
             break
     if not asset_url:
