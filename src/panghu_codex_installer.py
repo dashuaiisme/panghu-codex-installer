@@ -21,7 +21,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, 
 
 
 APP_NAME = "胖虎AI多 Agent 一键部署工具"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"

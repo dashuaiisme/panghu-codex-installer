@@ -8,7 +8,8 @@
 - 原客户发布包位置：`J:\桌面收纳\工具\codex一键安装工具\release\PanghuAI-Codex-Installer-Windows.zip`
 - 新版推荐发布包名：`PanghuAI-Agent-Deployer-Windows.zip`
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
-- GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/tag/v0.1.0`
+- GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/latest`
+- 公开更新清单：`https://aitokenapi.cc/deployer/latest.json`
 - 仓库只保存源码、脚本和说明；`build/`、`release/`、缓存和 exe/zip 发布产物不提交。
 
 ## 客户流程
@@ -20,7 +21,7 @@
 5. 选择 Agent 和安装方式：`Codex`、`ClaudeCode`、`OpenClaw`、`Hermes`，支持 CLI / 客户端入口。
 6. 点击“一键部署”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用胖虎AI配置。
 7. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
-8. 后续软件有新版时，点击“检查更新”下载最新 Windows 更新包。
+8. 后续软件有新版时，点击“检查更新”下载最新 Windows 更新包；更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
 
 ## 服务端授权
 
