@@ -1,13 +1,13 @@
 胖虎AI多 Agent 一键部署工具 - Windows 客户版
 
 发送给客户：
-1. 直接把整个 PanghuAI-Agent-Deployer 文件夹发给客户。
-2. 或者发送 PanghuAI-Agent-Deployer-Windows.zip。
+1. 推荐发送固定下载入口：https://aitokenapi.cc/deployer/download
+2. 或者发送 胖虎AI多Agent一键部署工具-Windows.zip。
 
 客户使用：
 1. 解压 zip。
-2. 打开 PanghuAI-Agent-Deployer 文件夹。
-3. 双击 PanghuAI-Agent-Deployer.exe。
+2. 打开 胖虎AI多Agent一键部署工具 文件夹。
+3. 双击 胖虎AI多Agent一键部署工具.exe。
 4. 先用胖虎AI注册账号登录软件；没有账号就点击“去胖虎AI注册账号”。
 5. 登录后软件会自动向胖虎AI服务端申请部署授权，未授权账号不能继续部署。
 6. 第一步：打开 API Key 创建页面，创建 Key 后粘贴到工具里，点击“保存并测试 Key”。

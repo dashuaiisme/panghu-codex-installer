@@ -114,13 +114,13 @@ scripts\build-windows-exe.bat
 打包后发送：
 
 ```text
-release\PanghuAI-Agent-Deployer-Windows.zip
+release\胖虎AI多Agent一键部署工具-Windows.zip
 ```
 
 客户解压后双击里面的：
 
 ```text
-PanghuAI-Agent-Deployer.exe
+胖虎AI多Agent一键部署工具.exe
 ```
 
 ## Mac 开发运行
