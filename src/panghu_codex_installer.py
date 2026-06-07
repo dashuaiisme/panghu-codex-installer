@@ -27,6 +27,7 @@ DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
 CODEX_BASE_URL = "https://aitokenapi.cc/v1"
 GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
+PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
 WINDOWS_RELEASE_ASSET_NAME = "PanghuAI-Agent-Deployer-Windows.zip"
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
@@ -200,10 +201,25 @@ def workspace_root() -> Path:
     return Path.home() / "Documents" / "胖虎AI-Agent工作区"
 
 
+def app_data_dir() -> Path:
+    base = os.environ.get("APPDATA")
+    if base:
+        return Path(base) / "PanghuAI-Agent-Deployer"
+    return Path.home() / ".panghuai-agent-deployer"
+
+
+def profile_path() -> Path:
+    return app_data_dir() / "profile.json"
+
+
 def app_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[1]
+
+
+def asset_path(name: str) -> Path:
+    return app_root() / "assets" / name
 
 
 def current_system_id() -> str:
@@ -217,7 +233,7 @@ def current_system_id() -> str:
 
 def run_command(command: list[str], timeout: int = 900) -> tuple[bool, str]:
     try:
-        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout, encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return False, f"未找到命令：{command[0]}"
     except subprocess.TimeoutExpired:
@@ -250,6 +266,8 @@ def npm_global_packages() -> set[str]:
             ["npm", "list", "-g", "--depth=0", "--json"],
             text=True,
             capture_output=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=8,
         )
     except Exception:
@@ -365,9 +383,97 @@ def codex_app_package_exists() -> tuple[bool, str]:
     return bool(package), package
 
 
+def create_codex_shortcuts(log) -> None:
+    if platform.system() != "Windows":
+        return
+    package_ok, _package = codex_app_package_exists()
+    if not package_ok:
+        return
+    shortcut_targets = [
+        Path.home() / "Desktop" / "Codex.lnk",
+        Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Codex.lnk",
+    ]
+    shortcut_commands = []
+    for target in shortcut_targets:
+        if not str(target):
+            continue
+        safe_target = str(target).replace("'", "''")
+        shortcut_commands.append(
+            f"$s = $shell.CreateShortcut('{safe_target}'); "
+            "$s.TargetPath = 'explorer.exe'; "
+            "$s.Arguments = 'shell:AppsFolder\\OpenAI.Codex_8wekyb3d8bbwe!App'; "
+            "$s.IconLocation = 'shell32.dll,220'; "
+            "$s.Save()"
+        )
+    script = "\n".join(
+        [
+            "$shell = New-Object -ComObject WScript.Shell",
+            *shortcut_commands,
+        ]
+    )
+    ok, output = run_command(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], timeout=20)
+    if ok:
+        log("已创建 Codex 快捷方式：桌面和开始菜单。")
+    else:
+        log(f"Codex 快捷方式创建失败：{output}")
+
+
+def agent_client_status(agent: AgentSpec) -> tuple[bool, str]:
+    if agent.id == "codex":
+        return codex_app_package_exists()
+    if agent.id == "claude_code":
+        return False, "ClaudeCode 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
+    if agent.id == "openclaw":
+        return False, "OpenClaw 当前按官方 CLI/Hub 入口检测，未发现可稳定识别的独立客户端包。"
+    if agent.id == "hermes":
+        return False, "Hermes 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
+    return False, "未配置客户端检测规则。"
+
+
+def agent_install_status_lines() -> list[str]:
+    lines = ["Agent 检测："]
+    for agent in AGENTS:
+        cli_ok, cli_version = version_for(agent.verify_command)
+        client_ok, client_detail = agent_client_status(agent)
+        cli_text = f"CLI 已找到 {cli_version}" if cli_ok else "CLI 未找到"
+        if client_ok:
+            client_text = f"客户端已找到 {client_detail}"
+        else:
+            client_text = f"客户端未确认：{client_detail}"
+        lines.append(f"- {agent.name}: {cli_text}；{client_text}")
+    return lines
+
+
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def load_saved_profile() -> dict:
+    path = profile_path()
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_profile_data(data: dict) -> None:
+    current = load_saved_profile()
+    current.update(data)
+    safe = {
+        "username": str(current.get("username") or ""),
+        "user": current.get("user") if isinstance(current.get("user"), dict) else {},
+        "deployer_auth": current.get("deployer_auth") if isinstance(current.get("deployer_auth"), dict) else {},
+        "api_key": str(current.get("api_key") or ""),
+        "base_url": str(current.get("base_url") or DEFAULT_BASE_URL),
+        "model": str(current.get("model") or DEFAULT_MODEL),
+        "skip_test": bool(current.get("skip_test")),
+        "open_app": bool(current.get("open_app", True)),
+    }
+    write_text(profile_path(), json.dumps(safe, ensure_ascii=False, indent=2) + "\n")
 
 
 def backup_file(path: Path) -> Path | None:
@@ -787,6 +893,33 @@ def downloads_dir() -> Path:
 
 
 def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
+    try:
+        req = Request(PUBLIC_UPDATE_MANIFEST_URL, headers={"Accept": "application/json", "User-Agent": APP_NAME})
+        with urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        payload = {}
+
+    if payload:
+        latest_tag = str(payload.get("version") or payload.get("tag_name") or "").strip()
+        release_url = str(payload.get("html_url") or payload.get("release_url") or DEFAULT_BASE_URL)
+        asset_url = str(payload.get("windows_zip_url") or payload.get("download_url") or "")
+        if not latest_tag:
+            return False, "检查更新失败：公开更新清单缺少版本号。", None, release_url
+        if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
+            return False, f"当前已是最新版本：{APP_VERSION}", None, release_url
+        if not asset_url:
+            return False, f"发现新版本 {latest_tag}，但公开更新清单缺少下载地址。", None, release_url
+        target_dir = downloads_dir() / "胖虎AI工具更新"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{latest_tag}-{WINDOWS_RELEASE_ASSET_NAME}"
+        log(f"发现新版本 {latest_tag}，开始下载更新包。")
+        try:
+            urlretrieve(asset_url, target)
+        except Exception as exc:
+            return False, f"下载更新失败：{exc}", None, release_url
+        return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
+
     req = Request(GITHUB_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": APP_NAME})
     try:
         with urlopen(req, timeout=20) as resp:
@@ -948,6 +1081,8 @@ def install_codex_app(log) -> bool:
         if cli_ok:
             log(f"已检测到 Codex CLI：{version or '已安装'}")
         log(f"已检测到 Codex Windows App 本体：{package}")
+        create_codex_shortcuts(log)
+        log("最近安装：Codex 客户端。可从桌面快捷方式或开始菜单打开。")
         return True
     if cli_ok:
         log(f"已检测到 Codex CLI：{version or '已安装'}")
@@ -971,6 +1106,9 @@ def install_codex_app(log) -> bool:
             if ok:
                 ready, ready_msg = wait_for_codex_ready(require_windows_app=True)
                 log(ready_msg)
+                if ready:
+                    create_codex_shortcuts(log)
+                    log("最近安装：Codex 客户端。可从桌面快捷方式或开始菜单打开。")
                 return ready
         else:
             log("离线包未通过签名校验，将尝试 Microsoft Store 命令行安装。")
@@ -982,6 +1120,9 @@ def install_codex_app(log) -> bool:
     if ok:
         ready, ready_msg = wait_for_codex_ready(require_windows_app=True)
         log(ready_msg)
+        if ready:
+            create_codex_shortcuts(log)
+            log("最近安装：Codex 客户端。可从桌面快捷方式或开始菜单打开。")
         return ready
 
     log("自动安装失败，已打开官方 Codex 下载页，请按页面提示安装。")
@@ -1216,9 +1357,10 @@ def detect_environment() -> list[str]:
         f"架构：{platform.machine()}",
         f"识别结果：{'Windows' if system == 'windows' else 'Mac' if system == 'mac' else '其他系统'}",
     ]
-    for command in ("powershell", "winget", "npm", "node", "codex", "claude", "openclaw", "hermes"):
+    for command in ("powershell", "winget", "npm", "node"):
         exists, path = command_exists(command)
         lines.append(f"{command}: {'已找到 ' + path if exists else '未找到'}")
+    lines.extend(agent_install_status_lines())
     lines.extend(risk_plugin_report_lines(detect_risk_plugins()))
     return lines
 
@@ -1230,6 +1372,7 @@ class InstallerApp:
         root.geometry("1000x860")
         root.minsize(940, 740)
         root.configure(bg=APP_BG)
+        self.set_window_icon()
 
         self.cookie_jar = http.cookiejar.CookieJar()
         self.logged_in_user: dict | None = None
@@ -1255,9 +1398,48 @@ class InstallerApp:
         for variable in (self.api_key, self.base_url, self.model, self.skip_test):
             variable.trace_add("write", self.mark_key_dirty)
 
+        self.load_profile_into_ui()
         self._build_ui()
+        self.apply_restored_login_state()
         self.log(f"默认接口：{DEFAULT_BASE_URL}")
         self.log("请先用胖虎AI注册账号登录软件。")
+
+    def set_window_icon(self) -> None:
+        ico = asset_path("panghu.ico")
+        png = asset_path("panghu.png")
+        try:
+            if ico.exists() and platform.system() == "Windows":
+                self.root.iconbitmap(str(ico))
+            if png.exists():
+                self.window_icon = tk.PhotoImage(file=str(png))
+                self.root.iconphoto(True, self.window_icon)
+        except Exception:
+            self.window_icon = None
+
+    def load_profile_into_ui(self) -> None:
+        profile = load_saved_profile()
+        if not profile:
+            return
+        self.login_username.set(str(profile.get("username") or ""))
+        self.api_key.set(str(profile.get("api_key") or ""))
+        self.base_url.set(str(profile.get("base_url") or DEFAULT_BASE_URL))
+        self.model.set(str(profile.get("model") or DEFAULT_MODEL))
+        self.skip_test.set(bool(profile.get("skip_test")))
+        self.open_app.set(bool(profile.get("open_app", True)))
+        user = profile.get("user")
+        deployer_auth = profile.get("deployer_auth")
+        if isinstance(user, dict) and isinstance(deployer_auth, dict) and deployer_auth.get("token"):
+            self.logged_in_user = user
+            self.deployer_auth = deployer_auth
+
+    def apply_restored_login_state(self) -> None:
+        if not self.logged_in_user or not self.deployer_auth:
+            return
+        username = str(self.logged_in_user.get("username") or self.login_username.get() or "")
+        display_username = username if len(username) <= 20 else f"{username[:17]}..."
+        self.user_label.configure(text=f"已登录：{display_username}")
+        self.show_wizard()
+        self.status.set("状态：已恢复上次登录，可继续使用")
 
     def _build_ui(self) -> None:
         style = ttk.Style()
@@ -1833,6 +2015,7 @@ class InstallerApp:
             self.logged_in_user = data
             self.deployer_auth = auth_data
             display_name = str(data.get("username") or username)
+            save_profile_data({"username": display_name, "user": data, "deployer_auth": auth_data})
             display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
             self.root.after(0, lambda: self.user_label.configure(text=f"已登录：{display_username}"))
             self.root.after(0, self.show_wizard)
@@ -1887,11 +2070,12 @@ class InstallerApp:
         base_url = self.base_url.get()
         model = self.model.get()
         skip_test = self.skip_test.get()
+        open_app = self.open_app.get()
         self.set_busy(True)
         self.status.set("状态：正在测试 API Key...")
-        threading.Thread(target=self._save_key_worker, args=(api_key, base_url, model, skip_test), daemon=True).start()
+        threading.Thread(target=self._save_key_worker, args=(api_key, base_url, model, skip_test, open_app), daemon=True).start()
 
-    def _save_key_worker(self, api_key: str, base_url: str, model: str, skip_test: bool) -> None:
+    def _save_key_worker(self, api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool) -> None:
         try:
             if not api_key.strip():
                 raise ValueError("请先填写胖虎AI API Key。")
@@ -1903,6 +2087,15 @@ class InstallerApp:
             self.saved_key_ok = ok
             if ok:
                 self.saved_key_signature = (api_key.strip(), base_url.strip(), model.strip(), skip_test)
+                save_profile_data(
+                    {
+                        "api_key": api_key.strip(),
+                        "base_url": base_url.strip(),
+                        "model": model.strip(),
+                        "skip_test": skip_test,
+                        "open_app": open_app,
+                    }
+                )
                 self.set_status_from_worker("状态：Key 已保存")
                 self.root.after(0, lambda: self.step.set(2))
                 self.root.after(0, self.refresh_steps)
