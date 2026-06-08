@@ -15,13 +15,15 @@ ASSETS="$ROOT/assets"
   --windowed \
   --name "$APP_NAME" \
   --icon "$ASSETS/panghu-avatar.icns" \
-  --add-data="$ASSETS:assets" \
   --distpath release \
   --workpath build \
   --specpath build \
   src/panghu_codex_installer.py
 APP_PATH="release/${APP_NAME}.app"
 ZIP_PATH="release/${APP_NAME}-Mac.zip"
+rm -rf "$APP_PATH/Contents/Resources/assets"
+mkdir -p "$APP_PATH/Contents/Resources"
+cp -R "$ASSETS" "$APP_PATH/Contents/Resources/assets"
 if [ -d "$APP_PATH" ]; then
   /usr/bin/codesign --force --deep --sign - "$APP_PATH" >/dev/null 2>&1 || true
 fi

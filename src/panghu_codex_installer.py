@@ -235,7 +235,17 @@ def app_root() -> Path:
 def asset_path(name: str) -> Path:
     bundled_root = getattr(sys, "_MEIPASS", None)
     if bundled_root:
-        return Path(bundled_root) / "assets" / name
+        bundled = Path(bundled_root) / "assets" / name
+        if bundled.exists():
+            return bundled
+    root = app_root()
+    for candidate in (
+        root / "assets" / name,
+        root.parent / "Resources" / "assets" / name,
+        root.parent / "Frameworks" / "assets" / name,
+    ):
+        if candidate.exists():
+            return candidate
     return app_root() / "assets" / name
 
 
