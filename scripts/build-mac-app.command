@@ -15,7 +15,7 @@ ASSETS="$ROOT/assets"
   --windowed \
   --name "$APP_NAME" \
   --icon "$ASSETS/panghu-avatar.icns" \
-  --add-data "$ASSETS:assets" \
+  --add-data="$ASSETS:assets" \
   --distpath release \
   --workpath build \
   --specpath build \
