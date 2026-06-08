@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, 
 
 
 APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
@@ -34,6 +35,8 @@ PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
 WINDOWS_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
 WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
 WINDOWS_RELEASE_ASSET_ALIASES = (WINDOWS_RELEASE_ASSET_NAME, "AI.Agent.-Windows.zip")
+MAC_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac.zip"
+MAC_RELEASE_ASSET_ALIASES = (MAC_RELEASE_ASSET_NAME, "AI.Agent.-Mac.zip")
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
 DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
@@ -942,35 +945,209 @@ try {
 '''
 
 
+def build_macos_temp_openai_access_script() -> str:
+    return r'''#!/bin/zsh
+set -euo pipefail
+
+PAC_PATH=""
+SECONDS_VALUE="600"
+RESTORE_ONLY="0"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pac)
+      PAC_PATH="$2"
+      shift 2
+      ;;
+    --seconds)
+      SECONDS_VALUE="$2"
+      shift 2
+      ;;
+    --restore-only)
+      RESTORE_ONLY="1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$PAC_PATH" ]]; then
+  exit 2
+fi
+
+STATE_PATH="${PAC_PATH}.state"
+SCRIPT_SELF="$0"
+LAUNCH_DAEMON_DIR="/Library/LaunchDaemons"
+LAUNCH_DAEMON_LABEL="cc.panghuai.openai-access-restore-$(basename "$PAC_PATH" .pac)"
+LAUNCH_DAEMON_PLIST="$LAUNCH_DAEMON_DIR/${LAUNCH_DAEMON_LABEL}.plist"
+PAC_URL="file://${PAC_PATH}"
+
+networksetup_path="/usr/sbin/networksetup"
+scutil_path="/usr/sbin/scutil"
+launchctl_path="/bin/launchctl"
+
+list_services() {
+  "$networksetup_path" -listallnetworkservices 2>/dev/null | sed '1d;s/^\*//'
+}
+
+refresh_proxy_settings() {
+  "$scutil_path" --proxy >/dev/null 2>&1 || true
+}
+
+save_state() {
+  : > "$STATE_PATH"
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    auto_enabled="$("$networksetup_path" -getautoproxyurl "$service" 2>/dev/null | awk -F': ' '/Enabled:/ {print $2; exit}')"
+    auto_url="$("$networksetup_path" -getautoproxyurl "$service" 2>/dev/null | awk -F': ' '/URL:/ {print $2; exit}')"
+    web_enabled="$("$networksetup_path" -getwebproxy "$service" 2>/dev/null | awk -F': ' '/Enabled:/ {print $2; exit}')"
+    secure_enabled="$("$networksetup_path" -getsecurewebproxy "$service" 2>/dev/null | awk -F': ' '/Enabled:/ {print $2; exit}')"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$service" "${auto_enabled:-No}" "${auto_url:-}" "${web_enabled:-No}" "${secure_enabled:-No}" >> "$STATE_PATH"
+  done < <(list_services)
+}
+
+restore_state() {
+  if [[ -f "$STATE_PATH" ]]; then
+    while IFS=$'\t' read -r service auto_enabled auto_url web_enabled secure_enabled; do
+      [[ -z "$service" ]] && continue
+      if [[ -n "${auto_url:-}" ]]; then
+        "$networksetup_path" -setautoproxyurl "$service" "$auto_url" >/dev/null 2>&1 || true
+      fi
+      if [[ "${auto_enabled:-No}" == "Yes" ]]; then
+        "$networksetup_path" -setautoproxystate "$service" on >/dev/null 2>&1 || true
+      else
+        "$networksetup_path" -setautoproxystate "$service" off >/dev/null 2>&1 || true
+      fi
+      if [[ "${web_enabled:-No}" == "Yes" ]]; then
+        "$networksetup_path" -setwebproxystate "$service" on >/dev/null 2>&1 || true
+      else
+        "$networksetup_path" -setwebproxystate "$service" off >/dev/null 2>&1 || true
+      fi
+      if [[ "${secure_enabled:-No}" == "Yes" ]]; then
+        "$networksetup_path" -setsecurewebproxystate "$service" on >/dev/null 2>&1 || true
+      else
+        "$networksetup_path" -setsecurewebproxystate "$service" off >/dev/null 2>&1 || true
+      fi
+    done < "$STATE_PATH"
+    rm -f "$STATE_PATH"
+  fi
+  if [[ -f "$LAUNCH_DAEMON_PLIST" ]]; then
+    "$launchctl_path" bootout system "$LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+    "$launchctl_path" unload "$LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+    rm -f "$LAUNCH_DAEMON_PLIST"
+  fi
+  rm -f "$PAC_PATH"
+  refresh_proxy_settings
+}
+
+register_fallback_restore() {
+  mkdir -p "$LAUNCH_DAEMON_DIR"
+  cat > "$LAUNCH_DAEMON_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LAUNCH_DAEMON_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>${SCRIPT_SELF}</string>
+    <string>--pac</string>
+    <string>${PAC_PATH}</string>
+    <string>--restore-only</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>$((SECONDS_VALUE + 15))</integer>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
+PLIST
+  chown root:wheel "$LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+  chmod 644 "$LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+  "$launchctl_path" bootstrap system "$LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || "$launchctl_path" load "$LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+}
+
+enable_pac() {
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    "$networksetup_path" -setautoproxyurl "$service" "$PAC_URL" >/dev/null 2>&1 || true
+    "$networksetup_path" -setautoproxystate "$service" on >/dev/null 2>&1 || true
+    "$networksetup_path" -setwebproxystate "$service" off >/dev/null 2>&1 || true
+    "$networksetup_path" -setsecurewebproxystate "$service" off >/dev/null 2>&1 || true
+  done < <(list_services)
+  refresh_proxy_settings
+}
+
+if [[ "$RESTORE_ONLY" == "1" ]]; then
+  restore_state
+  exit 0
+fi
+
+trap restore_state EXIT INT TERM
+save_state
+register_fallback_restore
+enable_pac
+/bin/sleep "$SECONDS_VALUE"
+'''
+
+
 def start_temporary_openai_access(config: TemporaryOpenAIAccessConfig | None, log) -> bool:
     if not config:
         return False
-    if platform.system() != "Windows":
-        log("临时 OpenAI 访问窗口当前只支持 Windows，非 Windows 不会改动系统代理。")
+    system = platform.system()
+    if system not in {"Windows", "Darwin"}:
+        log("临时 OpenAI 访问窗口当前只支持 Windows 和 Mac，其他系统不会改动系统代理。")
         return False
     runtime_dir = app_data_dir() / "temporary-openai-access"
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    active_states = list(runtime_dir.glob("*.state.json"))
+    active_states = list(runtime_dir.glob("*.state.json")) + list(runtime_dir.glob("*.state"))
     if active_states:
         log("检测到已有 OpenAI 官网临时访问窗口，本次不重复改动系统代理。")
         return True
     suffix = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
     pac_path = runtime_dir / f"openai-access-{suffix}.pac"
-    script_path = runtime_dir / "restore-openai-access.ps1"
     write_text(pac_path, build_openai_access_pac(config.proxy))
-    write_text(script_path, build_windows_temp_openai_access_script())
-    command = [
-        "powershell",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script_path),
-        "-PacPath",
-        str(pac_path),
-        "-Seconds",
-        str(config.duration_seconds),
-    ]
+    if system == "Windows":
+        script_path = runtime_dir / "restore-openai-access.ps1"
+        write_text(script_path, build_windows_temp_openai_access_script())
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-PacPath",
+            str(pac_path),
+            "-Seconds",
+            str(config.duration_seconds),
+        ]
+    else:
+        script_path = runtime_dir / "restore-openai-access.command"
+        write_text(script_path, build_macos_temp_openai_access_script())
+        try:
+            script_path.chmod(0o755)
+        except Exception:
+            pass
+        shell_command = " ".join(
+            [
+                shlex.quote("/bin/zsh"),
+                shlex.quote(str(script_path)),
+                "--pac",
+                shlex.quote(str(pac_path)),
+                "--seconds",
+                shlex.quote(str(config.duration_seconds)),
+            ]
+        )
+        command = [
+            "osascript",
+            "-e",
+            "do shell script " + json.dumps(shell_command) + " with administrator privileges",
+        ]
     try:
         kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         if hasattr(subprocess, "CREATE_NO_WINDOW"):
@@ -1013,6 +1190,24 @@ def downloads_dir() -> Path:
     return Path.home() / "下载"
 
 
+def release_asset_name_for_current_system() -> str:
+    return MAC_RELEASE_ASSET_NAME if current_system_id() == "mac" else WINDOWS_RELEASE_ASSET_NAME
+
+
+def release_asset_aliases_for_current_system() -> tuple[str, ...]:
+    return MAC_RELEASE_ASSET_ALIASES if current_system_id() == "mac" else WINDOWS_RELEASE_ASSET_ALIASES
+
+
+def public_manifest_asset_url(payload: dict) -> str:
+    if current_system_id() == "mac":
+        return str(payload.get("mac_zip_url") or payload.get("mac_download_url") or payload.get("download_url") or "")
+    return str(payload.get("windows_zip_url") or payload.get("download_url") or "")
+
+
+def platform_label_for_update() -> str:
+    return "Mac" if current_system_id() == "mac" else "Windows"
+
+
 def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
     try:
         req = Request(PUBLIC_UPDATE_MANIFEST_URL, headers={"Accept": "application/json", "User-Agent": HTTP_USER_AGENT})
@@ -1024,16 +1219,16 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
     if payload:
         latest_tag = str(payload.get("version") or payload.get("tag_name") or "").strip()
         release_url = str(payload.get("html_url") or payload.get("release_url") or DEFAULT_BASE_URL)
-        asset_url = str(payload.get("windows_zip_url") or payload.get("download_url") or "")
+        asset_url = public_manifest_asset_url(payload)
         if not latest_tag:
             return False, "检查更新失败：公开更新清单缺少版本号。", None, release_url
         if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
             return False, f"当前已是最新版本：{APP_VERSION}", None, release_url
         if not asset_url:
-            return False, f"发现新版本 {latest_tag}，但公开更新清单缺少下载地址。", None, release_url
+            return False, f"发现新版本 {latest_tag}，但公开更新清单缺少 {platform_label_for_update()} 下载地址。", None, release_url
         target_dir = downloads_dir() / "胖虎AI工具更新"
         target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"{latest_tag}-{WINDOWS_RELEASE_ASSET_NAME}"
+        target = target_dir / f"{latest_tag}-{release_asset_name_for_current_system()}"
         log(f"发现新版本 {latest_tag}，开始下载更新包。")
         try:
             urlretrieve(asset_url, target)
@@ -1060,15 +1255,15 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
         if not isinstance(asset, dict):
             continue
         name = str(asset.get("name") or "")
-        if name in WINDOWS_RELEASE_ASSET_ALIASES:
+        if name in release_asset_aliases_for_current_system():
             asset_url = str(asset.get("browser_download_url") or "")
             break
     if not asset_url:
-        return False, f"发现新版本 {latest_tag}，但未找到 Windows 更新包，已打开发布页。", None, release_url
+        return False, f"发现新版本 {latest_tag}，但未找到 {platform_label_for_update()} 更新包，已打开发布页。", None, release_url
 
     target_dir = downloads_dir() / "胖虎AI工具更新"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{latest_tag}-{WINDOWS_RELEASE_ASSET_NAME}"
+    target = target_dir / f"{latest_tag}-{release_asset_name_for_current_system()}"
     log(f"发现新版本 {latest_tag}，开始下载更新包。")
     try:
         urlretrieve(asset_url, target)
@@ -2250,7 +2445,7 @@ class InstallerApp:
                 self.set_status_from_worker("状态：更新包已下载")
                 self.root.after(0, lambda: open_path(path.parent))
                 self.show_info_from_worker("更新已下载", f"{msg}\n\n位置：{path}")
-            elif release_url and "未找到 Windows 更新包" in msg:
+            elif release_url and "未找到" in msg and "更新包" in msg:
                 self.set_status_from_worker("状态：发现新版本，请到发布页下载")
                 self.root.after(0, lambda: open_url(release_url))
                 self.show_warning_from_worker("发现新版本", msg)
@@ -2612,6 +2807,12 @@ requires_openai_auth = true
     assert "-RestoreOnly" in restore_script
     assert "if ($RestoreOnly)" in restore_script
     assert "InternetSetOption" in restore_script
+    mac_restore_script = build_macos_temp_openai_access_script()
+    assert "networksetup" in mac_restore_script
+    assert "setautoproxyurl" in mac_restore_script
+    assert "LaunchDaemons" in mac_restore_script
+    assert "restore_state" in mac_restore_script
+    assert "SECONDS_VALUE" in mac_restore_script
     print("UI self-test OK")
 
 

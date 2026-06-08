@@ -5,7 +5,9 @@
 ## 项目状态
 
 - 规范源码目录：`C:\Users\Administrator\Documents\codex\panghu-codex-installer`
-- 新版推荐发布包名：`胖虎AI多Agent一键部署工具-Windows.zip`
+- 新版推荐发布包名：
+  - Windows：`胖虎AI多Agent一键部署工具-Windows.zip`
+  - Mac：`胖虎AI多Agent一键部署工具-Mac.zip`
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
 - GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/latest`
 - 公开更新清单：`https://aitokenapi.cc/deployer/latest.json`
@@ -21,7 +23,7 @@
 6. 点击“一键部署”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用胖虎AI配置。
 7. 如果服务端清单给当前账号下发 `temporary_openai_access` 授权，工具会在打开 Codex 前临时启用 OpenAI 官网访问窗口；默认 10 分钟，到点自动恢复客户原系统代理。
 8. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
-9. 后续软件有新版时，点击“检查更新”下载最新 Windows 更新包；更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
+9. 后续软件有新版时，点击“检查更新”下载当前系统对应的 Windows / Mac 更新包；更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
 
 ## 服务端授权
 
@@ -49,9 +51,10 @@
 客户端行为：
 
 - 未拿到该字段时，不改动系统代理。
-- 只在 Windows 客户机上启用。
+- 只在 Windows 和 Mac 客户机上启用。
 - 通过 PAC 只把 `openai.com`、`chatgpt.com`、`oaistatic.com`、`oaiusercontent.com` 等 OpenAI/Codex 登录相关域名走指定代理，其它网站保持直连。
 - 启用前保存客户原系统代理设置；10 分钟到点后自动恢复并删除临时 PAC 文件。
+- Mac 客户机启用时会弹出 macOS 系统管理员授权提示；授权只用于短时间写入和恢复系统自动代理配置。
 - 如果检测到已有临时窗口仍在运行，不会重复覆盖系统代理。
 - 不在胖虎AI网页里反代 OpenAI 登录页，不接收、不保存客户 OpenAI 官网账号密码。
 
@@ -165,6 +168,17 @@ scripts/build-mac-app.command
 ```
 
 打包后发送 `release` 里的 `.app` 或 `.dmg`。
+当前发布包使用 zip：
+
+```text
+release/胖虎AI多Agent一键部署工具-Mac.zip
+```
+
+客户解压后打开：
+
+```text
+胖虎AI多Agent一键部署工具.app
+```
 
 ## Codex 官方安装策略
 

@@ -1,20 +1,21 @@
-胖虎AI多 Agent 一键部署工具 - Windows 客户版
+胖虎AI多 Agent 一键部署工具 - Windows / Mac 客户版
 
 发送给客户：
 1. 推荐发送固定下载入口：https://aitokenapi.cc/deployer/download
-2. 或者发送 胖虎AI多Agent一键部署工具-Windows.zip。
+2. Windows 客户发送 胖虎AI多Agent一键部署工具-Windows.zip。
+3. Mac 客户发送 胖虎AI多Agent一键部署工具-Mac.zip。
 
 客户使用：
 1. 解压 zip。
-2. 打开 胖虎AI多Agent一键部署工具 文件夹。
-3. 双击 胖虎AI多Agent一键部署工具.exe。
+2. Windows 打开 胖虎AI多Agent一键部署工具 文件夹，双击 胖虎AI多Agent一键部署工具.exe。
+3. Mac 双击 胖虎AI多Agent一键部署工具.app；如果系统提示来自互联网下载，请按系统提示确认打开。
 4. 先用胖虎AI注册账号登录软件；没有账号就点击“去胖虎AI注册账号”。
 5. 登录后软件会自动向胖虎AI服务端申请部署授权，未授权账号不能继续部署。
 6. 第一步：打开 API Key 创建页面，创建 Key 后粘贴到工具里，点击“保存并测试 Key”。
 7. 第二步：选择当前电脑系统，点击“检测环境”。如果提示发现 ccswitch、codex++、CCR 等第三方配置插件，请先卸载或禁用。
 8. 第三步：选择需要安装的 Agent，并选择 CLI 或客户端入口。
 9. 第四步：点击“开始一键部署”。
-10. 如果软件提示已临时打开 OpenAI 官网访问窗口，请在 10 分钟内完成 Codex / OpenAI 官方页面访问或登录；到点后会自动关闭并恢复电脑原网络设置。
+10. 如果软件提示已临时打开 OpenAI 官网访问窗口，请在 10 分钟内完成 Codex / OpenAI 官方页面访问或登录；到点后会自动关闭并恢复电脑原网络设置。Mac 客户机可能会弹出系统管理员授权提示，这是为了临时写入并到点恢复系统自动代理。
 11. 如果 Agent 已经安装过，只是 Codex 配置坏了，点击“仅修复 Codex 配置”，不会重新安装 Agent。
 12. 如果软件提示有新版本，或你要求客户升级，让客户点击“检查更新”，下载新版 zip 后关闭旧工具并解压覆盖。
 
@@ -24,7 +25,7 @@
 - 恢复最近备份：本次配置后异常，想退回写入前状态时使用。
 - 检查更新：下载新版工具包，关闭旧工具后解压覆盖。
 - 复制日志：出问题时发给客服排查。
-- OpenAI 官网临时访问窗口：只在你的账号被临时授权时出现；默认 10 分钟后自动关闭，不需要客户手动改网络。
+- OpenAI 官网临时访问窗口：只在你的账号被临时授权时出现；默认 10 分钟后自动关闭，不需要客户手动改网络；Mac 会按系统要求请求管理员授权。
 
 当前支持的 Agent：
 - Codex：支持安装和自动配置胖虎AI API Key、接口、模型、中文规则和默认工作区。
@@ -37,15 +38,16 @@
 - 强安全版依赖胖虎AI服务端的 /api/deployer/activate 和 /api/deployer/manifest 接口；后端没上线前，新包会在授权阶段停止。
 - 如果工具提示发现第三方配置插件，必须先处理后再安装；这些工具可能把 Codex / ClaudeCode 配置改坏，导致后续使用异常。
 - 不要把内部接口、私有域名或上游管理域名发给客户。
-- 不要只单独发送 exe，必须连同 _internal 文件夹一起发送。
-- 如果要单文件 exe，后续可以改 PyInstaller 参数为 --onefile。
+- Windows 不要只单独发送 exe，必须连同 _internal 文件夹一起发送。
+- Mac 不要从 .app 里单独抽文件发送，直接发送完整 zip。
+- 如果 Windows 要单文件 exe，后续可以改 PyInstaller 参数为 --onefile。
 - 本工具只调用官方安装入口，不内置、不修改、不伪装第三方 Agent 本体。
 - 出问题时点击“复制日志”，把日志发回来排查。
 - 如果客户配置后想退回旧状态，可以点击“恢复最近备份”。
 - Codex 会写入 ~/.codex/config.toml 和 ~/.codex/auth.json；config 使用 panghuAI 中转配置，接口为 https://aitokenapi.cc/v1。
 - 临时访问窗口只用于短时间访问 OpenAI / Codex 官方页面，不会让客户长期使用你的代理；工具不会接收或保存客户 OpenAI 官网账号密码。
 
-Codex 官方离线包可选说明：
+Codex 官方离线包可选说明（Windows）：
 - 如果客户电脑 Microsoft Store 下载失败，可以把官方签名的 Codex 离线安装包放到工具目录的 offline 文件夹里。
 - 支持的旁挂文件类型：.msixbundle、.msix、.appx、.appxbundle、.appinstaller。
 - 工具会校验离线包的 Windows 签名；签名无效或来源不明的文件不会安装。
