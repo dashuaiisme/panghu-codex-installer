@@ -7,13 +7,15 @@ fi
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements-build.txt
 APP_NAME="胖虎AI多Agent一键部署工具"
+ROOT="$(pwd)"
+ASSETS="$ROOT/assets"
 .venv/bin/python -m PyInstaller \
   --noconfirm \
   --clean \
   --windowed \
   --name "$APP_NAME" \
-  --icon "assets/panghu-avatar.icns" \
-  --add-data "assets:assets" \
+  --icon "$ASSETS/panghu-avatar.icns" \
+  --add-data "$ASSETS:assets" \
   --distpath release \
   --workpath build \
   --specpath build \
