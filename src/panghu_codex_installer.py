@@ -21,12 +21,14 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, 
 
 
 APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
 CODEX_BASE_URL = "https://aitokenapi.cc/v1"
+TEMP_OPENAI_ACCESS_SECONDS = 600
+TEMP_OPENAI_ACCESS_MAX_SECONDS = 600
 GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
 PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
 WINDOWS_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
@@ -94,6 +96,12 @@ class RiskPluginFinding:
     source: str
     detail: str
     uninstall_hint: str
+
+
+@dataclass(frozen=True)
+class TemporaryOpenAIAccessConfig:
+    proxy: str
+    duration_seconds: int = TEMP_OPENAI_ACCESS_SECONDS
 
 
 AGENTS = (
@@ -794,6 +802,188 @@ def manifest_allowed_agents(manifest: dict) -> list[str]:
     return allowed
 
 
+def parse_temporary_openai_access_config(manifest: dict) -> TemporaryOpenAIAccessConfig | None:
+    raw = manifest.get("temporary_openai_access")
+    if not isinstance(raw, dict) or not raw.get("enabled"):
+        return None
+    proxy = str(raw.get("proxy") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9.-]+:\d{2,5}", proxy):
+        return None
+    host, port_text = proxy.rsplit(":", 1)
+    try:
+        port = int(port_text)
+    except ValueError:
+        return None
+    if not host or port < 1 or port > 65535:
+        return None
+    duration = raw.get("duration_seconds", TEMP_OPENAI_ACCESS_SECONDS)
+    try:
+        duration_seconds = int(duration)
+    except (TypeError, ValueError):
+        duration_seconds = TEMP_OPENAI_ACCESS_SECONDS
+    duration_seconds = max(60, min(duration_seconds, TEMP_OPENAI_ACCESS_MAX_SECONDS))
+    return TemporaryOpenAIAccessConfig(proxy=proxy, duration_seconds=duration_seconds)
+
+
+def build_openai_access_pac(proxy: str, fallback: str = "DIRECT") -> str:
+    return f"""function FindProxyForURL(url, host) {{
+  host = host.toLowerCase();
+  if (
+    shExpMatch(host, "openai.com") ||
+    shExpMatch(host, "*.openai.com") ||
+    shExpMatch(host, "chatgpt.com") ||
+    shExpMatch(host, "*.chatgpt.com") ||
+    shExpMatch(host, "auth0.openai.com") ||
+    shExpMatch(host, "cdn.openai.com") ||
+    shExpMatch(host, "*.oaistatic.com") ||
+    shExpMatch(host, "*.oaiusercontent.com")
+  ) {{
+    return "PROXY {proxy}; DIRECT";
+  }}
+  return "{fallback}";
+}}
+"""
+
+
+def build_windows_temp_openai_access_script() -> str:
+    return r'''
+param(
+    [Parameter(Mandatory=$true)][string]$PacPath,
+    [int]$Seconds = 600,
+    [switch]$RestoreOnly
+)
+$ErrorActionPreference = "Stop"
+$internetSettings = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+$statePath = "$PacPath.state.json"
+$restoreTaskName = "PanghuAI-OpenAI-Access-Restore-" + [IO.Path]::GetFileNameWithoutExtension($PacPath)
+$scriptSelf = $MyInvocation.MyCommand.Path
+$refreshType = @"
+using System;
+using System.Runtime.InteropServices;
+public static class NativeInternetOptions {
+    [DllImport("wininet.dll", SetLastError=true)]
+    public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
+}
+"@
+try {
+    Add-Type -TypeDefinition $refreshType -ErrorAction SilentlyContinue
+} catch {}
+
+function Update-InternetProxySettings {
+    try {
+        [NativeInternetOptions]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null
+        [NativeInternetOptions]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
+    } catch {}
+}
+
+function Get-InternetProxyState {
+    $item = Get-ItemProperty -Path $internetSettings
+    return [ordered]@{
+        ProxyEnable = if ($null -ne $item.ProxyEnable) { [int]$item.ProxyEnable } else { $null }
+        ProxyServer = if ($null -ne $item.ProxyServer) { [string]$item.ProxyServer } else { $null }
+        ProxyOverride = if ($null -ne $item.ProxyOverride) { [string]$item.ProxyOverride } else { $null }
+        AutoConfigURL = if ($null -ne $item.AutoConfigURL) { [string]$item.AutoConfigURL } else { $null }
+    }
+}
+
+function Set-InternetProxyState($state) {
+    if ($null -ne $state.ProxyEnable) {
+        Set-ItemProperty -Path $internetSettings -Name ProxyEnable -Value ([int]$state.ProxyEnable)
+    } else {
+        Remove-ItemProperty -Path $internetSettings -Name ProxyEnable -ErrorAction SilentlyContinue
+    }
+    foreach ($name in @("ProxyServer", "ProxyOverride", "AutoConfigURL")) {
+        if ($null -ne $state.$name -and [string]$state.$name -ne "") {
+            Set-ItemProperty -Path $internetSettings -Name $name -Value ([string]$state.$name)
+        } else {
+            Remove-ItemProperty -Path $internetSettings -Name $name -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Restore-InternetProxyState {
+    if (Test-Path -LiteralPath $statePath) {
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        Set-InternetProxyState $state
+        Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    }
+    Update-InternetProxySettings
+    Unregister-ScheduledTask -TaskName $restoreTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $PacPath -Force -ErrorAction SilentlyContinue
+}
+
+function Register-FallbackRestoreTask {
+    if (-not $scriptSelf) {
+        return
+    }
+    $runAt = (Get-Date).AddSeconds([Math]::Max(60, $Seconds + 15))
+    $argument = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptSelf`" -PacPath `"$PacPath`" -RestoreOnly"
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argument
+    $trigger = New-ScheduledTaskTrigger -Once -At $runAt
+    Register-ScheduledTask -TaskName $restoreTaskName -Action $action -Trigger $trigger -Description "PanghuAI temporary OpenAI access restore" -Force | Out-Null
+}
+
+if ($RestoreOnly) {
+    Restore-InternetProxyState
+    exit 0
+}
+
+try {
+    Get-InternetProxyState | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath -Encoding UTF8
+    Register-FallbackRestoreTask
+    $pacUrl = (New-Object System.Uri($PacPath)).AbsoluteUri
+    Set-ItemProperty -Path $internetSettings -Name AutoConfigURL -Value $pacUrl
+    Set-ItemProperty -Path $internetSettings -Name ProxyEnable -Value 0
+    Update-InternetProxySettings
+    Start-Sleep -Seconds $Seconds
+} finally {
+    Restore-InternetProxyState
+}
+'''
+
+
+def start_temporary_openai_access(config: TemporaryOpenAIAccessConfig | None, log) -> bool:
+    if not config:
+        return False
+    if platform.system() != "Windows":
+        log("临时 OpenAI 访问窗口当前只支持 Windows，非 Windows 不会改动系统代理。")
+        return False
+    runtime_dir = app_data_dir() / "temporary-openai-access"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    active_states = list(runtime_dir.glob("*.state.json"))
+    if active_states:
+        log("检测到已有 OpenAI 官网临时访问窗口，本次不重复改动系统代理。")
+        return True
+    suffix = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    pac_path = runtime_dir / f"openai-access-{suffix}.pac"
+    script_path = runtime_dir / "restore-openai-access.ps1"
+    write_text(pac_path, build_openai_access_pac(config.proxy))
+    write_text(script_path, build_windows_temp_openai_access_script())
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script_path),
+        "-PacPath",
+        str(pac_path),
+        "-Seconds",
+        str(config.duration_seconds),
+    ]
+    try:
+        kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen(command, **kwargs)
+    except Exception as exc:
+        log(f"临时 OpenAI 访问窗口启动失败：{exc}")
+        return False
+    minutes = max(1, config.duration_seconds // 60)
+    log(f"已开启 OpenAI 官网临时访问窗口：约 {minutes} 分钟后自动关闭并恢复系统代理。")
+    return True
+
+
 def open_path(path: Path) -> None:
     if platform.system() == "Windows":
         os.startfile(str(path))
@@ -1149,7 +1339,15 @@ def open_codex_app(workdir: Path) -> tuple[bool, str]:
         return False, f"自动打开 Codex App 失败：{exc}"
 
 
-def install_codex_config(api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool, log) -> bool:
+def install_codex_config(
+    api_key: str,
+    base_url: str,
+    model: str,
+    skip_test: bool,
+    open_app: bool,
+    log,
+    temporary_openai_access: TemporaryOpenAIAccessConfig | None = None,
+) -> bool:
     if not api_key.strip():
         raise ValueError("请先输入胖虎AI API Key。")
     if not base_url.strip():
@@ -1214,6 +1412,7 @@ def install_codex_config(api_key: str, base_url: str, model: str, skip_test: boo
             log("接口测试失败，已自动恢复本次写入前的配置备份。")
 
     if open_app:
+        start_temporary_openai_access(temporary_openai_access, log)
         _, msg = open_codex_app(workdir)
         log(msg)
 
@@ -1893,13 +2092,18 @@ class InstallerApp:
         tk.Label(summary, text="执行前确认", bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
         tk.Label(
             summary,
-            text="未保存有效 Key 时不会进入配置应用。若发现 ccswitch、codex++、CCR 等工具，会停止安装并提示先卸载，防止它们改坏 Agent 配置。",
+            text=(
+                "未保存有效 Key 时不会进入配置应用。若发现 ccswitch、codex++、CCR 等工具，会停止安装并提示先卸载，"
+                "防止它们改坏 Agent 配置。"
+            ),
             bg=PANEL_BG,
             fg=MUTED,
             wraplength=760,
             justify="left",
         ).pack(anchor="w", pady=(7, 0))
-        ttk.Checkbutton(frame, text="完成后尝试打开 Codex App", variable=self.open_app).pack(anchor="w")
+        ttk.Checkbutton(frame, text="完成后尝试打开 Codex App，并按授权临时打开 OpenAI 官网访问窗口", variable=self.open_app).pack(
+            anchor="w"
+        )
 
         actions = tk.Frame(frame, bg=CARD_BG)
         actions.pack(fill="x", pady=(14, 0))
@@ -1925,7 +2129,7 @@ class InstallerApp:
             help_box,
             text=(
                 "提示：首次安装用“一键部署”；只换 Key 或配置损坏用“仅修复”；撤回写入用“恢复备份”；"
-                "升级入口在顶部“检查更新”。"
+                "如果账号被授权临时访问 OpenAI 官网，打开 Codex 后会自动启用 10 分钟，到点恢复。"
             ),
             bg="#f5f8fb",
             fg=MUTED,
@@ -2209,6 +2413,8 @@ class InstallerApp:
             return
         if not self.validate_system_and_risk_plugins():
             return
+        user = dict(self.logged_in_user or {})
+        deployer_auth = dict(self.deployer_auth or {})
         api_key = self.api_key.get()
         base_url = self.base_url.get()
         model = self.model.get()
@@ -2218,13 +2424,31 @@ class InstallerApp:
         self.status.set("状态：正在修复 Codex 配置...")
         threading.Thread(
             target=self._config_only_worker,
-            args=(api_key, base_url, model, skip_test, open_app),
+            args=(user, deployer_auth, api_key, base_url, model, skip_test, open_app),
             daemon=True,
         ).start()
 
-    def _config_only_worker(self, api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool) -> None:
+    def _config_only_worker(
+        self,
+        user: dict,
+        deployer_auth: dict,
+        api_key: str,
+        base_url: str,
+        model: str,
+        skip_test: bool,
+        open_app: bool,
+    ) -> None:
         try:
-            ok = install_codex_config(api_key, base_url, model, skip_test, open_app, self.log_from_worker)
+            temporary_access = self.fetch_temporary_openai_access(user, deployer_auth)
+            ok = install_codex_config(
+                api_key,
+                base_url,
+                model,
+                skip_test,
+                open_app,
+                self.log_from_worker,
+                temporary_access,
+            )
             if ok:
                 self.set_status_from_worker("状态：Codex 配置修复完成")
                 self.show_info_from_worker("配置完成", "Codex 配置已重新写入，不会重新安装 Agent。")
@@ -2260,6 +2484,7 @@ class InstallerApp:
             blocked = [agent.name for agent, _ in selected if agent.id not in allowed_agents]
             if blocked:
                 raise RuntimeError("当前账号未授权安装：" + "、".join(blocked))
+            temporary_access = parse_temporary_openai_access_config(manifest)
             self.log_from_worker("开始一键部署：" + "、".join(f"{a.name}/{m}" for a, m in selected))
             success_count = 0
             for agent, mode in selected:
@@ -2273,6 +2498,7 @@ class InstallerApp:
                     skip_test,
                     open_app,
                     self.log_from_worker,
+                    temporary_access,
                 )
                 if ok:
                     self.log_from_worker("Codex 胖虎AI配置已应用。")
@@ -2285,6 +2511,20 @@ class InstallerApp:
             self.show_error_from_worker("部署失败", str(exc))
         finally:
             self.root.after(0, lambda: self.set_busy(False))
+
+    def fetch_temporary_openai_access(
+        self,
+        user: dict,
+        deployer_auth: dict,
+    ) -> TemporaryOpenAIAccessConfig | None:
+        token = str(deployer_auth.get("token") or "")
+        ok, msg, manifest = fetch_deployer_manifest(user, self.cookie_jar, token)
+        self.log_from_worker(msg)
+        if not ok:
+            self.log_from_worker("未能刷新部署清单，本次只修复 Codex 配置，不开启 OpenAI 官网临时访问窗口。")
+            return None
+        self.deployer_manifest = manifest
+        return parse_temporary_openai_access_config(manifest)
 
     def open_workspace(self) -> None:
         path = workspace_root()
@@ -2353,6 +2593,25 @@ requires_openai_auth = true
     assert normalize_version("v1.2.3") > normalize_version("1.0.9")
     merged = merge_agents_rules("# old")
     assert PANGHU_AGENTS_START in merged and PANGHU_AGENTS_END in merged
+    temporary_config = parse_temporary_openai_access_config(
+        {"temporary_openai_access": {"enabled": True, "proxy": "aitokenapi.cc:80", "duration_seconds": 999}}
+    )
+    assert temporary_config is not None
+    assert temporary_config.proxy == "aitokenapi.cc:80"
+    assert temporary_config.duration_seconds == 600
+    assert parse_temporary_openai_access_config({"temporary_openai_access": {"enabled": True, "proxy": "bad/proxy"}}) is None
+    pac = build_openai_access_pac("aitokenapi.cc:80", "DIRECT")
+    assert 'shExpMatch(host, "*.openai.com")' in pac
+    assert 'shExpMatch(host, "*.chatgpt.com")' in pac
+    assert "return \"PROXY aitokenapi.cc:80; DIRECT\";" in pac
+    restore_script = build_windows_temp_openai_access_script()
+    assert "Start-Sleep -Seconds $Seconds" in restore_script
+    assert "Restore-InternetProxyState" in restore_script
+    assert "AutoConfigURL" in restore_script
+    assert "Register-ScheduledTask" in restore_script
+    assert "-RestoreOnly" in restore_script
+    assert "if ($RestoreOnly)" in restore_script
+    assert "InternetSetOption" in restore_script
     print("UI self-test OK")
 
 

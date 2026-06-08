@@ -5,7 +5,6 @@
 ## 项目状态
 
 - 规范源码目录：`C:\Users\Administrator\Documents\codex\panghu-codex-installer`
-- 原客户发布包位置：`J:\桌面收纳\工具\codex一键安装工具\release\PanghuAI-Codex-Installer-Windows.zip`
 - 新版推荐发布包名：`胖虎AI多Agent一键部署工具-Windows.zip`
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
 - GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/latest`
@@ -20,8 +19,9 @@
 4. 选择或确认当前系统，检测环境、PATH、包管理器、已安装 Agent 和第三方配置插件。
 5. 选择 Agent 和安装方式：`Codex`、`ClaudeCode`、`OpenClaw`、`Hermes`，支持 CLI / 客户端入口。
 6. 点击“一键部署”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用胖虎AI配置。
-7. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
-8. 后续软件有新版时，点击“检查更新”下载最新 Windows 更新包；更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
+7. 如果服务端清单给当前账号下发 `temporary_openai_access` 授权，工具会在打开 Codex 前临时启用 OpenAI 官网访问窗口；默认 10 分钟，到点自动恢复客户原系统代理。
+8. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
+9. 后续软件有新版时，点击“检查更新”下载最新 Windows 更新包；更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
 
 ## 服务端授权
 
@@ -29,6 +29,31 @@
 - 真正开始安装前调用 `GET https://aitokenapi.cc/api/deployer/manifest` 获取当前账号允许安装的 Agent 清单。
 - 如果服务端拒绝授权、令牌过期、清单不包含所选 Agent，客户端会停止部署。
 - 这套强安全模式必须先把胖虎AI后端接口上线到生产站；接口未上线时，新包会在部署授权阶段失败，这是预期的拦截行为。
+
+### OpenAI 官网临时访问窗口
+
+该能力只用于客户网络运营商短期异常时辅助打开 OpenAI / Codex 官方页面，不是长期代理功能。
+
+服务端部署清单可选下发：
+
+```json
+{
+  "temporary_openai_access": {
+    "enabled": true,
+    "proxy": "aitokenapi.cc:80",
+    "duration_seconds": 600
+  }
+}
+```
+
+客户端行为：
+
+- 未拿到该字段时，不改动系统代理。
+- 只在 Windows 客户机上启用。
+- 通过 PAC 只把 `openai.com`、`chatgpt.com`、`oaistatic.com`、`oaiusercontent.com` 等 OpenAI/Codex 登录相关域名走指定代理，其它网站保持直连。
+- 启用前保存客户原系统代理设置；10 分钟到点后自动恢复并删除临时 PAC 文件。
+- 如果检测到已有临时窗口仍在运行，不会重复覆盖系统代理。
+- 不在胖虎AI网页里反代 OpenAI 登录页，不接收、不保存客户 OpenAI 官网账号密码。
 
 ## Agent 规则
 
