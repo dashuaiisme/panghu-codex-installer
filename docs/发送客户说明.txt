@@ -1,9 +1,9 @@
 胖虎AI多 Agent 一键部署工具 - Windows / Mac 客户版
 
 发送给客户：
-1. 推荐发送固定下载入口：https://aitokenapi.cc/deployer/download
-2. Windows 客户发送 胖虎AI多Agent一键部署工具-Windows.zip。
-3. Mac 客户发送 胖虎AI多Agent一键部署工具-Mac.zip。
+1. 推荐发送统一下载入口：https://aitokenapi.cc/deployer/download
+2. 客户打开页面后按自己的电脑系统选择 Windows 版或 Mac 版。
+3. 如果需要手动转发文件，Windows 客户发送 胖虎AI多Agent一键部署工具-Windows.zip，Mac 客户发送 胖虎AI多Agent一键部署工具-Mac.zip。
 
 客户使用：
 1. 解压 zip。

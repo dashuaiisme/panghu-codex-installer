@@ -10,6 +10,7 @@
   - Mac：`胖虎AI多Agent一键部署工具-Mac.zip`
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
 - GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/latest`
+- 统一下载入口：`https://aitokenapi.cc/deployer/download`
 - 公开更新清单：`https://aitokenapi.cc/deployer/latest.json`
 - 仓库只保存源码、脚本和说明；`build/`、`release/`、缓存和 exe/zip 发布产物不提交。
 
@@ -23,7 +24,7 @@
 6. 点击“一键部署”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用胖虎AI配置。
 7. 如果服务端清单给当前账号下发 `temporary_openai_access` 授权，工具会在打开 Codex 前临时启用 OpenAI 官网访问窗口；默认 10 分钟，到点自动恢复客户原系统代理。
 8. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
-9. 后续软件有新版时，点击“检查更新”下载当前系统对应的 Windows / Mac 更新包；更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
+9. 后续软件有新版时，点击“检查更新”下载当前系统对应的 Windows / Mac 更新包；客户手动下载时可以打开统一下载入口并选择自己的电脑系统。更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
 
 ## 服务端授权
 
