@@ -11,8 +11,16 @@
 - GitHub 仓库：`https://github.com/dashuaiisme/panghu-codex-installer`
 - GitHub Release：`https://github.com/dashuaiisme/panghu-codex-installer/releases/latest`
 - 统一下载入口：`https://aitokenapi.cc/deployer/download`
+- 下载二维码：`docs/多Agent一键配置工具下载二维码.png`
+- 纯二维码素材：`assets/deployer-download-qr.png`
 - 公开更新清单：`https://aitokenapi.cc/deployer/latest.json`
 - 仓库只保存源码、脚本和说明；`build/`、`release/`、缓存和 exe/zip 发布产物不提交。
+
+## 下载二维码
+
+平台不方便发送明文链接时，直接发送下面这张二维码图片给客户。二维码指向统一下载入口，客户扫码后选择自己的电脑系统下载 Windows 或 Mac 版本。
+
+![多 Agent 一键配置工具下载二维码](docs/多Agent一键配置工具下载二维码.png)
 
 ## 客户流程
 
@@ -24,7 +32,7 @@
 6. 点击“一键部署”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用胖虎AI配置。
 7. 如果服务端清单给当前账号下发 `temporary_openai_access` 授权，工具会在打开 Codex 前临时启用 OpenAI 官网访问窗口；默认 10 分钟，到点自动恢复客户原系统代理。
 8. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
-9. 后续软件有新版时，点击“检查更新”下载当前系统对应的 Windows / Mac 更新包；客户手动下载时可以打开统一下载入口并选择自己的电脑系统。更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
+9. 后续软件有新版时，点击“检查更新”下载当前系统对应的 Windows / Mac 更新包；客户手动下载时优先扫码进入统一下载页，再选择自己的电脑系统。更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
 
 ## 服务端授权
 
@@ -122,6 +130,7 @@ scripts/
   run-mac.command                Mac 源码运行入口
   build-windows-exe.bat          Windows 打包 exe
   build-mac-app.command          Mac 打包 app
+  generate-download-qr.py        生成统一下载入口二维码
 legacy/
   旧版 PowerShell 工具备份
 docs/
