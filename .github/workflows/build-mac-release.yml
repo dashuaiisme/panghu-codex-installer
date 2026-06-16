@@ -9,7 +9,7 @@ on:
       tag:
         description: Release tag to upload the Mac package to
         required: true
-        default: v1.0.8
+        default: v1.0.9
       allow_unnotarized_upload:
         description: Allow uploading ad-hoc signed test packages when Apple signing/notarization secrets are missing
         required: true
@@ -23,27 +23,9 @@ permissions:
   contents: write
 
 jobs:
-  ensure-release:
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-    steps:
-      - name: Ensure release exists
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists."
-          else
-            gh release create "$RELEASE_TAG" \
-              --title "胖虎AI多Agent一键部署工具 $RELEASE_TAG" \
-              --notes "Windows, Mac Apple Silicon, and Mac Intel customer packages."
-          fi
-
   build-windows:
     name: Build Windows
     runs-on: windows-latest
-    needs: ensure-release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,7 +52,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: gh release upload "$env:RELEASE_TAG" "release/AI.Agent.-Windows.zip" --clobber
+        run: |
+          gh release view "$env:RELEASE_TAG"
+          gh release upload "$env:RELEASE_TAG" "release/AI.Agent.-Windows.zip" --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -83,7 +67,6 @@ jobs:
 
   build-mac:
     name: Build Mac ${{ matrix.package_suffix }}
-    needs: ensure-release
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       ALLOW_UNNOTARIZED_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unnotarized_upload || 'false' }}
