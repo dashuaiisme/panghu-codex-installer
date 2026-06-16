@@ -22,7 +22,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, 
 
 
 APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
@@ -37,6 +37,15 @@ WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
 WINDOWS_RELEASE_ASSET_ALIASES = (WINDOWS_RELEASE_ASSET_NAME, "AI.Agent.-Windows.zip")
 MAC_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac.zip"
 MAC_RELEASE_ASSET_ALIASES = (MAC_RELEASE_ASSET_NAME, "AI.Agent.-Mac.zip")
+MAC_APPLE_SILICON_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip"
+MAC_INTEL_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-Intel.zip"
+MAC_APPLE_SILICON_RELEASE_ASSET_ALIASES = (
+    MAC_APPLE_SILICON_RELEASE_ASSET_NAME,
+    "AI.Agent.-Mac-AppleSilicon.zip",
+    MAC_RELEASE_ASSET_NAME,
+    "AI.Agent.-Mac.zip",
+)
+MAC_INTEL_RELEASE_ASSET_ALIASES = (MAC_INTEL_RELEASE_ASSET_NAME, "AI.Agent.-Mac-Intel.zip")
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
 DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
@@ -1200,22 +1209,47 @@ def downloads_dir() -> Path:
     return Path.home() / "下载"
 
 
+def current_mac_package_suffix() -> str:
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        return "AppleSilicon"
+    if machine in {"x86_64", "amd64"}:
+        return "Intel"
+    return machine or "Unknown"
+
+
 def release_asset_name_for_current_system() -> str:
-    return MAC_RELEASE_ASSET_NAME if current_system_id() == "mac" else WINDOWS_RELEASE_ASSET_NAME
+    if current_system_id() != "mac":
+        return WINDOWS_RELEASE_ASSET_NAME
+    return MAC_APPLE_SILICON_RELEASE_ASSET_NAME if current_mac_package_suffix() == "AppleSilicon" else MAC_INTEL_RELEASE_ASSET_NAME
 
 
 def release_asset_aliases_for_current_system() -> tuple[str, ...]:
-    return MAC_RELEASE_ASSET_ALIASES if current_system_id() == "mac" else WINDOWS_RELEASE_ASSET_ALIASES
+    if current_system_id() != "mac":
+        return WINDOWS_RELEASE_ASSET_ALIASES
+    if current_mac_package_suffix() == "AppleSilicon":
+        return MAC_APPLE_SILICON_RELEASE_ASSET_ALIASES
+    return MAC_INTEL_RELEASE_ASSET_ALIASES
 
 
 def public_manifest_asset_url(payload: dict) -> str:
     if current_system_id() == "mac":
-        return str(payload.get("mac_zip_url") or payload.get("mac_download_url") or payload.get("download_url") or "")
+        if current_mac_package_suffix() == "AppleSilicon":
+            return str(
+                payload.get("mac_apple_silicon_zip_url")
+                or payload.get("mac_arm64_zip_url")
+                or payload.get("mac_zip_url")
+                or payload.get("mac_download_url")
+                or ""
+            )
+        return str(payload.get("mac_intel_zip_url") or payload.get("mac_x64_zip_url") or payload.get("mac_x86_64_zip_url") or "")
     return str(payload.get("windows_zip_url") or payload.get("download_url") or "")
 
 
 def platform_label_for_update() -> str:
-    return "Mac" if current_system_id() == "mac" else "Windows"
+    if current_system_id() == "mac":
+        return f"Mac {current_mac_package_suffix()}"
+    return "Windows"
 
 
 def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
@@ -2823,6 +2857,22 @@ requires_openai_auth = true
     assert "LaunchDaemons" in mac_restore_script
     assert "restore_state" in mac_restore_script
     assert "SECONDS_VALUE" in mac_restore_script
+    original_system = platform.system
+    original_machine = platform.machine
+    try:
+        platform.system = lambda: "Darwin"  # type: ignore[method-assign]
+        platform.machine = lambda: "arm64"  # type: ignore[method-assign]
+        assert current_mac_package_suffix() == "AppleSilicon"
+        assert release_asset_name_for_current_system().endswith("-Mac-AppleSilicon.zip")
+        assert public_manifest_asset_url({"mac_apple_silicon_zip_url": "arm", "mac_intel_zip_url": "intel"}) == "arm"
+        platform.machine = lambda: "x86_64"  # type: ignore[method-assign]
+        assert current_mac_package_suffix() == "Intel"
+        assert release_asset_name_for_current_system().endswith("-Mac-Intel.zip")
+        assert public_manifest_asset_url({"mac_apple_silicon_zip_url": "arm", "mac_intel_zip_url": "intel"}) == "intel"
+        assert public_manifest_asset_url({"mac_zip_url": "legacy"}) == ""
+    finally:
+        platform.system = original_system  # type: ignore[method-assign]
+        platform.machine = original_machine  # type: ignore[method-assign]
     print("UI self-test OK")
 
 

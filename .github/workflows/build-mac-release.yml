@@ -6,14 +6,33 @@ on:
       tag:
         description: Release tag to upload the Mac package to
         required: true
-        default: v1.0.7
+        default: v1.0.8
+      allow_unnotarized_upload:
+        description: Allow uploading ad-hoc signed test packages when Apple signing/notarization secrets are missing
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: write
 
 jobs:
   build-mac:
-    runs-on: macos-15
+    name: Build Mac ${{ matrix.package_suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            package_suffix: Intel
+            expected_arch: x86_64
+          - runner: macos-15
+            package_suffix: AppleSilicon
+            expected_arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,47 +42,113 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Create macOS icon
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
-          mkdir -p assets/panghu-avatar.iconset
-          sips -z 16 16 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_16x16.png
-          sips -z 32 32 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_16x16@2x.png
-          sips -z 32 32 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_32x32.png
-          sips -z 64 64 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_32x32@2x.png
-          sips -z 128 128 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_128x128.png
-          sips -z 256 256 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_128x128@2x.png
-          sips -z 256 256 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_256x256.png
-          sips -z 512 512 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_256x256@2x.png
-          sips -z 512 512 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_512x512.png
-          sips -z 1024 1024 assets/panghu-avatar.png --out assets/panghu-avatar.iconset/icon_512x512@2x.png
-          iconutil -c icns assets/panghu-avatar.iconset -o assets/panghu-avatar.icns
+          if [ -z "${MACOS_CERTIFICATE_BASE64:-}" ] || [ -z "${MACOS_CERTIFICATE_PASSWORD:-}" ] || [ -z "${KEYCHAIN_PASSWORD:-}" ]; then
+            echo "Apple Developer ID certificate secrets are not configured; building an ad-hoc signed test package."
+            exit 0
+          fi
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
       - name: Build app
+        env:
+          APP_VERSION: ${{ inputs.tag }}
+          BUNDLE_ID: cc.aitokenapi.panghu.agent-deployer
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
         run: |
           chmod +x scripts/build-mac-app.command
           scripts/build-mac-app.command
+
+      - name: Verify architecture
+        run: |
+          EXECUTABLE="release/胖虎AI多Agent一键部署工具.app/Contents/MacOS/胖虎AI多Agent一键部署工具"
+          file "$EXECUTABLE"
+          file "$EXECUTABLE" | grep "${{ matrix.expected_arch }}"
+
+      - name: Verify signature
+        run: |
+          codesign --verify --deep --strict --verbose=2 "release/胖虎AI多Agent一键部署工具.app"
+          codesign -dv --verbose=4 "release/胖虎AI多Agent一键部署工具.app" 2>&1
 
       - name: Test built app
         run: |
           release/胖虎AI多Agent一键部署工具.app/Contents/MacOS/胖虎AI多Agent一键部署工具 --self-test
 
+      - name: Notarize app
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "${MACOS_CERTIFICATE_BASE64:-}" ] || [ -z "${MACOS_CERTIFICATE_PASSWORD:-}" ] || [ -z "${MACOS_KEYCHAIN_PASSWORD:-}" ] || [ -z "${MACOS_CODESIGN_IDENTITY:-}" ] || [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "Apple notarization secrets are not fully configured; skipping notarization."
+            echo "notarized=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          ZIP_PATH="release/胖虎AI多Agent一键部署工具-Mac-${{ matrix.package_suffix }}.zip"
+          xcrun notarytool submit "$ZIP_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "release/胖虎AI多Agent一键部署工具.app"
+          rm -f "$ZIP_PATH"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "release/胖虎AI多Agent一键部署工具.app" "$ZIP_PATH"
+          spctl --assess --type execute --verbose=4 "release/胖虎AI多Agent一键部署工具.app"
+          echo "notarized=true" >> "$GITHUB_ENV"
+
+      - name: Stop before public upload when package is not notarized
+        if: ${{ env.notarized != 'true' && inputs.allow_unnotarized_upload != 'true' }}
+        run: |
+          echo "This Mac package was not notarized, so it will not be uploaded to the public GitHub Release."
+          echo "Configure Apple signing/notarization secrets for customer releases, or rerun with allow_unnotarized_upload=true for internal testing."
+          exit 1
+
       - name: Prepare release asset
         run: |
-          cp release/胖虎AI多Agent一键部署工具-Mac.zip release/AI.Agent.-Mac.zip
-          shasum -a 256 release/AI.Agent.-Mac.zip | tee release/AI.Agent.-Mac.zip.sha256
-          stat -f "%z" release/AI.Agent.-Mac.zip | tee release/AI.Agent.-Mac.zip.size
+          cp "release/胖虎AI多Agent一键部署工具-Mac-${{ matrix.package_suffix }}.zip" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip"
+          shasum -a 256 "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.sha256"
+          stat -f "%z" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.size"
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ inputs.tag }}" >/dev/null 2>&1; then
+            echo "Release ${{ inputs.tag }} already exists."
+          else
+            gh release create "${{ inputs.tag }}" \
+              --title "胖虎AI多Agent一键部署工具 ${{ inputs.tag }}" \
+              --notes "Mac Apple Silicon and Intel customer packages."
+          fi
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ inputs.tag }}" release/AI.Agent.-Mac.zip --clobber
+          gh release upload "${{ inputs.tag }}" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AI.Agent.-Mac
+          name: AI.Agent.-Mac-${{ matrix.package_suffix }}
           path: |
-            release/AI.Agent.-Mac.zip
-            release/AI.Agent.-Mac.zip.sha256
-            release/AI.Agent.-Mac.zip.size
+            release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip
+            release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.sha256
+            release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.size

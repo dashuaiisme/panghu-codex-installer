@@ -7,28 +7,76 @@ fi
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements-build.txt
 APP_NAME="胖虎AI多Agent一键部署工具"
+APP_VERSION="${APP_VERSION:-$(.venv/bin/python - <<'PY'
+import ast
+from pathlib import Path
+for node in ast.parse(Path("src/panghu_codex_installer.py").read_text(encoding="utf-8")).body:
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if getattr(target, "id", "") == "APP_VERSION":
+                print(ast.literal_eval(node.value))
+                raise SystemExit
+raise SystemExit("APP_VERSION not found")
+PY
+)}"
+APP_VERSION="${APP_VERSION#v}"
+BUNDLE_ID="${BUNDLE_ID:-cc.aitokenapi.panghu.agent-deployer}"
+MAC_ARCH="${MAC_ARCH:-$(uname -m)}"
+case "$MAC_ARCH" in
+  arm64) MAC_PACKAGE_SUFFIX="AppleSilicon" ;;
+  x86_64) MAC_PACKAGE_SUFFIX="Intel" ;;
+  *) MAC_PACKAGE_SUFFIX="$MAC_ARCH" ;;
+esac
 ROOT="$(pwd)"
 ASSETS="$ROOT/assets"
+ICON_PATH="$ASSETS/panghu-avatar.icns"
+if [ ! -f "$ICON_PATH" ]; then
+  ICONSET="$ASSETS/panghu-avatar.iconset"
+  rm -rf "$ICONSET"
+  mkdir -p "$ICONSET"
+  sips -z 16 16 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_16x16.png" >/dev/null
+  sips -z 32 32 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_32x32.png" >/dev/null
+  sips -z 64 64 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_128x128.png" >/dev/null
+  sips -z 256 256 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_256x256.png" >/dev/null
+  sips -z 512 512 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_512x512.png" >/dev/null
+  sips -z 1024 1024 "$ASSETS/panghu-avatar.png" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+  iconutil -c icns "$ICONSET" -o "$ICON_PATH"
+fi
 .venv/bin/python -m PyInstaller \
   --noconfirm \
   --clean \
   --windowed \
   --name "$APP_NAME" \
-  --icon "$ASSETS/panghu-avatar.icns" \
+  --icon "$ICON_PATH" \
+  --osx-bundle-identifier "$BUNDLE_ID" \
   --distpath release \
   --workpath build \
   --specpath build \
   src/panghu_codex_installer.py
 APP_PATH="release/${APP_NAME}.app"
-ZIP_PATH="release/${APP_NAME}-Mac.zip"
+ZIP_PATH="release/${APP_NAME}-Mac-${MAC_PACKAGE_SUFFIX}.zip"
 rm -rf "$APP_PATH/Contents/Resources/assets"
 mkdir -p "$APP_PATH/Contents/Resources"
 cp -R "$ASSETS" "$APP_PATH/Contents/Resources/assets"
 if [ -d "$APP_PATH" ]; then
-  /usr/bin/codesign --force --deep --sign - "$APP_PATH" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_PATH/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_PATH/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$APP_PATH/Contents/Info.plist"
+  if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+    /usr/bin/codesign --force --deep --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_PATH"
+  else
+    /usr/bin/codesign --force --deep --sign - "$APP_PATH" >/dev/null 2>&1 || true
+  fi
 fi
 rm -f "$ZIP_PATH"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
 echo "Build finished."
+echo "Version: $APP_VERSION"
+echo "Bundle ID: $BUNDLE_ID"
+echo "Architecture: $MAC_ARCH"
 echo "$APP_PATH"
 echo "$ZIP_PATH"
