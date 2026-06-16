@@ -23,8 +23,67 @@ permissions:
   contents: write
 
 jobs:
+  ensure-release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "胖虎AI多Agent一键部署工具 $RELEASE_TAG" \
+              --notes "Windows, Mac Apple Silicon, and Mac Intel customer packages."
+          fi
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: ensure-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build app
+        run: scripts\build-windows-exe.bat
+
+      - name: Test built app
+        run: release\胖虎AI多Agent一键部署工具\胖虎AI多Agent一键部署工具.exe --self-test
+
+      - name: Prepare release asset
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath 'release\胖虎AI多Agent一键部署工具-Windows.zip' -Destination 'release\AI.Agent.-Windows.zip' -Force
+          (Get-FileHash -Algorithm SHA256 -LiteralPath 'release\AI.Agent.-Windows.zip').Hash.ToLowerInvariant() | Set-Content -Encoding ascii 'release\AI.Agent.-Windows.zip.sha256'
+          (Get-Item -LiteralPath 'release\AI.Agent.-Windows.zip').Length | Set-Content -Encoding ascii 'release\AI.Agent.-Windows.zip.size'
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: gh release upload "$env:RELEASE_TAG" "release/AI.Agent.-Windows.zip" --clobber
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI.Agent.-Windows
+          path: |
+            release/AI.Agent.-Windows.zip
+            release/AI.Agent.-Windows.zip.sha256
+            release/AI.Agent.-Windows.zip.size
+
   build-mac:
     name: Build Mac ${{ matrix.package_suffix }}
+    needs: ensure-release
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       ALLOW_UNNOTARIZED_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unnotarized_upload || 'false' }}
@@ -131,18 +190,6 @@ jobs:
           cp "release/胖虎AI多Agent一键部署工具-Mac-${{ matrix.package_suffix }}.zip" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip"
           shasum -a 256 "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.sha256"
           stat -f "%z" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.size"
-
-      - name: Ensure release exists
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists."
-          else
-            gh release create "$RELEASE_TAG" \
-              --title "胖虎AI多Agent一键部署工具 $RELEASE_TAG" \
-              --notes "Mac Apple Silicon and Intel customer packages."
-          fi
 
       - name: Upload to release
         env:
