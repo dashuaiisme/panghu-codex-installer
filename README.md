@@ -193,12 +193,12 @@ release/胖虎AI多Agent一键部署工具-Mac-Intel.zip
 
 ### Mac 正式分发要求
 
-客户正式分发包必须经过 Apple Developer ID 签名和 notarization 公证，否则 macOS 会因为无法验证开发者而拦截打开。GitHub Actions 已支持两种芯片包：
+客户正式分发包最好经过 Apple Developer ID 签名和 notarization 公证，否则 macOS 可能因为无法验证开发者而拦截打开。当前公开下载页为了先保证客户能稳定下载，已经提供未公证的两种芯片包：
 
 - `AI.Agent.-Mac-AppleSilicon.zip`：M1/M2/M3/M4 等 Apple 芯片 Mac。
 - `AI.Agent.-Mac-Intel.zip`：Intel Mac。
 
-如果仓库 secrets 未配置 Apple 开发者证书，工作流仍会生成临时自签包，但该包只适合内部测试，不适合作为客户正式包。
+如果仓库 secrets 未配置 Apple 开发者证书，工作流会生成临时自签包。当前业务策略允许先公开提供该包下载，安装拦截由客户按 macOS 安全提示自行处理。
 
 正式签名和公证需要在 GitHub 仓库配置这些 secrets：
 
