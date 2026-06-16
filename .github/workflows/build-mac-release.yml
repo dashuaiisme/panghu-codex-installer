@@ -9,7 +9,7 @@ on:
       tag:
         description: Release tag to upload the Mac package to
         required: true
-        default: v1.0.10
+        default: v1.0.11
       allow_unnotarized_upload:
         description: Allow uploading ad-hoc signed test packages when Apple signing/notarization secrets are missing
         required: true
@@ -161,13 +161,6 @@ jobs:
           spctl --assess --type execute --verbose=4 "release/胖虎AI多Agent一键部署工具.app"
           echo "notarized=true" >> "$GITHUB_ENV"
 
-      - name: Stop before public upload when package is not notarized
-        if: ${{ env.notarized != 'true' && env.ALLOW_UNNOTARIZED_UPLOAD != 'true' }}
-        run: |
-          echo "This Mac package was not notarized, so it will not be uploaded to the public GitHub Release."
-          echo "Configure Apple signing/notarization secrets for customer releases, or rerun with allow_unnotarized_upload=true for internal testing."
-          exit 1
-
       - name: Prepare release asset
         run: |
           cp "release/胖虎AI多Agent一键部署工具-Mac-${{ matrix.package_suffix }}.zip" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip"
@@ -175,10 +168,17 @@ jobs:
           stat -f "%z" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.size"
 
       - name: Upload to release
+        if: ${{ env.notarized == 'true' || env.ALLOW_UNNOTARIZED_UPLOAD == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$RELEASE_TAG" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" --clobber
+
+      - name: Report blocked public Mac upload
+        if: ${{ env.notarized != 'true' && env.ALLOW_UNNOTARIZED_UPLOAD != 'true' }}
+        run: |
+          echo "::warning::Mac ${{ matrix.package_suffix }} package was built and saved as a workflow artifact, but it was not uploaded to the public Release because Apple signing/notarization secrets are missing."
+          echo "Configure Apple Developer ID signing and notarization secrets before using this package for customers."
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
