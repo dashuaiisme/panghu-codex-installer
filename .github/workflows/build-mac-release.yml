@@ -9,7 +9,7 @@ on:
       tag:
         description: Release tag to upload the Mac package to
         required: true
-        default: v1.0.9
+        default: v1.0.10
       allow_unnotarized_upload:
         description: Allow uploading ad-hoc signed test packages when Apple signing/notarization secrets are missing
         required: true
