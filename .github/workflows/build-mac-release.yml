@@ -1,6 +1,9 @@
 name: Build Mac Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -22,6 +25,9 @@ permissions:
 jobs:
   build-mac:
     name: Build Mac ${{ matrix.package_suffix }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      ALLOW_UNNOTARIZED_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unnotarized_upload || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -64,7 +70,7 @@ jobs:
 
       - name: Build app
         env:
-          APP_VERSION: ${{ inputs.tag }}
+          APP_VERSION: ${{ env.RELEASE_TAG }}
           BUNDLE_ID: cc.aitokenapi.panghu.agent-deployer
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
         run: |
@@ -114,7 +120,7 @@ jobs:
           echo "notarized=true" >> "$GITHUB_ENV"
 
       - name: Stop before public upload when package is not notarized
-        if: ${{ env.notarized != 'true' && inputs.allow_unnotarized_upload != 'true' }}
+        if: ${{ env.notarized != 'true' && env.ALLOW_UNNOTARIZED_UPLOAD != 'true' }}
         run: |
           echo "This Mac package was not notarized, so it will not be uploaded to the public GitHub Release."
           echo "Configure Apple signing/notarization secrets for customer releases, or rerun with allow_unnotarized_upload=true for internal testing."
@@ -130,11 +136,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "${{ inputs.tag }}" >/dev/null 2>&1; then
-            echo "Release ${{ inputs.tag }} already exists."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
           else
-            gh release create "${{ inputs.tag }}" \
-              --title "胖虎AI多Agent一键部署工具 ${{ inputs.tag }}" \
+            gh release create "$RELEASE_TAG" \
+              --title "胖虎AI多Agent一键部署工具 $RELEASE_TAG" \
               --notes "Mac Apple Silicon and Intel customer packages."
           fi
 
@@ -142,7 +148,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ inputs.tag }}" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" --clobber
+          gh release upload "$RELEASE_TAG" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
