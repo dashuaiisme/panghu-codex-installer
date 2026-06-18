@@ -15,7 +15,8 @@
 - 下载二维码：`docs/多Agent一键配置工具下载二维码.png`
 - 纯二维码素材：`assets/deployer-download-qr.png`
 - 公开更新清单：`https://aitokenapi.cc/deployer/latest.json`
-- 仓库只保存源码、脚本和说明；`build/`、`release/`、缓存和 exe/zip 发布产物不提交。
+- 技术维护手册：`docs/TECHNICAL_MAINTENANCE_MANUAL.md`
+- 仓库只保存源码、脚本和说明；`build/`、缓存和 exe/zip 发布产物不提交。`release/` 虽然不提交，但里面的三端 zip 是本地客户交付物，清理项目前必须保留或先确认已有可恢复的正式包。
 
 ## 下载二维码
 
@@ -27,13 +28,14 @@
 
 1. 登录胖虎AI账号；没有账号时点击注册链接去 `https://aitokenapi.cc/register`。
 2. 软件向胖虎AI服务端申请部署授权；未授权账号不能进入后续部署。
-3. 打开 `https://aitokenapi.cc/login?next=/console/token` 创建 API Key，粘贴到工具里并测试。
+3. 打开 `https://aitokenapi.cc/login?next=/console/token` 创建 API Key，粘贴到工具里并测试。新注册账号需要先充值或确保账户有余额，否则 Key 可能无法通过测试。
 4. 选择或确认当前系统，检测环境、PATH、包管理器、已安装 Agent 和第三方配置插件。
 5. 选择 Agent 和安装方式：`Codex`、`ClaudeCode`、`OpenClaw`、`Hermes`，支持 CLI / 客户端入口。
-6. 点击“一键部署”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用胖虎AI配置。
+6. 点击“一键部署（普通）”，工具先拦截 `ccswitch`、`codex++`、`CCR` 等可能改坏配置的第三方工具，再拉取服务端授权清单、调用官方在线安装入口，并对安全可写的 Agent 应用普通直接 API 配置。
 7. 如果服务端清单给当前账号下发 `temporary_openai_access` 授权，工具会在打开 Codex 前临时启用 OpenAI 官网访问窗口；默认 10 分钟，到点自动恢复客户原系统代理。
-8. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。
-9. 后续软件有新版时，点击“检查更新”下载当前系统对应的 Windows / Mac 更新包；Mac 会按 Apple 芯片或 Intel 芯片下载对应 zip。客户手动下载时优先扫码进入统一下载页，再选择自己的电脑系统和芯片类型。更新后会继续读取客户本机已保存的登录授权、账号名和 API Key，不要求重新填写。
+8. 如果客户已经安装过 Agent，只是 Codex 配置坏了，可点击“仅修复 Codex 配置”，不会重新安装 Agent。配置写完后必须完全退出 Codex，再重新打开 Codex，新的配置才会生效。
+9. 如果客户需要“保持 ChatGPT 登录态，同时模型消耗胖虎AI API Key”，点击“双态配置”。不需要登录态共存的客户不要点这个模式。
+10. 登录成功后软件会自动联网检查新版；有新版时提示在线更新。客户确认后，工具会下载当前系统对应的 Windows / Mac 更新包，退出当前程序，自动覆盖程序目录并重新打开新版。客户手动点击“检查更新”也走同一套在线更新流程。更新只覆盖工具本体，不清空客户本机已保存的登录授权、账号名、API Key、Codex 配置和工作区资料。
 
 ## 服务端授权
 
@@ -93,7 +95,7 @@ Codex 配置写入当前用户目录：
 ~/Documents/胖虎AI-Agent工作区/AGENTS.md
 ```
 
-Codex 配置会先备份旧文件，再用下面这段完整覆盖 `config.toml`：
+普通模式会先备份旧文件，再用下面这段完整覆盖 `config.toml`：
 
 ```toml
 model_provider = "panghuAI"
@@ -113,7 +115,24 @@ wire_api = "responses"
 requires_openai_auth = true
 ```
 
-`auth.json` 会自动创建或更新 `auth_mode=chatgpt` 和客户填写的 `OPENAI_API_KEY`。
+普通模式的 `auth.json` 会写入客户填写的 `OPENAI_API_KEY`，适合只需要直接 API 配置的客户。
+
+普通配置方式无需登录 ChatGPT 账号，也可以正常使用 Codex。无论使用普通模式、仅修复配置，还是双态模式，只要工具写入了 Codex 配置，都必须完全退出 Codex 后重新打开，新的配置才会生效。
+
+双态模式是额外入口，只有客户需要登录态共存时才使用。双态模式会在 `config.toml` 里额外写入：
+
+```toml
+experimental_bearer_token = "客户填写的胖虎AI API Key"
+```
+
+双态模式的 `auth.json` 会自动创建或更新 `auth_mode=chatgpt`，并把 `OPENAI_API_KEY` 置为 `null`。如果客户已经在 Codex 里登录过，本工具会保留已有登录 token；如果客户还没有登录，配置完成后需要客户完全退出 Codex、重新打开 Codex，并自行登录自己的 ChatGPT 账号。
+
+双态模式生效后：
+
+- 登录态来自客户自己的 ChatGPT 账号。
+- 模型请求走胖虎AI中转 provider。
+- 模型消耗使用客户填写的胖虎AI API Key。
+- 本工具不代替客户登录 ChatGPT 账号，也不保存 ChatGPT 账号密码。
 
 通用说明文件写入：
 
@@ -132,10 +151,8 @@ scripts/
   build-windows-exe.bat          Windows 打包 exe
   build-mac-app.command          Mac 打包 app，按当前构建机器生成 Apple 芯片版或 Intel 版
   generate-download-qr.py        生成统一下载入口二维码
-legacy/
-  旧版 PowerShell 工具备份
 docs/
-  客户发送说明和维护说明
+  客户发送说明、二维码和技术维护手册
 ```
 
 ## Windows 开发运行
@@ -150,13 +167,7 @@ scripts\run-windows.bat
 scripts\build-windows-exe.bat
 ```
 
-打包后发送：
-
-```text
-release\胖虎AI多Agent一键部署工具-Windows.zip
-```
-
-客户解压后双击里面的：
+本地打包会生成 `release/` 目录。`build/` 和 `.venv/` 属于可重建环境；`release/` 里的三端 zip 属于客户交付物，不能在普通清理中删除。正式给客户分发时，以 GitHub Release 和统一下载入口为准；客户解压后双击里面的：
 
 ```text
 胖虎AI多Agent一键部署工具.exe
@@ -236,7 +247,7 @@ winget install Codex -s msstore
 ## 重要限制
 
 - 本工具只走官方在线安装入口，不内置、不修改、不伪装第三方 Agent 本体。
-- 胖虎AI默认公开客户域名固定为 `https://aitokenapi.cc`，不要改成内部或私有上游域名。
+- 胖虎AI默认公开客户域名固定为 `https://aitokenapi.cc`，客户界面只读展示，不能编辑；不要改成内部或私有上游域名。
 - ClaudeCode 只安装，不做配置。
 - OpenClaw / Hermes 只有在官方配置路径明确且安全时才允许自动写入；本版默认只生成中文配置说明。
 - 官方客户端菜单、按钮、设置页是否中文，仍取决于对应官方产品自身。

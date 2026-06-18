@@ -9,12 +9,14 @@ import shutil
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
 import uuid
 import webbrowser
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.error import HTTPError, URLError
@@ -28,7 +30,7 @@ except Exception:  # pragma: no cover - runtime fallback for incomplete dev envi
 
 
 APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
@@ -65,18 +67,21 @@ HERMES_DOCS_URL = "https://hermes-agent.nousresearch.com/docs/zh-Hans/getting-st
 OFFICIAL_PACKAGE_SUFFIXES = (".msixbundle", ".msix", ".appx", ".appxbundle", ".appinstaller")
 PANGHU_AGENTS_START = "<!-- PANGHUAI_CODEX_RULES_START -->"
 PANGHU_AGENTS_END = "<!-- PANGHUAI_CODEX_RULES_END -->"
-APP_BG = "#edf3f8"
-CARD_BG = "#ffffff"
-PANEL_BG = "#f8fbfd"
-INK = "#102033"
-MUTED = "#607086"
-PRIMARY = "#155e75"
-PRIMARY_DARK = "#0f3f50"
-ACCENT = "#0f9f7a"
-BORDER = "#d7e2ea"
-WARNING_BG = "#fff7ed"
-GOLD = "#d6a648"
-GOLD_SOFT = "#fff8e5"
+APP_BG = "#f2eee7"
+CARD_BG = "#fffdf8"
+PANEL_BG = "#fbf6ee"
+INK = "#2b2520"
+MUTED = "#756b60"
+PRIMARY = "#9f5132"
+PRIMARY_DARK = "#67331f"
+ACCENT = "#2f7d65"
+BORDER = "#e4d8ca"
+WARNING_BG = "#fff3e3"
+GOLD = "#b9762b"
+GOLD_SOFT = "#fff3d6"
+LOCKED_BG = "#eee6dc"
+SUCCESS_BG = "#eaf5ee"
+INFO_BG = "#f6efe5"
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,11 @@ class RiskPluginFinding:
 class TemporaryOpenAIAccessConfig:
     proxy: str
     duration_seconds: int = TEMP_OPENAI_ACCESS_SECONDS
+
+
+class CodexConfigMode(str, Enum):
+    DIRECT_API = "direct_api"
+    DUAL_STATE = "dual_state"
 
 
 AGENTS = (
@@ -510,7 +520,7 @@ def save_profile_data(data: dict) -> None:
         "user": current.get("user") if isinstance(current.get("user"), dict) else {},
         "deployer_auth": current.get("deployer_auth") if isinstance(current.get("deployer_auth"), dict) else {},
         "api_key": str(current.get("api_key") or ""),
-        "base_url": str(current.get("base_url") or DEFAULT_BASE_URL),
+        "base_url": DEFAULT_BASE_URL,
         "model": str(current.get("model") or DEFAULT_MODEL),
         "skip_test": bool(current.get("skip_test")),
         "open_app": bool(current.get("open_app", True)),
@@ -581,6 +591,15 @@ base_url = "https://aitokenapi.cc/v1"
 wire_api = "responses"
 requires_openai_auth = true
 '''
+
+
+def build_dual_state_config(api_key: str, base_url: str, model: str) -> str:
+    safe_api_key = api_key.strip().replace("\\", "\\\\").replace('"', '\\"')
+    config = build_config(api_key, base_url, model)
+    return config.replace(
+        'wire_api = "responses"\n',
+        f'wire_api = "responses"\nexperimental_bearer_token = "{safe_api_key}"\n',
+    )
 
 
 def chinese_rules() -> str:
@@ -676,7 +695,23 @@ def merge_config(existing: str, api_key: str, base_url: str, model: str) -> str:
 
 
 def build_auth_json(existing: str, api_key: str) -> str:
+    return build_direct_api_auth_json(existing, api_key)
+
+
+def build_direct_api_auth_json(existing: str, api_key: str) -> str:
     payload = {"OPENAI_API_KEY": api_key.strip()}
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def build_dual_state_auth_json(existing: str, api_key: str) -> str:
+    try:
+        payload = json.loads(existing) if existing.strip() else {}
+        if not isinstance(payload, dict):
+            payload = {}
+    except json.JSONDecodeError:
+        payload = {}
+    payload["auth_mode"] = "chatgpt"
+    payload["OPENAI_API_KEY"] = None
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
@@ -1281,7 +1316,16 @@ def platform_label_for_update() -> str:
     return "Windows"
 
 
-def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
+@dataclass
+class UpdateInfo:
+    latest_tag: str
+    asset_url: str
+    release_url: str
+    asset_name: str
+    platform_label: str
+
+
+def find_available_update() -> tuple[UpdateInfo | None, str, str | None]:
     try:
         req = Request(PUBLIC_UPDATE_MANIFEST_URL, headers={"Accept": "application/json", "User-Agent": HTTP_USER_AGENT})
         with trusted_urlopen(req, timeout=20) as resp:
@@ -1294,34 +1338,27 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
         release_url = str(payload.get("html_url") or payload.get("release_url") or DEFAULT_BASE_URL)
         asset_url = public_manifest_asset_url(payload)
         if not latest_tag:
-            return False, "检查更新失败：公开更新清单缺少版本号。", None, release_url
+            return None, "检查更新失败：公开更新清单缺少版本号。", release_url
         if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
-            return False, f"当前已是最新版本：{APP_VERSION}", None, release_url
+            return None, f"当前已是最新版本：{APP_VERSION}", release_url
         if not asset_url:
-            return False, f"发现新版本 {latest_tag}，但公开更新清单缺少 {platform_label_for_update()} 下载地址。", None, release_url
-        target_dir = downloads_dir() / "胖虎AI工具更新"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"{latest_tag}-{release_asset_name_for_current_system()}"
-        log(f"发现新版本 {latest_tag}，开始下载更新包。")
-        try:
-            download_with_trusted_certs(asset_url, target)
-        except Exception as exc:
-            return False, f"下载更新失败：{exc}", None, release_url
-        return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
+            return None, f"发现新版本 {latest_tag}，但公开更新清单缺少 {platform_label_for_update()} 下载地址。", release_url
+        info = UpdateInfo(latest_tag, asset_url, release_url, release_asset_name_for_current_system(), platform_label_for_update())
+        return info, f"发现新版本 {latest_tag}。", release_url
 
     req = Request(GITHUB_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": HTTP_USER_AGENT})
     try:
         with trusted_urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
-        return False, f"检查更新失败：{exc}", None, None
+        return None, f"检查更新失败：{exc}", None
 
     latest_tag = str(payload.get("tag_name") or "").strip()
     release_url = str(payload.get("html_url") or "https://github.com/dashuaiisme/panghu-codex-installer/releases")
     if not latest_tag:
-        return False, "检查更新失败：GitHub Release 没有版本号。", None, release_url
+        return None, "检查更新失败：GitHub Release 没有版本号。", release_url
     if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
-        return False, f"当前已是最新版本：{APP_VERSION}", None, release_url
+        return None, f"当前已是最新版本：{APP_VERSION}", release_url
 
     asset_url = ""
     for asset in payload.get("assets") or []:
@@ -1332,17 +1369,134 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
             asset_url = str(asset.get("browser_download_url") or "")
             break
     if not asset_url:
-        return False, f"发现新版本 {latest_tag}，但未找到 {platform_label_for_update()} 更新包，已打开发布页。", None, release_url
+        return None, f"发现新版本 {latest_tag}，但未找到 {platform_label_for_update()} 更新包，已打开发布页。", release_url
 
+    info = UpdateInfo(latest_tag, asset_url, release_url, release_asset_name_for_current_system(), platform_label_for_update())
+    return info, f"发现新版本 {latest_tag}。", release_url
+
+
+def download_update_package(update: UpdateInfo, log) -> Path:
     target_dir = downloads_dir() / "胖虎AI工具更新"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{latest_tag}-{release_asset_name_for_current_system()}"
-    log(f"发现新版本 {latest_tag}，开始下载更新包。")
+    target = target_dir / f"{update.latest_tag}-{update.asset_name}"
+    log(f"开始下载 {update.platform_label} 更新包：{update.latest_tag}")
+    download_with_trusted_certs(update.asset_url, target)
+    return target
+
+
+def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
+    update, msg, release_url = find_available_update()
+    if update is None:
+        return False, msg, None, release_url
     try:
-        download_with_trusted_certs(asset_url, target)
+        target = download_update_package(update, log)
     except Exception as exc:
-        return False, f"下载更新失败：{exc}", None, release_url
-    return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
+        return False, f"下载更新失败：{exc}", None, update.release_url
+    return True, f"新版本 {update.latest_tag} 已下载。", target, update.release_url
+
+
+def update_script_path() -> Path:
+    root = Path(tempfile.gettempdir()) / "PanghuAI-Agent-Deployer-Updater"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / ("apply-update.ps1" if platform.system() == "Windows" else "apply-update.sh")
+
+
+def powershell_single_quoted(value: Path | str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def mac_app_bundle_path() -> Path | None:
+    executable = Path(sys.executable).resolve()
+    for parent in (executable, *executable.parents):
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def app_update_root() -> Path:
+    if platform.system() == "Darwin":
+        bundle = mac_app_bundle_path()
+        if bundle:
+            return bundle
+    return app_root()
+
+
+def app_launch_target() -> Path:
+    if platform.system() == "Darwin":
+        bundle = mac_app_bundle_path()
+        if bundle:
+            return bundle
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+    return Path(sys.argv[0]).resolve()
+
+
+def build_windows_update_script(zip_path: Path, app_dir: Path, launch_target: Path, pid: int) -> str:
+    return f"""$ErrorActionPreference = "Stop"
+$zipPath = {powershell_single_quoted(zip_path)}
+$appDir = {powershell_single_quoted(app_dir)}
+$launchTarget = {powershell_single_quoted(launch_target)}
+$pidToWait = {pid}
+$staging = Join-Path $env:TEMP ("PanghuAI-Agent-Deployer-Update-" + [guid]::NewGuid().ToString("N"))
+try {{
+    Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $staging -Force
+    $payload = Get-ChildItem -LiteralPath $staging -Directory | Select-Object -First 1
+    if ($null -eq $payload) {{ throw "更新包里没有找到程序目录。" }}
+    Copy-Item -Path (Join-Path $payload.FullName "*") -Destination $appDir -Recurse -Force
+    Start-Process -FilePath $launchTarget
+}} finally {{
+    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+}}
+"""
+
+
+def build_macos_update_script(zip_path: Path, app_dir: Path, launch_target: Path, pid: int) -> str:
+    return f"""#!/bin/zsh
+set -euo pipefail
+ZIP_PATH={shlex.quote(str(zip_path))}
+APP_DIR={shlex.quote(str(app_dir))}
+LAUNCH_TARGET={shlex.quote(str(launch_target))}
+PID_TO_WAIT={pid}
+STAGING="$(mktemp -d "${{TMPDIR:-/tmp}}/panghuai-agent-update.XXXXXX")"
+cleanup() {{
+  rm -rf "$STAGING"
+}}
+trap cleanup EXIT
+while kill -0 "$PID_TO_WAIT" >/dev/null 2>&1; do
+  sleep 0.5
+done
+ditto -x -k "$ZIP_PATH" "$STAGING"
+PAYLOAD="$(find "$STAGING" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+if [ -z "$PAYLOAD" ]; then
+  echo "更新包里没有找到 app。"
+  exit 1
+fi
+rm -rf "$APP_DIR"
+cp -R "$PAYLOAD" "$APP_DIR"
+open "$LAUNCH_TARGET"
+"""
+
+
+def start_online_update(zip_path: Path, log) -> None:
+    app_dir = app_update_root()
+    launch_target = app_launch_target()
+    pid = os.getpid()
+    script_path = update_script_path()
+    if platform.system() == "Windows":
+        script = build_windows_update_script(zip_path, app_dir, launch_target, pid)
+        write_text(script_path, script)
+        subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)])
+    elif platform.system() == "Darwin":
+        script = build_macos_update_script(zip_path, app_dir, launch_target, pid)
+        write_text(script_path, script)
+        script_path.chmod(0o755)
+        subprocess.Popen(["/bin/zsh", str(script_path)])
+    else:
+        raise RuntimeError("当前系统暂不支持自动覆盖更新。")
+    log("在线更新程序已启动，本工具即将退出并由更新程序覆盖安装。")
 
 
 def open_codex_download_page() -> None:
@@ -1615,16 +1769,15 @@ def install_codex_config(
     open_app: bool,
     log,
     temporary_openai_access: TemporaryOpenAIAccessConfig | None = None,
+    mode: CodexConfigMode = CodexConfigMode.DIRECT_API,
 ) -> bool:
     if not api_key.strip():
         raise ValueError("请先输入胖虎AI API Key。")
-    if not base_url.strip():
-        raise ValueError("接口地址不能为空。")
     if not model.strip():
         raise ValueError("模型不能为空。")
 
     api_key = api_key.strip()
-    base_url = base_url.strip()
+    base_url = DEFAULT_BASE_URL
     model = model.strip()
     home = codex_home()
     workdir = workspace_root()
@@ -1633,7 +1786,8 @@ def install_codex_config(
     global_agents = home / "AGENTS.md"
     workspace_agents = workdir / "AGENTS.md"
 
-    log("开始应用 Codex 胖虎AI配置。")
+    mode_label = "双态模式配置" if mode == CodexConfigMode.DUAL_STATE else "普通直接 API 配置"
+    log(f"开始应用 Codex 胖虎AI{mode_label}。")
     home.mkdir(parents=True, exist_ok=True)
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -1657,8 +1811,14 @@ def install_codex_config(
 
     old_config = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     old_auth = auth_path.read_text(encoding="utf-8") if auth_path.exists() else ""
-    write_text(config_path, merge_config(old_config, api_key, base_url, model))
-    write_text(auth_path, build_auth_json(old_auth, api_key))
+    if mode == CodexConfigMode.DUAL_STATE:
+        new_config = build_dual_state_config(api_key, base_url, model)
+        new_auth = build_dual_state_auth_json(old_auth, api_key)
+    else:
+        new_config = merge_config(old_config, api_key, base_url, model)
+        new_auth = build_direct_api_auth_json(old_auth, api_key)
+    write_text(config_path, new_config)
+    write_text(auth_path, new_auth)
     for agents_path in (global_agents, workspace_agents):
         old_agents = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
         write_text(agents_path, merge_agents_rules(old_agents))
@@ -1667,6 +1827,11 @@ def install_codex_config(
     log(f"接口地址：{CODEX_BASE_URL}")
     log(f"模型：{model}")
     log(f"Key：{mask_key(api_key)}")
+    if mode == CodexConfigMode.DUAL_STATE:
+        log("配置生效提示：配置写完后，请先完全退出 Codex，再重新打开 Codex；否则 Codex 可能继续使用旧配置。")
+        log("双态模式需要用户重新打开后自行登录自己的 ChatGPT 账号；登录态来自用户账号，模型消耗走胖虎AI API Key。")
+    else:
+        log("普通模式提示：已写入直接 API 配置；配置写完后，请先完全退出 Codex，再重新打开 Codex。")
 
     ok = True
     if skip_test:
@@ -1696,11 +1861,104 @@ def build_agent_setup_guide_content(selected: list[tuple[AgentSpec, str]], api_k
 胖虎AI API Key：{mask_key(api_key)}
 
 说明：
-1. Codex 已由本工具自动写入配置。
-2. ClaudeCode 只负责官方安装，不写入配置；请按 ClaudeCode 官方流程自行登录或配置。
-3. OpenClaw / Hermes 当前版本先安装并提供说明；如果官方客户端要求在界面里粘贴 Key，请使用胖虎AI接口和你刚才在本工具里填写的 API Key。
-4. 本工具不会把 API Key 明文写入日志。
+1. Codex 默认由本工具写入普通直接 API 配置。
+2. 配置写完后，请先完全退出 Codex，再重新打开 Codex；只有完全退出后重新打开，新的配置才会生效。
+3. 普通配置方式无需登录 ChatGPT 账号，也可以正常使用 Codex。
+4. 只有点击“双态配置”时，才需要用户重新打开 Codex 后自行登录自己的 ChatGPT 账号。
+5. 双态模式下，Codex 会保持用户自己的账号登录态，同时模型调用消耗胖虎AI API Key。本工具不代替登录、不保存 ChatGPT 账号密码。
+6. ClaudeCode 只负责官方安装，不写入配置；请按 ClaudeCode 官方流程自行登录或配置。
+7. OpenClaw / Hermes 当前版本先安装并提供说明；如果官方客户端要求在界面里粘贴 Key，请使用胖虎AI接口和你刚才在本工具里填写的 API Key。
+8. 本工具不会把 API Key 明文写入日志。
 """
+
+
+def login_help_text() -> str:
+    return "\n".join(
+        [
+            "这里登录的是胖虎AI账号，不是 ChatGPT 账号。",
+            "",
+            "没有胖虎AI账号时，先点击“去胖虎AI注册账号”完成注册，再回到本工具登录。",
+            "",
+            "该配置方式无需登录 ChatGPT 账号，也可以正常使用 Codex。普通客户只需要胖虎AI账号和胖虎AI API Key。",
+            "",
+            "如果客户后续明确需要保留自己的 ChatGPT 登录态，再到第四步使用“双态配置”。",
+        ]
+    )
+
+
+def key_creation_help_text() -> str:
+    return "\n".join(
+        [
+            "API Key 是胖虎AI给 Codex 或其他 Agent 使用的调用令牌，不是登录密码。",
+            "",
+            "推荐流程：",
+            "1. 先注册并登录胖虎AI账号。",
+            "2. 新账号先充值或确认账户里有余额。",
+            "3. 点击“打开 API Key 创建页面”。",
+            "4. 在网站里新建 Key，复制完整的 sk- 开头内容。",
+            "5. 粘贴到本工具的 API Key 输入框。",
+            "6. 点击“保存并测试 Key”。",
+            "",
+            "常见错误：",
+            "- 不要填写手机号、邮箱、登录密码或 ChatGPT 密码。",
+            "- 测试不通过时，先检查 Key 是否复制完整、账户是否有余额、接口地址是否保持默认。",
+            "- 刚注册但未充值的账号，即使创建了 Key，也可能因为余额不足而测试失败。",
+        ]
+    )
+
+
+def environment_help_text() -> str:
+    return "\n".join(
+        [
+            "环境检测会识别当前电脑系统、基础命令和已经安装的 Agent。",
+            "",
+            "如果检测到 ccswitch、codex++、CCR 等第三方配置工具，本工具会阻止继续安装。",
+            "",
+            "原因：这些工具可能改写 Codex 或 ClaudeCode 的配置，导致胖虎AI写入的接口、Key、模型被覆盖。",
+            "",
+            "处理方式：按提示先卸载或禁用风险工具，再重新点击“检测环境”。",
+        ]
+    )
+
+
+def agent_choice_help_text() -> str:
+    return "\n".join(
+        [
+            "普通客户建议默认选择 Codex。",
+            "",
+            "Agent 差异：",
+            "- Codex：可由本工具写入胖虎AI API Key、接口、模型和中文规则。",
+            "- ClaudeCode：只安装，不写 Key，不改 ClaudeCode 账号或配置。",
+            "- OpenClaw / Hermes：优先打开官方入口，当前版本先安装并生成中文配置说明。",
+            "",
+            "CLI 适合命令行用户；客户端适合希望打开官方桌面入口的用户。",
+        ]
+    )
+
+
+def codex_action_help_text() -> str:
+    return "\n".join(
+        [
+            "一键部署（普通）：普通模式。第一次安装 Agent 时使用，会安装所选 Agent，并写入直接 API 配置。",
+            "双态配置：需要同时保留 ChatGPT 登录态并消耗胖虎AI API Key 时使用，不安装 Agent。",
+            "仅修复 Codex 配置：Agent 已经装好、只是换 Key 或配置损坏时使用，不会重新安装 Agent。",
+            "恢复最近备份：配置异常时退回写入前的最近备份。",
+            "复制日志：出问题时把日志发给客服排查。",
+            "打开工作区：查看本工具生成的配置说明和工作资料。",
+            "打开配置目录：查看 Codex 的 config.toml、auth.json 和备份文件。",
+            "重要：任何模式配置写完后都必须完全退出 Codex，再重新打开；只有双态模式需要用户重开后自行登录 ChatGPT 账号。",
+        ]
+    )
+
+
+def codex_action_summary_text() -> str:
+    return "\n".join(
+        [
+            "普通客户点“一键部署（普通）”。",
+            "需要登录态共存时，才点“双态配置”。",
+            "只要修改过 Codex 配置，都要完全退出 Codex 后重新打开。",
+        ]
+    )
 
 
 def write_agent_setup_guide(selected: list[tuple[AgentSpec, str]], api_key: str, log) -> None:
@@ -1767,8 +2025,8 @@ class InstallerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_NAME)
-        root.geometry("1120x860")
-        root.minsize(1040, 740)
+        root.geometry("900x800")
+        root.minsize(820, 700)
         root.configure(bg=APP_BG)
         self.ui_images: list[tk.PhotoImage] = []
         self.set_window_icon()
@@ -1779,7 +2037,13 @@ class InstallerApp:
         self.deployer_manifest: dict | None = None
         self.saved_key_ok = False
         self.saved_key_signature: tuple[str, str, str, bool] | None = None
+        self.environment_checked = False
+        self.environment_ok = False
         self.worker_running = False
+        self.auto_update_checked = False
+        self.app_closed = False
+        self.after_handles: set[str] = set()
+        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
 
         self.login_username = tk.StringVar()
         self.login_password = tk.StringVar()
@@ -1794,8 +2058,9 @@ class InstallerApp:
         self.step = tk.IntVar(value=1)
         self.agent_enabled: dict[str, tk.BooleanVar] = {}
         self.agent_mode: dict[str, tk.StringVar] = {}
-        for variable in (self.api_key, self.base_url, self.model, self.skip_test):
+        for variable in (self.api_key, self.model, self.skip_test):
             variable.trace_add("write", self.mark_key_dirty)
+        self.selected_system.trace_add("write", self.mark_environment_dirty)
 
         self.load_profile_into_ui()
         self._build_ui()
@@ -1831,7 +2096,7 @@ class InstallerApp:
             return
         self.login_username.set(str(profile.get("username") or ""))
         self.api_key.set(str(profile.get("api_key") or ""))
-        self.base_url.set(str(profile.get("base_url") or DEFAULT_BASE_URL))
+        self.base_url.set(DEFAULT_BASE_URL)
         self.model.set(str(profile.get("model") or DEFAULT_MODEL))
         self.skip_test.set(bool(profile.get("skip_test")))
         self.open_app.set(bool(profile.get("open_app", True)))
@@ -1849,6 +2114,7 @@ class InstallerApp:
         self.user_label.configure(text=f"已登录：{display_username}")
         self.show_wizard()
         self.status.set("状态：已恢复上次登录，可继续使用")
+        self.run_later(1200, self.start_auto_update_check)
 
     def _build_ui(self) -> None:
         style = ttk.Style()
@@ -1857,93 +2123,74 @@ class InstallerApp:
         except tk.TclError:
             pass
         self.root.option_add("*Font", ("Microsoft YaHei UI", 10))
-        style.configure("TEntry", fieldbackground="#ffffff", bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
-        style.configure("TCombobox", fieldbackground="#ffffff", bordercolor=BORDER)
+        style.configure("TEntry", fieldbackground="#fffaf3", bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
+        style.configure("TCombobox", fieldbackground="#fffaf3", bordercolor=BORDER)
         style.configure("TCheckbutton", background=CARD_BG, foreground=INK)
         style.configure("TRadiobutton", background=CARD_BG, foreground=INK)
 
-        self.container = tk.Frame(self.root, bg=APP_BG, padx=24, pady=20)
+        self.container = tk.Frame(self.root, bg=APP_BG, padx=8, pady=12)
         self.container.pack(fill="both", expand=True)
 
-        self.header = tk.Frame(self.container, bg="#ffffff", highlightthickness=1, highlightbackground=BORDER)
+        self.header = tk.Frame(self.container, bg=CARD_BG, highlightthickness=1, highlightbackground=BORDER)
         self.header.pack(fill="x")
-        top_row = tk.Frame(self.header, bg="#ffffff", height=92)
+        top_row = tk.Frame(self.header, bg=CARD_BG, height=78)
         top_row.pack(fill="x")
         top_row.pack_propagate(False)
         top_row.grid_columnconfigure(0, weight=1)
-        top_row.grid_columnconfigure(1, weight=0)
-        brand_area = tk.Frame(top_row, bg="#ffffff")
-        brand_area.grid(row=0, column=0, sticky="nsew", padx=(22, 18), pady=14)
+        brand_area = tk.Frame(top_row, bg=CARD_BG)
+        brand_area.grid(row=0, column=0, sticky="nsew", padx=(20, 18), pady=10)
         avatar = self.load_ui_image("panghu-avatar-64.png")
         if avatar:
-            tk.Label(brand_area, image=avatar, bg="#ffffff").pack(side="left", anchor="center", padx=(0, 14))
-        brand_text = tk.Frame(brand_area, bg="#ffffff")
+            tk.Label(brand_area, image=avatar, bg=CARD_BG).pack(side="left", anchor="center", padx=(0, 14))
+        brand_text = tk.Frame(brand_area, bg=CARD_BG)
         brand_text.pack(side="left", anchor="center")
         tk.Label(
             brand_text,
             text="胖虎AI",
             font=("Microsoft YaHei UI", 10, "bold"),
             fg=PRIMARY,
-            bg="#ffffff",
+            bg=CARD_BG,
         ).pack(anchor="w")
         tk.Label(
             brand_text,
             text="多 Agent 一键部署工具",
-            font=("Microsoft YaHei UI", 21, "bold"),
+            font=("Microsoft YaHei UI", 17, "bold"),
             fg=INK,
-            bg="#ffffff",
+            bg=CARD_BG,
         ).pack(anchor="w", pady=(2, 0))
         tk.Label(
             brand_text,
             text="登录胖虎AI账号后，按流程完成 Agent 安装与本机配置。",
             font=("Microsoft YaHei UI", 9),
             fg=MUTED,
-            bg="#ffffff",
+            bg=CARD_BG,
         ).pack(anchor="w", pady=(5, 0))
 
-        action_area = tk.Frame(top_row, bg="#ffffff")
-        action_area.grid(row=0, column=1, sticky="e", padx=(0, 22), pady=24)
-        self.update_button = tk.Button(
-            action_area,
-            text="检查更新",
-            command=self.start_update_check,
-            bg="#eef5f8",
-            fg=PRIMARY_DARK,
-            activebackground="#d2e3eb",
-            activeforeground=PRIMARY_DARK,
-            relief="flat",
-            bd=0,
-            padx=16,
-            pady=7,
-            cursor="hand2",
-            font=("Microsoft YaHei UI", 10, "bold"),
-        )
-        self.update_button.pack(side="left")
         self.user_label = tk.Label(
-            action_area,
+            brand_area,
             text="未登录",
             bg=GOLD_SOFT,
             fg="#8a5b00",
-            padx=15,
-            pady=7,
-            font=("Microsoft YaHei UI", 10, "bold"),
+            padx=12,
+            pady=6,
+            font=("Microsoft YaHei UI", 9, "bold"),
         )
-        self.user_label.pack(side="left", padx=(10, 0))
+        self.user_label.pack(side="left", anchor="center", padx=(18, 0))
 
-        support_bar = tk.Frame(self.header, bg="#f7fbfd", height=36)
+        support_bar = tk.Frame(self.header, bg=INFO_BG, height=32)
         support_bar.pack(fill="x")
         support_bar.pack_propagate(False)
         tk.Frame(support_bar, bg=BORDER, height=1).pack(fill="x")
         tk.Label(
             support_bar,
             text="客服微信：panghuwanAI  ·  Plus / Pro 代充  ·  国外手机验证",
-            bg="#f7fbfd",
+            bg=INFO_BG,
             fg=PRIMARY_DARK,
             font=("Microsoft YaHei UI", 9, "bold"),
         ).pack(side="left", padx=22, pady=(7, 0))
 
         self.body = tk.Frame(self.container, bg=APP_BG)
-        self.body.pack(fill="both", expand=True, pady=(14, 0))
+        self.body.pack(fill="both", expand=True, pady=(12, 0))
 
         self.login_frame = tk.Frame(self.body, bg=APP_BG, relief="flat", highlightthickness=0)
         self.login_frame.pack(fill="both", expand=True, ipady=0)
@@ -1954,21 +2201,25 @@ class InstallerApp:
 
         self.log_box = tk.Text(
             self.container,
-            height=2,
-            bg="#ffffff",
-            fg="#33536a",
-            insertbackground="#33536a",
+            height=1,
+            bg=CARD_BG,
+            fg=MUTED,
+            insertbackground=MUTED,
             relief="flat",
             borderwidth=0,
             padx=12,
-            pady=6,
+            pady=4,
             wrap="word",
             font=("Microsoft YaHei UI", 9),
         )
-        self.log_box.pack(fill="both", expand=False, pady=(10, 0))
+        self.log_box.pack(fill="x", expand=False, pady=(8, 0))
         self.log_box.configure(state="disabled")
 
-        tk.Label(self.container, textvariable=self.status, bg=APP_BG, fg=MUTED).pack(anchor="w", pady=(8, 0))
+        footer = tk.Frame(self.container, bg=APP_BG)
+        footer.pack(fill="x", pady=(6, 0))
+        tk.Label(footer, textvariable=self.status, bg=APP_BG, fg=MUTED).pack(side="left", anchor="w")
+        self.update_button = self._text_button(footer, "检查更新", self.start_update_check)
+        self.update_button.pack(side="right")
 
     def _button(self, parent: tk.Widget, text: str, command, kind: str = "secondary") -> tk.Button:
         if kind == "primary":
@@ -1976,7 +2227,7 @@ class InstallerApp:
         elif kind == "success":
             bg, fg, active = ACCENT, "#ffffff", "#08745b"
         else:
-            bg, fg, active = "#e7eef3", INK, "#d3e0e8"
+            bg, fg, active = LOCKED_BG, INK, "#e0d5c8"
         return tk.Button(
             parent,
             text=text,
@@ -1987,16 +2238,114 @@ class InstallerApp:
             activeforeground=fg,
             relief="flat",
             bd=0,
-            padx=18,
+            padx=14,
             pady=9,
             cursor="hand2",
             font=("Microsoft YaHei UI", 10, "bold"),
         )
 
+    def _show_help(self, title: str, message: str) -> None:
+        messagebox.showinfo(title, message)
+
+    def _grid_button(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command,
+        kind: str,
+        row: int,
+        column: int,
+        columnspan: int = 1,
+    ) -> tk.Button:
+        button = self._button(parent, text, command, kind)
+        button.grid(row=row, column=column, columnspan=columnspan, sticky="ew", padx=(0, 8), pady=(0, 10))
+        return button
+
+    def _text_button(self, parent: tk.Widget, text: str, command) -> tk.Button:
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=CARD_BG,
+            fg=PRIMARY,
+            activebackground=INFO_BG,
+            activeforeground=PRIMARY_DARK,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=2,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+
+    def _notice_strip(
+        self,
+        parent: tk.Widget,
+        title: str,
+        body: str,
+        tone: str = "info",
+        button_text: str | None = None,
+        command=None,
+        compact: bool = False,
+    ) -> tk.Frame:
+        palette = {
+            "info": (INFO_BG, PRIMARY_DARK, MUTED, BORDER),
+            "success": (SUCCESS_BG, "#1f6b55", "#34594d", "#c6e8d3"),
+            "warning": (WARNING_BG, "#9a4b18", "#71411c", "#f1c995"),
+        }
+        bg, title_fg, body_fg, border = palette.get(tone, palette["info"])
+        box = tk.Frame(parent, bg=bg, padx=10 if compact else 12, pady=6 if compact else 9, highlightthickness=1, highlightbackground=border)
+        box.pack(fill="x")
+        header = tk.Frame(box, bg=bg)
+        header.pack(fill="x")
+        header.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            header,
+            text=title,
+            bg=bg,
+            fg=title_fg,
+            font=("Microsoft YaHei UI", 9 if compact else 10, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            header,
+            text=body,
+            bg=bg,
+            fg=body_fg,
+            wraplength=420 if compact else 520,
+            justify="left",
+            anchor="w",
+            font=("Microsoft YaHei UI", 9 if compact else 10),
+        ).grid(row=1 if compact else 0, column=0 if compact else 1, sticky="ew", padx=(0 if compact else 10, 8), pady=(2 if compact else 0, 0))
+        if button_text and command:
+            tk.Button(
+                header,
+                text=button_text,
+                command=command,
+                bg=bg,
+                fg=PRIMARY,
+                activebackground=bg,
+                activeforeground=PRIMARY_DARK,
+                relief="flat",
+                bd=0,
+                padx=6 if compact else 8,
+                pady=0,
+                cursor="hand2",
+                font=("Microsoft YaHei UI", 9, "bold"),
+            ).grid(row=0, column=1 if compact else 2, sticky="ne")
+        return box
+
+    def _sync_wraplength(self, label: tk.Label, padding: int = 60, max_width: int = 360) -> None:
+        def update(event) -> None:
+            label.configure(wraplength=min(max_width, max(260, event.width - padding)))
+
+        label.master.bind("<Configure>", update, add="+")
+
     def _build_login_frame(self, parent: tk.Frame) -> None:
         parent.configure(padx=0, pady=0)
-        login_card = tk.Frame(parent, bg=CARD_BG, padx=30, pady=28, highlightthickness=1, highlightbackground=BORDER)
-        login_card.pack(side="left", fill="both", expand=True, padx=(0, 14))
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+        login_card = tk.Frame(parent, bg=CARD_BG, padx=24, pady=26, highlightthickness=1, highlightbackground=BORDER)
+        login_card.grid(row=0, column=0, sticky="nsew")
         tk.Label(
             login_card,
             text="登录胖虎AI账号",
@@ -2006,10 +2355,19 @@ class InstallerApp:
         ).pack(anchor="w")
         tk.Label(
             login_card,
-            text="只有胖虎AI注册用户可以使用部署工具；没有账号请先注册。",
+            text="使用胖虎AI账号登录工具，登录后再创建 Key 并配置本机 Agent。",
             bg=CARD_BG,
             fg=MUTED,
-        ).pack(anchor="w", pady=(8, 20))
+        ).pack(anchor="w", pady=(8, 12))
+        self._notice_strip(
+            login_card,
+            "账号说明",
+            "无需 ChatGPT 账号；注册胖虎AI账号即可登录工具并配置 Codex。",
+            "info",
+            "查看说明",
+            lambda: self._show_help("账号说明", login_help_text()),
+            compact=True,
+        ).pack_configure(pady=(0, 16))
 
         fields = tk.Frame(login_card, bg=CARD_BG)
         fields.pack(fill="x")
@@ -2029,7 +2387,26 @@ class InstallerApp:
         self.login_button.pack(side="left")
         self._button(buttons, "去胖虎AI注册账号", lambda: open_url(REGISTER_URL)).pack(side="left", padx=(12, 0))
 
-        tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(26, 14))
+        flow_strip = tk.Frame(login_card, bg=INFO_BG, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
+        flow_strip.pack(fill="x", pady=(20, 0))
+        tk.Label(
+            flow_strip,
+            text="使用流程",
+            bg=INFO_BG,
+            fg=PRIMARY_DARK,
+            font=("Microsoft YaHei UI", 9, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            flow_strip,
+            text="登录胖虎AI账号 -> 创建 Key -> 检测系统 -> 选择 Agent -> 一键部署",
+            bg=INFO_BG,
+            fg=MUTED,
+            wraplength=760,
+            justify="left",
+            font=("Microsoft YaHei UI", 9),
+        ).pack(side="left", padx=(12, 0))
+
+        tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(22, 14))
         tk.Label(
             login_card,
             text="支持系统：Windows / Mac",
@@ -2054,60 +2431,29 @@ class InstallerApp:
             justify="left",
         ).pack(anchor="w", pady=(10, 0))
 
-        guide_card = tk.Frame(parent, bg="#ffffff", padx=26, pady=24, width=340, highlightthickness=1, highlightbackground=BORDER)
-        guide_card.pack(side="left", fill="y")
-        guide_card.pack_propagate(False)
-        tk.Label(guide_card, text="客户使用流程", font=("Microsoft YaHei UI", 17, "bold"), bg="#ffffff", fg=INK).pack(anchor="w")
-        tk.Label(
-            guide_card,
-            text="按顺序完成，软件会提示下一步。",
-            bg="#ffffff",
-            fg=MUTED,
-            wraplength=275,
-            justify="left",
-        ).pack(anchor="w", pady=(5, 16))
-        for idx, (title, desc) in enumerate((
-            ("创建 Key", "填写胖虎AI API Key"),
-            ("检测系统", "识别 Windows / Mac 和依赖环境"),
-            ("选择 Agent", "选择要安装的 Agent 和安装方式"),
-            ("一键部署", "安装完成后应用安全配置"),
-        )):
-            item = tk.Frame(guide_card, bg="#ffffff")
-            item.pack(fill="x", pady=(0, 12))
-            tk.Label(
-                item,
-                text=str(idx + 1),
-                bg=GOLD,
-                fg=PRIMARY_DARK,
-                width=3,
-                pady=3,
-                font=("Microsoft YaHei UI", 9, "bold"),
-            ).pack(side="left", anchor="n", padx=(0, 12))
-            copy = tk.Frame(item, bg="#ffffff")
-            copy.pack(side="left", fill="x", expand=True)
-            tk.Label(copy, text=title, bg="#ffffff", fg=INK, font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
-            tk.Label(copy, text=desc, bg="#ffffff", fg=MUTED, wraplength=245, justify="left").pack(anchor="w", pady=(3, 0))
-            if idx < 3:
-                tk.Frame(guide_card, bg="#e7eef3", height=1).pack(fill="x", pady=(0, 12))
-
     def _build_wizard_frame(self, parent: tk.Frame) -> None:
         shell = tk.Frame(parent, bg=APP_BG)
         shell.pack(fill="both", expand=True)
 
-        rail = tk.Frame(shell, bg=PRIMARY_DARK, width=220)
-        rail.pack(side="left", fill="y", padx=(0, 16))
-        rail.pack_propagate(False)
-        tk.Label(rail, text="部署流程", bg=PRIMARY_DARK, fg="#ffffff", font=("Microsoft YaHei UI", 16, "bold")).pack(
-            anchor="w", padx=22, pady=(24, 4)
-        )
+        sidebar = tk.Frame(shell, bg=CARD_BG, width=180, padx=9, pady=14, highlightthickness=1, highlightbackground=BORDER)
+        sidebar.pack(side="left", fill="y", padx=(0, 8))
+        sidebar.pack_propagate(False)
         tk.Label(
-            rail,
-            text="按顺序完成 Key、环境、Agent 和配置应用。",
-            bg=PRIMARY_DARK,
-            fg="#bdebe2",
-            wraplength=190,
+            sidebar,
+            text="部署流程",
+            bg=CARD_BG,
+            fg=INK,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            sidebar,
+            text="按顺序完成，每一步通过后才开放下一步。",
+            bg=CARD_BG,
+            fg=MUTED,
+            font=("Microsoft YaHei UI", 9),
+            wraplength=150,
             justify="left",
-        ).pack(anchor="w", padx=22, pady=(0, 18))
+        ).pack(anchor="w", pady=(4, 12))
 
         self.step_buttons: dict[int, tk.Button] = {}
         for idx, title, subtitle in (
@@ -2116,79 +2462,145 @@ class InstallerApp:
             (3, "选择 Agent", "选择 CLI 或客户端"),
             (4, "安装配置", "执行安装和应用"),
         ):
-            btn = self._step_button(rail, idx, title, subtitle)
-            btn.pack(fill="x", padx=16, pady=(0, 10))
+            btn = self._step_button(sidebar, idx, title, subtitle)
+            btn.pack(fill="x", pady=(0, 8))
             self.step_buttons[idx] = btn
+        tk.Frame(sidebar, bg=BORDER, height=1).pack(fill="x", pady=(4, 12))
+        self.flow_status_label = tk.Label(
+            sidebar,
+            text="当前状态：请先保存并测试 Key。",
+            bg=CARD_BG,
+            fg=MUTED,
+            wraplength=150,
+            justify="left",
+            anchor="nw",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.flow_status_label.pack(fill="x", anchor="w")
 
         panel = tk.Frame(shell, bg=CARD_BG, highlightthickness=1, highlightbackground=BORDER)
         panel.pack(side="left", fill="both", expand=True)
-        self.steps_host = tk.Frame(panel, bg=CARD_BG, padx=22, pady=20)
+        self.steps_host = tk.Frame(panel, bg=CARD_BG, padx=12, pady=18)
         self.steps_host.pack(fill="both", expand=True)
         self.step_frames: dict[int, tk.Frame] = {}
+        self.step_canvases: dict[int, tk.Canvas] = {}
+        self.step_hint_labels: dict[int, tk.Label] = {}
+        self.step_next_buttons: dict[int, tk.Button] = {}
         self._build_step_1()
         self._build_step_2()
         self._build_step_3()
         self._build_step_4()
 
-        for frame in self.step_frames.values():
-            frame.place(in_=self.steps_host, x=0, y=0, relwidth=1, relheight=1)
+        for canvas in self.step_canvases.values():
+            canvas.place(in_=self.steps_host, x=0, y=0, relwidth=1, relheight=1)
         self.refresh_steps()
 
-    def _step_button(self, parent: tk.Frame, idx: int, title: str, subtitle: str) -> tk.Button:
-        text = f"{idx}. {title}\n{subtitle}"
+    def _create_step_frame(self, idx: int) -> tk.Frame:
+        viewport = tk.Frame(self.steps_host, bg=CARD_BG)
+        canvas = tk.Canvas(viewport, bg=CARD_BG, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
+        content = tk.Frame(canvas, bg=CARD_BG)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
 
+        def sync_scroll_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def sync_content_width(event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        content.bind("<Configure>", sync_scroll_region)
+        canvas.bind("<Configure>", sync_content_width)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.step_canvases[idx] = viewport
+        self.step_frames[idx] = content
+        return content
+
+    def _step_button(self, parent: tk.Frame, idx: int, title: str, subtitle: str) -> tk.Button:
         def activate() -> None:
-            self.step.set(idx)
-            self.refresh_steps()
+            self.go_to_step(idx)
 
         return tk.Button(
             parent,
-            text=text,
+            text=f"{idx}. {title}\n未开始 · {subtitle}",
             command=activate,
             anchor="w",
             justify="left",
-            bg=PRIMARY_DARK,
-            fg="#c8f3ea",
-            activebackground=PRIMARY,
-            activeforeground="#ffffff",
+            bg=PANEL_BG,
+            fg=INK,
+            activebackground="#e7f3f0",
+            activeforeground=INK,
             relief="flat",
             bd=0,
-            padx=14,
-            pady=12,
+            padx=9,
+            pady=8,
             cursor="hand2",
-            font=("Microsoft YaHei UI", 10, "bold"),
+            font=("Microsoft YaHei UI", 9, "bold"),
         )
 
-    def _step_title(self, parent: tk.Frame, title: str, desc: str) -> None:
-        tk.Label(parent, text=title, font=("Microsoft YaHei UI", 17, "bold"), bg=CARD_BG, fg=INK).pack(anchor="w")
-        tk.Label(parent, text=desc, bg=CARD_BG, fg=MUTED, wraplength=650, justify="left").pack(anchor="w", pady=(7, 16))
+    def _step_title(
+        self,
+        parent: tk.Frame,
+        title: str,
+        desc: str,
+        help_title: str | None = None,
+        help_text: str | None = None,
+    ) -> None:
+        row = tk.Frame(parent, bg=CARD_BG)
+        row.pack(fill="x")
+        tk.Label(row, text=title, font=("Microsoft YaHei UI", 17, "bold"), bg=CARD_BG, fg=INK).pack(side="left", anchor="w")
+        if help_title and help_text:
+            self._text_button(row, "查看详细说明", lambda: self._show_help(help_title, help_text)).pack(side="right")
+        desc_label = tk.Label(parent, text=desc, bg=CARD_BG, fg=MUTED, wraplength=520, justify="left")
+        desc_label.pack(anchor="w", fill="x", pady=(7, 14))
+        self._sync_wraplength(desc_label, 20, 360)
+
+    def _step_hint(self, parent: tk.Frame, idx: int) -> None:
+        label = tk.Label(
+            parent,
+            text="",
+            bg=INFO_BG,
+            fg=PRIMARY_DARK,
+            padx=10,
+            pady=7,
+            wraplength=500,
+            justify="left",
+            anchor="w",
+            font=("Microsoft YaHei UI", 9, "bold"),
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        label.pack(fill="x", pady=(0, 12))
+        self._sync_wraplength(label, 28, 360)
+        self.step_hint_labels[idx] = label
 
     def _field_label(self, parent: tk.Frame, text: str, bg: str = CARD_BG) -> None:
         tk.Label(parent, text=text, bg=bg, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
 
     def _build_step_1(self) -> None:
-        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
-        self.step_frames[1] = frame
+        frame = self._create_step_frame(1)
         self._step_title(
             frame,
             "第一步：创建并保存胖虎AI API Key",
-            "客户先去胖虎AI控制台创建 Key，再粘贴到这里。软件会用 /v1/models 做一次可用性验证。",
+            "API Key 是胖虎AI给 Agent 使用的调用令牌，不是登录密码。",
+            "API Key 创建说明",
+            key_creation_help_text(),
         )
+        self._step_hint(frame, 1)
 
-        guide = tk.Frame(frame, bg=WARNING_BG, padx=16, pady=13, highlightthickness=1, highlightbackground="#fed7aa")
-        guide.pack(fill="x")
-        tk.Label(guide, text="操作路径", bg=WARNING_BG, fg="#9a3412", font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        tk.Label(
-            guide,
-            text="点击按钮打开胖虎AI登录页；如果浏览器没有登录，网站会先要求登录，然后进入 Key 创建页面。",
-            bg=WARNING_BG,
-            fg="#7c2d12",
-            wraplength=560,
-            justify="left",
-        ).pack(side="left", anchor="w", pady=(5, 0))
-        self._button(guide, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL), "secondary").pack(
-            side="right", padx=(14, 0)
+        guide = self._notice_strip(
+            frame,
+            "创建前确认",
+            "新注册账号需要先充值或确保账户有余额；余额不足时，Key 即使创建成功也可能测试失败。",
+            "warning",
+            "创建 Key 详细步骤",
+            lambda: self._show_help("API Key 创建说明", key_creation_help_text()),
+            compact=True,
         )
+        open_row = tk.Frame(guide, bg=WARNING_BG)
+        open_row.pack(fill="x", pady=(10, 0))
+        self._button(open_row, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL), "secondary").pack(side="left")
 
         key_row = tk.Frame(frame, bg=CARD_BG)
         key_row.pack(fill="x", pady=(18, 0))
@@ -2204,11 +2616,17 @@ class InstallerApp:
         form = tk.Frame(frame, bg=CARD_BG)
         form.pack(fill="x", pady=(14, 0))
         base_frame = tk.Frame(form, bg=CARD_BG)
-        base_frame.pack(side="left", fill="x", expand=True, padx=(0, 16))
+        base_frame.pack(fill="x")
         self._field_label(base_frame, "接口地址")
-        ttk.Entry(base_frame, textvariable=self.base_url, font=("Microsoft YaHei UI", 11)).pack(fill="x", ipady=7, pady=(6, 0))
-        model_frame = tk.Frame(form, bg=CARD_BG, width=220)
-        model_frame.pack(side="left", fill="x")
+        self.base_url_entry = ttk.Entry(
+            base_frame,
+            textvariable=self.base_url,
+            font=("Microsoft YaHei UI", 11),
+            state="readonly",
+        )
+        self.base_url_entry.pack(fill="x", ipady=7, pady=(6, 0))
+        model_frame = tk.Frame(form, bg=CARD_BG)
+        model_frame.pack(fill="x", pady=(12, 0))
         self._field_label(model_frame, "默认模型")
         ttk.Combobox(model_frame, textvariable=self.model, values=["gpt-5.5", "gpt-5.4", "gpt-4.1"]).pack(
             fill="x", ipady=5, pady=(6, 0)
@@ -2218,15 +2636,26 @@ class InstallerApp:
         options.pack(fill="x", pady=(18, 0))
         ttk.Checkbutton(options, text="跳过接口测试", variable=self.skip_test).pack(side="left")
         self._button(options, "保存并测试 Key", self.start_save_key, "primary").pack(side="left", padx=(16, 0))
+        self.step_next_buttons[1] = self._button(options, "下一步：检测系统", lambda: self.go_to_step(2), "secondary")
+        self.step_next_buttons[1].pack(side="right")
 
     def _build_step_2(self) -> None:
-        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
-        self.step_frames[2] = frame
+        frame = self._create_step_frame(2)
         self._step_title(
             frame,
             "第二步：选择系统并检测环境",
-            "自动识别客户电脑系统，检查基础环境，并拦截 ccswitch、codex++、CCR 等可能改坏配置的第三方工具。",
+            "自动识别当前电脑系统，并检查是否存在会改写配置的风险工具。",
+            "环境检测说明",
+            environment_help_text(),
         )
+        self._step_hint(frame, 2)
+        self._notice_strip(
+            frame,
+            "检测说明",
+            "如果提示存在 ccswitch、codex++、CCR 等工具，请先按提示处理，再继续安装配置。",
+            "info",
+            compact=True,
+        ).pack_configure(pady=(0, 12))
         choices = tk.Frame(frame, bg=PANEL_BG, padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
         choices.pack(fill="x")
         ttk.Radiobutton(choices, text="自动识别", value=current_system_id(), variable=self.selected_system).pack(
@@ -2240,9 +2669,9 @@ class InstallerApp:
         self.env_text = tk.Text(
             frame,
             height=15,
-            bg="#07151c",
-            fg="#d7f9ea",
-            insertbackground="#d7f9ea",
+            bg="#2d241d",
+            fg="#f7eadb",
+            insertbackground="#f7eadb",
             relief="flat",
             borderwidth=0,
             padx=14,
@@ -2252,6 +2681,10 @@ class InstallerApp:
         )
         self.env_text.pack(fill="both", expand=True, pady=(14, 0))
         self.env_text.configure(state="disabled")
+        nav = tk.Frame(frame, bg=CARD_BG)
+        nav.pack(fill="x", pady=(12, 0))
+        self.step_next_buttons[2] = self._button(nav, "下一步：选择 Agent", lambda: self.go_to_step(3), "secondary")
+        self.step_next_buttons[2].pack(side="right")
 
     def _agent_card_copy(self, agent: AgentSpec) -> tuple[str, str]:
         copies = {
@@ -2263,38 +2696,51 @@ class InstallerApp:
         return copies.get(agent.id, (agent.description, agent.config_note))
 
     def _build_step_3(self) -> None:
-        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
-        self.step_frames[3] = frame
+        frame = self._create_step_frame(3)
         self._step_title(
             frame,
             "第三步：选择 Agent 和安装方式",
-            "ClaudeCode 只安装不配置；其他 Agent 只有在官方路径明确、安全可写时才自动应用胖虎AI配置。",
+            "普通客户建议默认选择 Codex；其他 Agent 按官方入口安装或生成说明。",
+            "Agent 选择说明",
+            agent_choice_help_text(),
         )
+        self._step_hint(frame, 3)
+        self._notice_strip(
+            frame,
+            "配置范围",
+            "Codex 可自动写入胖虎AI配置；ClaudeCode 只安装不写 Key；OpenClaw 和 Hermes 当前先安装并提供中文说明。",
+            "info",
+            compact=True,
+        ).pack_configure(pady=(0, 12))
 
         list_frame = tk.Frame(frame, bg=CARD_BG)
         list_frame.pack(fill="both", expand=True)
         list_frame.grid_columnconfigure(0, weight=1)
         for index, agent in enumerate(AGENTS):
-            row = tk.Frame(list_frame, bg=PANEL_BG, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
-            row.grid(row=index, column=0, sticky="ew", pady=(0, 7))
+            row = tk.Frame(list_frame, bg=PANEL_BG, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER)
+            row.grid(row=index, column=0, sticky="ew", pady=(0, 8))
+            row.grid_columnconfigure(0, minsize=140)
             row.grid_columnconfigure(1, weight=1)
+            row.grid_columnconfigure(2, minsize=160)
             enabled = tk.BooleanVar(value=agent.id == "codex")
             mode = tk.StringVar(value="cli")
+            enabled.trace_add("write", self.mark_agent_selection_changed)
+            mode.trace_add("write", self.mark_agent_selection_changed)
             self.agent_enabled[agent.id] = enabled
             self.agent_mode[agent.id] = mode
             card_description, _card_note = self._agent_card_copy(agent)
             header = tk.Frame(row, bg=PANEL_BG)
-            header.grid(row=0, column=0, sticky="nw", padx=(0, 14))
+            header.grid(row=0, column=0, sticky="nw", padx=(0, 12))
             tk.Checkbutton(
                 header,
                 text=f"选择 {agent.name}",
                 variable=enabled,
                 indicatoron=False,
-                bg="#e6f0f5",
+                bg=LOCKED_BG,
                 fg=INK,
-                activebackground="#d9e9ef",
+                activebackground="#e4d8ca",
                 activeforeground=INK,
-                selectcolor="#d8f3e9",
+                selectcolor=SUCCESS_BG,
                 relief="flat",
                 bd=0,
                 padx=10,
@@ -2305,14 +2751,14 @@ class InstallerApp:
             tk.Label(
                 header,
                 text="可配置" if agent.id == "codex" else "仅安装" if agent.id == "claude_code" else "先安装",
-                bg=GOLD_SOFT if agent.id == "codex" else "#e7eef3",
+                bg=GOLD_SOFT if agent.id == "codex" else LOCKED_BG,
                 fg="#8a5b00" if agent.id == "codex" else MUTED,
                 padx=9,
                 pady=4,
                 font=("Microsoft YaHei UI", 9, "bold"),
             ).pack(anchor="w", pady=(4, 0))
             text_area = tk.Frame(row, bg=PANEL_BG)
-            text_area.grid(row=0, column=1, sticky="ew")
+            text_area.grid(row=0, column=1, sticky="ew", padx=(0, 12))
             tk.Label(
                 text_area,
                 text=card_description,
@@ -2323,9 +2769,9 @@ class InstallerApp:
                 justify="left",
             ).pack(anchor="w")
             mode_area = tk.Frame(row, bg=PANEL_BG)
-            mode_area.grid(row=0, column=2, sticky="ne", padx=(12, 0))
+            mode_area.grid(row=0, column=2, sticky="e")
             tk.Label(mode_area, text="安装方式", bg=PANEL_BG, fg=MUTED, font=("Microsoft YaHei UI", 9, "bold")).pack(
-                anchor="e", pady=(0, 5)
+                side="left", padx=(0, 8)
             )
             for item in agent.modes:
                 tk.Radiobutton(
@@ -2334,11 +2780,11 @@ class InstallerApp:
                     value=item.id,
                     variable=mode,
                     indicatoron=False,
-                    bg="#ffffff",
+                    bg=CARD_BG,
                     fg=INK,
-                    activebackground="#e7eef3",
+                    activebackground=LOCKED_BG,
                     activeforeground=INK,
-                    selectcolor="#d8f3e9",
+                    selectcolor=SUCCESS_BG,
                     relief="flat",
                     bd=0,
                     padx=9,
@@ -2346,77 +2792,223 @@ class InstallerApp:
                     cursor="hand2",
                     font=("Microsoft YaHei UI", 9, "bold"),
                 ).pack(side="left", padx=(0, 6))
+        nav = tk.Frame(frame, bg=CARD_BG)
+        nav.pack(fill="x", pady=(8, 0))
+        self.step_next_buttons[3] = self._button(nav, "下一步：安装配置", lambda: self.go_to_step(4), "secondary")
+        self.step_next_buttons[3].pack(side="right")
 
     def _build_step_4(self) -> None:
-        frame = tk.Frame(self.steps_host, bg=CARD_BG, padx=4, pady=2)
-        self.step_frames[4] = frame
+        frame = self._create_step_frame(4)
         self._step_title(
             frame,
             "第四步：一键安装并应用配置",
-            "安装只调用官方在线入口。开始前会再次检查第三方配置插件，发现风险工具会先要求卸载。",
+            "普通客户点一键部署（普通）；只有需要 ChatGPT 登录态共存时，才使用双态模式。",
+            "按钮功能说明",
+            codex_action_help_text(),
         )
-        summary = tk.Frame(frame, bg=PANEL_BG, padx=16, pady=14, highlightthickness=1, highlightbackground=BORDER)
-        summary.pack(fill="x")
-        tk.Label(summary, text="执行前确认", bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
-        tk.Label(
+        self._step_hint(frame, 4)
+        confirm_row = tk.Frame(frame, bg=CARD_BG)
+        confirm_row.pack(fill="x")
+        confirm_row.grid_columnconfigure(0, weight=1, uniform="confirm")
+        confirm_row.grid_columnconfigure(1, weight=1, uniform="confirm")
+        summary = tk.Frame(confirm_row, bg=PANEL_BG, padx=10, pady=7, highlightthickness=1, highlightbackground=BORDER)
+        summary.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        tk.Label(summary, text="执行前确认", bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        summary_body = tk.Label(
             summary,
-            text=(
-                "未保存有效 Key 时不会进入配置应用。若发现 ccswitch、codex++、CCR 等工具，会停止安装并提示先卸载，"
-                "防止它们改坏 Agent 配置。"
-            ),
+            text="保存有效 Key 后才会写配置；开始前会再查第三方配置工具。",
             bg=PANEL_BG,
             fg=MUTED,
-            wraplength=760,
+            wraplength=240,
             justify="left",
-        ).pack(anchor="w", pady=(7, 0))
-        ttk.Checkbutton(frame, text="完成后尝试打开 Codex App，并按授权临时打开 OpenAI 官网访问窗口", variable=self.open_app).pack(
-            anchor="w"
+            anchor="w",
+            font=("Microsoft YaHei UI", 9),
+        )
+        summary_body.pack(fill="x", pady=(3, 0))
+        restart = tk.Frame(confirm_row, bg=WARNING_BG, padx=10, pady=7, highlightthickness=1, highlightbackground="#f1c995")
+        restart.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        tk.Label(restart, text="重启生效", bg=WARNING_BG, fg="#9a4b18", font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        restart_body = tk.Label(
+            restart,
+            text="只要改了 Codex 配置，都必须完全退出 Codex 后重新打开。",
+            bg=WARNING_BG,
+            fg="#71411c",
+            wraplength=240,
+            justify="left",
+            anchor="w",
+            font=("Microsoft YaHei UI", 9),
+        )
+        restart_body.pack(fill="x", pady=(3, 0))
+        ttk.Checkbutton(frame, text="完成后打开 Codex App，并临时打开 OpenAI 官网访问窗口", variable=self.open_app).pack(
+            anchor="w", pady=(8, 0)
         )
 
         actions = tk.Frame(frame, bg=CARD_BG)
-        actions.pack(fill="x", pady=(14, 0))
+        actions.pack(fill="x", pady=(10, 0))
+        for col in range(2):
+            actions.grid_columnconfigure(col, weight=1, uniform="actions")
+        self.deploy_button = self._grid_button(actions, "一键部署（普通）", self.start_deploy, "success", 0, 0)
+        self.dual_state_button = self._grid_button(actions, "双态配置", self.start_dual_state_config, "primary", 0, 1)
+        self.config_button = self._grid_button(actions, "仅修复 Codex 配置", self.start_config_only, "primary", 1, 0, 2)
+        aux_actions = tk.Frame(frame, bg=CARD_BG)
+        aux_actions.pack(fill="x", pady=(0, 0))
+        for col in range(2):
+            aux_actions.grid_columnconfigure(col, weight=1, uniform="actions2")
+        self.restore_button = self._grid_button(aux_actions, "恢复最近备份", self.restore_backups, "secondary", 0, 0)
+        self._grid_button(aux_actions, "复制日志", self.copy_logs, "secondary", 0, 1)
+        self._grid_button(aux_actions, "打开工作区", self.open_workspace, "secondary", 1, 0)
+        self._grid_button(aux_actions, "打开配置目录", self.open_config_dir, "secondary", 1, 1)
 
-        primary_actions = tk.Frame(actions, bg=CARD_BG)
-        primary_actions.pack(fill="x")
-        self.deploy_button = self._button(primary_actions, "开始一键部署", self.start_deploy, "success")
-        self.deploy_button.pack(side="left")
-        self.config_button = self._button(primary_actions, "仅修复 Codex 配置", self.start_config_only, "primary")
-        self.config_button.pack(side="left", padx=(10, 0))
-        self.restore_button = self._button(primary_actions, "恢复最近备份", self.restore_backups, "secondary")
-        self.restore_button.pack(side="left", padx=(10, 0))
-
-        utility_actions = tk.Frame(actions, bg=CARD_BG)
-        utility_actions.pack(fill="x", pady=(10, 0))
-        self._button(utility_actions, "复制日志", self.copy_logs, "secondary").pack(side="left")
-        self._button(utility_actions, "打开工作区", self.open_workspace, "secondary").pack(side="left", padx=(10, 0))
-        self._button(utility_actions, "打开配置目录", self.open_config_dir, "secondary").pack(side="left", padx=(10, 0))
-
-        help_box = tk.Frame(frame, bg="#f5f8fb", padx=12, pady=8, highlightthickness=1, highlightbackground=BORDER)
-        help_box.pack(fill="x", pady=(14, 0))
+        help_box = tk.Frame(frame, bg=INFO_BG, padx=10, pady=7, highlightthickness=1, highlightbackground=BORDER)
+        help_box.pack(fill="x", pady=(10, 0))
+        help_box.grid_columnconfigure(0, weight=1)
         tk.Label(
             help_box,
-            text=(
-                "提示：首次安装用“一键部署”；只换 Key 或配置损坏用“仅修复”；撤回写入用“恢复备份”；"
-                "如果账号被授权临时访问 OpenAI 官网，打开 Codex 后会自动启用 10 分钟，到点恢复。"
-            ),
-            bg="#f5f8fb",
+            text="按钮功能",
+            bg=INFO_BG,
+            fg=PRIMARY_DARK,
+            font=("Microsoft YaHei UI", 9, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        help_body = tk.Label(
+            help_box,
+            text="普通客户点“一键部署（普通）”；需要登录态共存才点“双态配置”。",
+            bg=INFO_BG,
             fg=MUTED,
-            wraplength=760,
+            wraplength=420,
             justify="left",
-        ).pack(anchor="w")
+            anchor="w",
+            font=("Microsoft YaHei UI", 9),
+        )
+        help_body.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+        self._sync_wraplength(help_body, 130, 330)
+        self._text_button(help_box, "查看全部按钮说明", lambda: self._show_help("按钮功能说明", codex_action_help_text())).grid(
+            row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0)
+        )
+
+    def has_valid_key(self) -> bool:
+        return self.saved_key_ok and self.saved_key_signature == self.current_key_signature()
+
+    def agents_ready(self) -> bool:
+        return bool(self.selected_agents())
+
+    def first_missing_step(self) -> tuple[int, str] | None:
+        if not self.has_valid_key():
+            return 1, "第一步还没完成：请填写胖虎AI API Key，并点击“保存并测试 Key”。"
+        if not self.environment_ok:
+            return 2, "第二步还没完成：请点击“检测环境”，并处理所有风险提示。"
+        if not self.agents_ready():
+            return 3, "第三步还没完成：请至少选择一个 Agent。"
+        return None
+
+    def can_access_step(self, idx: int) -> bool:
+        if idx <= 1:
+            return True
+        if idx == 2:
+            return self.has_valid_key()
+        if idx == 3:
+            return self.has_valid_key() and self.environment_ok
+        if idx == 4:
+            return self.first_missing_step() is None
+        return False
+
+    def go_to_step(self, idx: int) -> None:
+        if self.can_access_step(idx):
+            self.step.set(idx)
+            self.refresh_steps()
+            return
+        missing = self.first_missing_step()
+        if missing:
+            target_step, message = missing
+            self.step.set(target_step)
+            self.refresh_steps()
+            messagebox.showwarning("暂时不能进入下一步", message)
+
+    def step_button_copy(self, idx: int) -> tuple[str, str, str]:
+        copies = {
+            1: ("创建 Key", "验证胖虎AI接口"),
+            2: ("检测系统", "确认电脑环境"),
+            3: ("选择 Agent", "选择 CLI 或客户端"),
+            4: ("安装配置", "执行安装和应用"),
+        }
+        title, subtitle = copies[idx]
+        if idx == 1:
+            status = "已完成" if self.has_valid_key() else "待完成"
+        elif idx == 2:
+            status = "已完成" if self.environment_ok else "可继续" if self.can_access_step(2) else "未解锁"
+        elif idx == 3:
+            status = "已完成" if self.agents_ready() and self.can_access_step(3) else "可继续" if self.can_access_step(3) else "未解锁"
+        else:
+            status = "可执行" if self.can_access_step(4) else "未解锁"
+        return title, subtitle, status
+
+    def current_flow_message(self) -> str:
+        missing = self.first_missing_step()
+        if not missing:
+            return "当前状态：前 3 步已完成，可以执行安装或配置。"
+        return f"当前状态：{missing[1]}"
+
+    def update_step_hints(self) -> None:
+        hint_data = {
+            1: (
+                "已完成：Key 已保存并通过当前配置校验，可以进入第二步。"
+                if self.has_valid_key()
+                else "待完成：请创建或填写胖虎AI API Key，并点击“保存并测试 Key”。新账号请先充值，余额不足会导致测试失败。"
+            ),
+            2: (
+                "已完成：环境检测通过，可以进入第三步。"
+                if self.environment_ok
+                else "待完成：第一步完成后点击“检测环境”。如果发现 ccswitch、codex++、CCR，请先处理后再继续。"
+            ),
+            3: (
+                f"已完成：已选择 {len(self.selected_agents())} 个 Agent，可以进入第四步。"
+                if self.agents_ready()
+                else "待完成：至少选择一个 Agent。普通客户建议保留 Codex。"
+            ),
+            4: (
+                "可执行：前 3 步已完成。普通客户点“一键部署（普通）”；需要登录态共存才点“双态配置”。"
+                if self.can_access_step(4)
+                else "未解锁：请先完成 Key 保存、环境检测和 Agent 选择。"
+            ),
+        }
+        for idx, label in getattr(self, "step_hint_labels", {}).items():
+            ready = idx == 1 and self.has_valid_key() or idx == 2 and self.environment_ok or idx == 3 and self.agents_ready() or idx == 4 and self.can_access_step(4)
+            label.configure(
+                text=hint_data[idx],
+                bg=SUCCESS_BG if ready else INFO_BG,
+                fg="#1f6b55" if ready else PRIMARY_DARK,
+            )
 
     def refresh_steps(self) -> None:
-        for idx, frame in self.step_frames.items():
+        for idx, frame in self.step_canvases.items():
             if idx == self.step.get():
                 frame.lift()
+                canvas = frame.winfo_children()[0] if frame.winfo_children() else None
+                if isinstance(canvas, tk.Canvas):
+                    canvas.yview_moveto(0)
         for idx, button in getattr(self, "step_buttons", {}).items():
             active = idx == self.step.get()
+            title, subtitle, status = self.step_button_copy(idx)
+            locked = not self.can_access_step(idx)
             button.configure(
-                bg=PRIMARY if active else PRIMARY_DARK,
-                fg="#ffffff" if active else "#c8f3ea",
+                text=f"{idx}. {title}\n{status} · {subtitle}",
+                bg=PRIMARY if active else LOCKED_BG if locked else PANEL_BG,
+                fg="#ffffff" if active else MUTED if locked else INK,
                 activebackground=PRIMARY,
                 activeforeground="#ffffff",
+                state="normal" if not self.worker_running else "disabled",
             )
+        if hasattr(self, "flow_status_label"):
+            self.flow_status_label.configure(text=self.current_flow_message())
+        self.update_step_hints()
+        for idx, button in getattr(self, "step_next_buttons", {}).items():
+            button.configure(state="normal" if self.can_access_step(idx + 1) and not self.worker_running else "disabled")
+        ready_for_step_4 = self.can_access_step(4) and not self.worker_running
+        for button in (getattr(self, "deploy_button", None), getattr(self, "dual_state_button", None), getattr(self, "config_button", None)):
+            if button:
+                button.configure(state="normal" if ready_for_step_4 else "disabled")
+        for button in (getattr(self, "restore_button", None), getattr(self, "update_button", None), getattr(self, "login_button", None)):
+            if button:
+                button.configure(state="disabled" if self.worker_running else "normal")
 
     def toggle_key(self) -> None:
         self.key_entry.configure(show="" if self.show_key.get() else "*")
@@ -2434,31 +3026,63 @@ class InstallerApp:
         self.log_box.configure(state="disabled")
         self.root.update_idletasks()
 
+    def close_app(self) -> None:
+        self.app_closed = True
+        for handle in list(getattr(self, "after_handles", set())):
+            try:
+                self.root.after_cancel(handle)
+            except tk.TclError:
+                pass
+        self.after_handles.clear()
+        self.root.destroy()
+
+    def run_on_ui(self, callback) -> None:
+        if self.app_closed:
+            return
+        try:
+            self.root.after(0, callback)
+        except RuntimeError:
+            self.app_closed = True
+
+    def run_later(self, delay_ms: int, callback) -> None:
+        if self.app_closed:
+            return
+
+        def wrapped() -> None:
+            if self.app_closed:
+                return
+            self.after_handles.discard(handle)
+            callback()
+
+        try:
+            handle = self.root.after(delay_ms, wrapped)
+            self.after_handles.add(handle)
+        except RuntimeError:
+            self.app_closed = True
+
     def log_from_worker(self, message: str) -> None:
-        self.root.after(0, lambda: self.log(message))
+        self.run_on_ui(lambda: self.log(message))
 
     def set_status_from_worker(self, message: str) -> None:
-        self.root.after(0, lambda: self.status.set(message))
+        self.run_on_ui(lambda: self.status.set(message))
 
     def show_info_from_worker(self, title: str, message: str) -> None:
-        self.root.after(0, lambda: messagebox.showinfo(title, message))
+        self.run_on_ui(lambda: messagebox.showinfo(title, message))
 
     def show_warning_from_worker(self, title: str, message: str) -> None:
-        self.root.after(0, lambda: messagebox.showwarning(title, message))
+        self.run_on_ui(lambda: messagebox.showwarning(title, message))
 
     def show_error_from_worker(self, title: str, message: str) -> None:
-        self.root.after(0, lambda: messagebox.showerror(title, message))
+        self.run_on_ui(lambda: messagebox.showerror(title, message))
 
     def set_busy(self, busy: bool) -> None:
         self.worker_running = busy
-        state = "disabled" if busy else "normal"
-        for button in (self.login_button, self.deploy_button, self.config_button, self.restore_button, self.update_button):
-            button.configure(state=state)
+        self.refresh_steps()
 
     def current_key_signature(self) -> tuple[str, str, str, bool]:
         return (
             self.api_key.get().strip(),
-            self.base_url.get().strip(),
+            DEFAULT_BASE_URL,
             self.model.get().strip(),
             self.skip_test.get(),
         )
@@ -2468,6 +3092,17 @@ class InstallerApp:
             self.saved_key_ok = False
             self.saved_key_signature = None
             self.status.set("状态：Key 已修改，请重新保存")
+            self.refresh_steps()
+
+    def mark_environment_dirty(self, *_args) -> None:
+        if self.environment_checked or self.environment_ok:
+            self.environment_checked = False
+            self.environment_ok = False
+            self.status.set("状态：系统选择已修改，请重新检测环境")
+            self.refresh_steps()
+
+    def mark_agent_selection_changed(self, *_args) -> None:
+        self.refresh_steps()
 
     def start_login(self) -> None:
         if self.worker_running:
@@ -2497,39 +3132,88 @@ class InstallerApp:
             display_name = str(data.get("username") or username)
             save_profile_data({"username": display_name, "user": data, "deployer_auth": auth_data})
             display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
-            self.root.after(0, lambda: self.user_label.configure(text=f"已登录：{display_username}"))
-            self.root.after(0, self.show_wizard)
+            self.run_on_ui(lambda: self.user_label.configure(text=f"已登录：{display_username}"))
+            self.run_on_ui(self.show_wizard)
+            self.run_later(1200, self.start_auto_update_check)
             self.set_status_from_worker("状态：已登录，请按步骤部署")
         finally:
-            self.root.after(0, lambda: self.set_busy(False))
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def start_auto_update_check(self) -> None:
+        if self.worker_running or self.auto_update_checked:
+            return
+        self.auto_update_checked = True
+        threading.Thread(target=lambda: self._update_worker(auto=True), daemon=True).start()
 
     def start_update_check(self) -> None:
         if self.worker_running:
             return
         self.set_busy(True)
         self.status.set("状态：正在检查更新...")
-        threading.Thread(target=self._update_worker, daemon=True).start()
+        threading.Thread(target=lambda: self._update_worker(auto=False), daemon=True).start()
 
-    def _update_worker(self) -> None:
+    def _update_worker(self, auto: bool = False) -> None:
         try:
-            ok, msg, path, release_url = check_and_download_update(self.log_from_worker)
+            update, msg, release_url = find_available_update()
             self.log_from_worker(msg)
-            if ok and path:
-                self.set_status_from_worker("状态：更新包已下载")
-                self.root.after(0, lambda: open_path(path.parent))
-                self.show_info_from_worker("更新已下载", f"{msg}\n\n位置：{path}")
+            if update:
+                self.set_status_from_worker(f"状态：发现新版本 {update.latest_tag}")
+                self.run_on_ui(lambda: self.prompt_online_update(update, auto))
             elif release_url and "未找到" in msg and "更新包" in msg:
                 self.set_status_from_worker("状态：发现新版本，请到发布页下载")
-                self.root.after(0, lambda: open_url(release_url))
-                self.show_warning_from_worker("发现新版本", msg)
+                self.run_on_ui(lambda: open_url(release_url))
+                if not auto:
+                    self.show_warning_from_worker("发现新版本", msg)
             elif "当前已是最新版本" in msg:
                 self.set_status_from_worker("状态：当前已是最新版本")
-                self.show_info_from_worker("检查更新", msg)
+                if not auto:
+                    self.show_info_from_worker("检查更新", msg)
             else:
                 self.set_status_from_worker("状态：检查更新失败")
-                self.show_warning_from_worker("检查更新", msg)
+                if not auto:
+                    self.show_warning_from_worker("检查更新", msg)
         finally:
-            self.root.after(0, lambda: self.set_busy(False))
+            if not auto:
+                self.run_on_ui(lambda: self.set_busy(False))
+
+    def prompt_online_update(self, update: UpdateInfo, auto: bool) -> None:
+        if self.worker_running and auto:
+            return
+        message = (
+            f"发现新版本 {update.latest_tag}（当前 {APP_VERSION}）。\n\n"
+            "是否现在在线更新？\n\n"
+            "工具会下载对应系统安装包，自动覆盖当前程序并重新打开。"
+            "你的登录状态、API Key、Codex 配置和工作区资料都会保留。"
+        )
+        if not messagebox.askyesno("发现新版本", message):
+            if auto:
+                self.status.set("状态：已跳过本次自动更新")
+            else:
+                self.set_busy(False)
+            return
+        self.set_busy(True)
+        self.status.set("状态：正在下载在线更新包...")
+        threading.Thread(target=self._download_and_apply_update_worker, args=(update,), daemon=True).start()
+
+    def _download_and_apply_update_worker(self, update: UpdateInfo) -> None:
+        try:
+            path = download_update_package(update, self.log_from_worker)
+            self.log_from_worker(f"更新包已下载：{path}")
+            self.set_status_from_worker("状态：准备在线更新")
+            self.run_on_ui(lambda: self.confirm_and_start_online_update(path))
+        except Exception as exc:
+            self.set_status_from_worker("状态：在线更新失败")
+            self.show_warning_from_worker("在线更新失败", str(exc))
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def confirm_and_start_online_update(self, path: Path) -> None:
+        try:
+            start_online_update(path, self.log)
+            messagebox.showinfo("开始在线更新", "更新程序已启动。本工具将退出，更新完成后会自动重新打开。")
+            self.run_later(200, self.close_app)
+        except Exception as exc:
+            self.set_busy(False)
+            messagebox.showerror("在线更新失败", str(exc))
 
     def show_wizard(self) -> None:
         self.login_frame.pack_forget()
@@ -2547,7 +3231,8 @@ class InstallerApp:
             messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
             return
         api_key = self.api_key.get()
-        base_url = self.base_url.get()
+        self.base_url.set(DEFAULT_BASE_URL)
+        base_url = DEFAULT_BASE_URL
         model = self.model.get()
         skip_test = self.skip_test.get()
         open_app = self.open_app.get()
@@ -2557,28 +3242,30 @@ class InstallerApp:
 
     def _save_key_worker(self, api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool) -> None:
         try:
+            base_url = DEFAULT_BASE_URL
             if not api_key.strip():
                 raise ValueError("请先填写胖虎AI API Key。")
             if skip_test:
                 ok, msg = True, "已保存 Key，接口测试被跳过。"
             else:
+                base_url = DEFAULT_BASE_URL
                 ok, msg = test_api(base_url, api_key)
             self.log_from_worker(msg)
             self.saved_key_ok = ok
             if ok:
-                self.saved_key_signature = (api_key.strip(), base_url.strip(), model.strip(), skip_test)
+                self.saved_key_signature = (api_key.strip(), DEFAULT_BASE_URL, model.strip(), skip_test)
                 save_profile_data(
                     {
                         "api_key": api_key.strip(),
-                        "base_url": base_url.strip(),
+                        "base_url": DEFAULT_BASE_URL,
                         "model": model.strip(),
                         "skip_test": skip_test,
                         "open_app": open_app,
                     }
                 )
                 self.set_status_from_worker("状态：Key 已保存")
-                self.root.after(0, lambda: self.step.set(2))
-                self.root.after(0, self.refresh_steps)
+                self.run_on_ui(lambda: self.step.set(2))
+                self.run_on_ui(self.refresh_steps)
             else:
                 self.set_status_from_worker("状态：Key 测试失败")
                 self.show_warning_from_worker("Key 测试失败", msg)
@@ -2586,9 +3273,14 @@ class InstallerApp:
             self.set_status_from_worker("状态：Key 保存失败")
             self.show_error_from_worker("Key 保存失败", str(exc))
         finally:
-            self.root.after(0, lambda: self.set_busy(False))
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def run_environment_check(self) -> None:
+        if not self.has_valid_key():
+            messagebox.showwarning("请先完成第一步", "请先保存并测试胖虎AI API Key，再检测环境。")
+            self.step.set(1)
+            self.refresh_steps()
+            return
         lines = detect_environment()
         self.env_text.configure(state="normal")
         self.env_text.delete("1.0", "end")
@@ -2596,7 +3288,16 @@ class InstallerApp:
         self.env_text.configure(state="disabled")
         for line in lines:
             self.log(line)
-        self.status.set("状态：环境检测完成")
+        self.environment_checked = True
+        risk_findings = detect_risk_plugins()
+        self.environment_ok = not risk_findings
+        if self.environment_ok:
+            self.status.set("状态：环境检测通过")
+            self.step.set(3)
+        else:
+            self.status.set("状态：发现第三方配置插件，请先处理")
+            messagebox.showwarning("环境检测未通过", format_risk_plugin_block_message(risk_findings))
+        self.refresh_steps()
 
     def selected_agents(self) -> list[tuple[AgentSpec, str]]:
         selected = []
@@ -2654,6 +3355,9 @@ class InstallerApp:
         ok, _current_key_signature = self.validate_config_ready()
         if not ok:
             return
+        if not self.can_access_step(4):
+            self.go_to_step(4)
+            return
         selected = self.selected_agents()
         if not selected:
             messagebox.showwarning("请选择 Agent", "请至少选择一个 Agent。")
@@ -2663,7 +3367,8 @@ class InstallerApp:
         user = dict(self.logged_in_user or {})
         deployer_auth = dict(self.deployer_auth or {})
         api_key = self.api_key.get()
-        base_url = self.base_url.get()
+        self.base_url.set(DEFAULT_BASE_URL)
+        base_url = DEFAULT_BASE_URL
         model = self.model.get()
         skip_test = self.skip_test.get()
         open_app = self.open_app.get()
@@ -2676,23 +3381,39 @@ class InstallerApp:
         ).start()
 
     def start_config_only(self) -> None:
+        self.start_config_for_mode(CodexConfigMode.DIRECT_API)
+
+    def start_dual_state_config(self) -> None:
+        self.start_config_for_mode(CodexConfigMode.DUAL_STATE)
+
+    def start_config_for_mode(self, mode: CodexConfigMode) -> None:
         ok, _current_key_signature = self.validate_config_ready()
         if not ok:
+            return
+        if not self.can_access_step(4):
+            self.go_to_step(4)
             return
         if not self.validate_system_and_risk_plugins():
             return
         user = dict(self.logged_in_user or {})
         deployer_auth = dict(self.deployer_auth or {})
         api_key = self.api_key.get()
-        base_url = self.base_url.get()
+        self.base_url.set(DEFAULT_BASE_URL)
+        base_url = DEFAULT_BASE_URL
         model = self.model.get()
         skip_test = self.skip_test.get()
         open_app = self.open_app.get()
+        if mode == CodexConfigMode.DUAL_STATE:
+            status = "状态：正在写入 Codex 双态模式配置..."
+            target = self._config_only_worker
+        else:
+            status = "状态：正在修复 Codex 普通配置..."
+            target = self._config_only_worker
         self.set_busy(True)
-        self.status.set("状态：正在修复 Codex 配置...")
+        self.status.set(status)
         threading.Thread(
-            target=self._config_only_worker,
-            args=(user, deployer_auth, api_key, base_url, model, skip_test, open_app),
+            target=target,
+            args=(user, deployer_auth, api_key, base_url, model, skip_test, open_app, mode),
             daemon=True,
         ).start()
 
@@ -2705,6 +3426,7 @@ class InstallerApp:
         model: str,
         skip_test: bool,
         open_app: bool,
+        mode: CodexConfigMode,
     ) -> None:
         try:
             temporary_access = self.fetch_temporary_openai_access(user, deployer_auth)
@@ -2716,10 +3438,22 @@ class InstallerApp:
                 open_app,
                 self.log_from_worker,
                 temporary_access,
+                mode,
             )
             if ok:
                 self.set_status_from_worker("状态：Codex 配置修复完成")
-                self.show_info_from_worker("配置完成", "Codex 配置已重新写入，不会重新安装 Agent。")
+                if mode == CodexConfigMode.DUAL_STATE:
+                    message = (
+                        "Codex 双态模式配置已写入，不会重新安装 Agent。\n\n"
+                        "请先完全退出 Codex，再重新打开 Codex；新的配置只有重开后才会生效。\n\n"
+                        "双态模式需要用户重新打开后自行登录自己的 ChatGPT 账号。登录态来自用户账号，模型消耗走胖虎AI API Key。"
+                    )
+                else:
+                    message = (
+                        "Codex 普通直接 API 配置已重新写入，不会重新安装 Agent。\n\n"
+                        "请先完全退出 Codex，再重新打开 Codex；新的配置只有重开后才会生效。"
+                    )
+                self.show_info_from_worker("配置完成", message)
             else:
                 self.set_status_from_worker("状态：Codex 配置测试失败，已恢复备份")
                 self.show_warning_from_worker("配置测试失败", "配置写入后接口测试失败，已自动恢复备份。请检查 Key、余额或网络。")
@@ -2728,7 +3462,7 @@ class InstallerApp:
             self.log_from_worker(f"Codex 配置修复失败：{exc}")
             self.show_error_from_worker("配置修复失败", str(exc))
         finally:
-            self.root.after(0, lambda: self.set_busy(False))
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def _deploy_worker(
         self,
@@ -2753,7 +3487,7 @@ class InstallerApp:
             if blocked:
                 raise RuntimeError("当前账号未授权安装：" + "、".join(blocked))
             temporary_access = parse_temporary_openai_access_config(manifest)
-            self.log_from_worker("开始一键部署：" + "、".join(f"{a.name}/{m}" for a, m in selected))
+            self.log_from_worker("开始普通一键部署：" + "、".join(f"{a.name}/{m}" for a, m in selected))
             success_count = 0
             for agent, mode in selected:
                 if install_agent(agent, mode, self.log_from_worker):
@@ -2778,7 +3512,7 @@ class InstallerApp:
             self.log_from_worker(f"部署失败：{exc}")
             self.show_error_from_worker("部署失败", str(exc))
         finally:
-            self.root.after(0, lambda: self.set_busy(False))
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def fetch_temporary_openai_access(
         self,
@@ -2823,7 +3557,7 @@ class InstallerApp:
 
 
 def self_test() -> None:
-    assert APP_VERSION == "1.0.14"
+    assert APP_VERSION == "1.0.15"
     assert any(agent.id == "codex" for agent in AGENTS)
     assert any(agent.id == "claude_code" for agent in AGENTS)
     assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)
@@ -2835,6 +3569,15 @@ def self_test() -> None:
     assert not process_text_contains_alias("screenrecorder.exe", "ccr")
     assert "sk-test-secret-123456" not in sanitize_log_text("Key sk-test-secret-123456", "sk-test-secret-123456")
     assert "刚才在本工具里填写的 API Key" in build_agent_setup_guide_content([], "sk-test-secret-123456")
+    assert "无需登录 ChatGPT 账号" in login_help_text()
+    assert "新账号先充值或确认账户里有余额" in key_creation_help_text()
+    action_help = codex_action_help_text()
+    assert "一键部署（普通）：普通模式。第一次安装 Agent 时使用" in action_help
+    assert "双态配置：需要同时保留 ChatGPT 登录态并消耗胖虎AI API Key" in action_help
+    assert "仅修复 Codex 配置：Agent 已经装好" in action_help
+    assert "恢复最近备份：配置异常时退回" in action_help
+    assert "任何模式配置写完后都必须完全退出 Codex" in action_help
+    assert "只要修改过 Codex 配置，都要完全退出 Codex 后重新打开" in codex_action_summary_text()
     assert "已禁止继续安装" in "\n".join(risk_plugin_report_lines([RiskPluginFinding("CCSwitch", "命令", "ccswitch", "")]))
     config = build_config("sk-test", DEFAULT_BASE_URL, DEFAULT_MODEL)
     expected_config = '''model_provider = "panghuAI"
@@ -2855,10 +3598,29 @@ requires_openai_auth = true
 '''
     assert config == expected_config
     assert merge_config("old = true\n[desktop]\nappearanceTheme = \"light\"\n", "sk-test", "bad", "bad") == expected_config
+    assert build_config("sk-test", "https://bad.example", DEFAULT_MODEL) == expected_config
+    bad_url_dual_config = build_dual_state_config("sk-test", "https://bad.example", DEFAULT_MODEL)
+    assert "https://bad.example" not in bad_url_dual_config
+    assert 'base_url = "https://aitokenapi.cc/v1"' in bad_url_dual_config
     assert "experimental_bearer_token" not in config
-    auth = json.loads(build_auth_json("", "sk-test"))
-    assert list(auth.keys()) == ["OPENAI_API_KEY"]
-    assert auth["OPENAI_API_KEY"] == "sk-test"
+    dual_config = build_dual_state_config("sk-test", DEFAULT_BASE_URL, DEFAULT_MODEL)
+    assert 'experimental_bearer_token = "sk-test"' in dual_config
+    direct_auth = json.loads(build_direct_api_auth_json("", "sk-test"))
+    assert direct_auth == {"OPENAI_API_KEY": "sk-test"}
+    existing_auth = json.dumps(
+        {
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "old-key",
+            "tokens": {"access_token": "keep-access", "refresh_token": "keep-refresh"},
+            "last_refresh": "2026-06-18T00:00:00Z",
+        }
+    )
+    auth = json.loads(build_dual_state_auth_json(existing_auth, "sk-test"))
+    assert auth["auth_mode"] == "chatgpt"
+    assert auth["OPENAI_API_KEY"] is None
+    assert auth["tokens"]["access_token"] == "keep-access"
+    assert auth["tokens"]["refresh_token"] == "keep-refresh"
+    assert auth["last_refresh"] == "2026-06-18T00:00:00Z"
     assert normalize_version("v1.2.3") > normalize_version("1.0.9")
     merged = merge_agents_rules("# old")
     assert PANGHU_AGENTS_START in merged and PANGHU_AGENTS_END in merged
@@ -2873,6 +3635,19 @@ requires_openai_auth = true
     assert 'shExpMatch(host, "*.openai.com")' in pac
     assert 'shExpMatch(host, "*.chatgpt.com")' in pac
     assert "return \"PROXY aitokenapi.cc:80; DIRECT\";" in pac
+    update = UpdateInfo("v9.9.9", "https://example.com/update.zip", "https://example.com/release", "AI.Agent.-Windows.zip", "Windows")
+    assert update.asset_name == "AI.Agent.-Windows.zip"
+    win_update_script = build_windows_update_script(Path("C:/tmp/update.zip"), Path("C:/App"), Path("C:/App/app.exe"), 1234)
+    assert "Wait-Process -Id $pidToWait" in win_update_script
+    assert "Expand-Archive" in win_update_script
+    assert "Copy-Item -Path" in win_update_script
+    assert "Start-Process -FilePath $launchTarget" in win_update_script
+    mac_update_script = build_macos_update_script(Path("/tmp/update.zip"), Path("/Applications/App.app"), Path("/Applications/App.app"), 1234)
+    assert "while kill -0" in mac_update_script
+    assert "ditto -x -k" in mac_update_script
+    assert 'rm -rf "$APP_DIR"' in mac_update_script
+    assert "cp -R" in mac_update_script
+    assert "open \"$LAUNCH_TARGET\"" in mac_update_script
     restore_script = build_windows_temp_openai_access_script()
     assert "Start-Sleep -Seconds $Seconds" in restore_script
     assert "Restore-InternetProxyState" in restore_script
