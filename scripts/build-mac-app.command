@@ -59,7 +59,7 @@ fi
   --name "$APP_NAME" \
   --icon "$ICON_PATH" \
   --osx-bundle-identifier "$BUNDLE_ID" \
-  --add-data "$CERTIFI_DATA:certifi" \
+  --add-data="$CERTIFI_DATA:certifi" \
   --distpath release \
   --workpath build \
   --specpath build \

@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover - runtime fallback for incomplete dev envi
 
 
 APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
@@ -2823,7 +2823,7 @@ class InstallerApp:
 
 
 def self_test() -> None:
-    assert APP_VERSION == "1.0.12"
+    assert APP_VERSION == "1.0.13"
     assert any(agent.id == "codex" for agent in AGENTS)
     assert any(agent.id == "claude_code" for agent in AGENTS)
     assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)
