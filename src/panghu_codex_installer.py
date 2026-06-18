@@ -6,6 +6,7 @@ import platform
 import re
 import shlex
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -18,11 +19,16 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen, urlretrieve
+from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener, urlopen
+
+try:
+    import certifi
+except Exception:  # pragma: no cover - runtime fallback for incomplete dev environments
+    certifi = None
 
 
 APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
@@ -674,11 +680,34 @@ def build_auth_json(existing: str, api_key: str) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
+def trusted_ssl_context() -> ssl.SSLContext:
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
+
+def trusted_urlopen(req: Request, timeout: int = 20):
+    return urlopen(req, timeout=timeout, context=trusted_ssl_context())
+
+
+def build_trusted_opener(cookie_jar: http.cookiejar.CookieJar | None = None):
+    handlers = [HTTPSHandler(context=trusted_ssl_context())]
+    if cookie_jar is not None:
+        handlers.insert(0, HTTPCookieProcessor(cookie_jar))
+    return build_opener(*handlers)
+
+
+def download_with_trusted_certs(url: str, target: Path) -> None:
+    req = Request(url, headers={"User-Agent": HTTP_USER_AGENT})
+    with trusted_urlopen(req, timeout=60) as resp, target.open("wb") as file:
+        shutil.copyfileobj(resp, file)
+
+
 def test_api(base_url: str, api_key: str) -> tuple[bool, str]:
     url = base_url.rstrip("/") + "/v1/models"
     req = Request(url, headers={"Authorization": f"Bearer {api_key}"}, method="GET")
     try:
-        with urlopen(req, timeout=20) as resp:
+        with trusted_urlopen(req, timeout=20) as resp:
             return True, f"接口连通正常：HTTP {resp.status}"
     except HTTPError as exc:
         return False, f"接口返回错误：HTTP {exc.code}"
@@ -713,7 +742,7 @@ def open_json_with_cookies(
     body: dict | None = None,
     headers: dict | None = None,
 ) -> dict:
-    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    opener = build_trusted_opener(cookie_jar)
     data = json.dumps(body or {}).encode("utf-8") if body is not None else None
     request_headers = {
         "Accept": "application/json",
@@ -730,7 +759,7 @@ def open_json_with_cookies(
 def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.CookieJar) -> tuple[bool, str, dict]:
     if not username.strip() or not password:
         return False, "请输入胖虎AI账号和密码。", {}
-    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    opener = build_trusted_opener(cookie_jar)
     body = json.dumps({"username": username.strip(), "password": password}).encode("utf-8")
     req = Request(
         LOGIN_URL,
@@ -1255,7 +1284,7 @@ def platform_label_for_update() -> str:
 def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
     try:
         req = Request(PUBLIC_UPDATE_MANIFEST_URL, headers={"Accept": "application/json", "User-Agent": HTTP_USER_AGENT})
-        with urlopen(req, timeout=20) as resp:
+        with trusted_urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception:
         payload = {}
@@ -1275,14 +1304,14 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
         target = target_dir / f"{latest_tag}-{release_asset_name_for_current_system()}"
         log(f"发现新版本 {latest_tag}，开始下载更新包。")
         try:
-            urlretrieve(asset_url, target)
+            download_with_trusted_certs(asset_url, target)
         except Exception as exc:
             return False, f"下载更新失败：{exc}", None, release_url
         return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
 
     req = Request(GITHUB_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": HTTP_USER_AGENT})
     try:
-        with urlopen(req, timeout=20) as resp:
+        with trusted_urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         return False, f"检查更新失败：{exc}", None, None
@@ -1310,7 +1339,7 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
     target = target_dir / f"{latest_tag}-{release_asset_name_for_current_system()}"
     log(f"发现新版本 {latest_tag}，开始下载更新包。")
     try:
-        urlretrieve(asset_url, target)
+        download_with_trusted_certs(asset_url, target)
     except Exception as exc:
         return False, f"下载更新失败：{exc}", None, release_url
     return True, f"新版本 {latest_tag} 已下载。请关闭本工具后解压覆盖旧版本。", target, release_url
@@ -2794,6 +2823,7 @@ class InstallerApp:
 
 
 def self_test() -> None:
+    assert APP_VERSION == "1.0.12"
     assert any(agent.id == "codex" for agent in AGENTS)
     assert any(agent.id == "claude_code" for agent in AGENTS)
     assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)

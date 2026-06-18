@@ -30,6 +30,12 @@ esac
 ROOT="$(pwd)"
 ASSETS="$ROOT/assets"
 ICON_PATH="$ASSETS/panghu-avatar.icns"
+CERTIFI_DATA="$($ROOT/.venv/bin/python - <<'PY'
+from pathlib import Path
+import certifi
+print(Path(certifi.where()).parent)
+PY
+)"
 if [ ! -f "$ICON_PATH" ]; then
   ICONSET="$ASSETS/panghu-avatar.iconset"
   rm -rf "$ICONSET"
@@ -53,6 +59,7 @@ fi
   --name "$APP_NAME" \
   --icon "$ICON_PATH" \
   --osx-bundle-identifier "$BUNDLE_ID" \
+  --add-data "$CERTIFI_DATA:certifi" \
   --distpath release \
   --workpath build \
   --specpath build \

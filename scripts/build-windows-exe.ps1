@@ -10,6 +10,7 @@ $icon = Join-Path $assets "panghu-avatar.ico"
 $appName = [string]::Concat([char]0x80D6, [char]0x864E, "AI", [char]0x591A, "Agent", [char]0x4E00, [char]0x952E, [char]0x90E8, [char]0x7F72, [char]0x5DE5, [char]0x5177)
 & $python -m pip install --upgrade pip
 & $python -m pip install -r requirements-build.txt
+$certifiData = & $python -c "import certifi, pathlib; print(pathlib.Path(certifi.where()).parent)"
 $pyinstallerArgs = @(
     "-m", "PyInstaller",
     "--noconfirm",
@@ -17,6 +18,7 @@ $pyinstallerArgs = @(
     "--windowed",
     "--name", $appName,
     "--icon", $icon,
+    "--add-data", "$certifiData;certifi",
     "--add-data", "$($assets);assets",
     "--distpath", "release",
     "--workpath", "build",
