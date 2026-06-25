@@ -59,10 +59,10 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
 
         required_terms = [
-            "历史版本残留的代理登录态不得写入或继续保留在 `profile.json`",
+            "历史版本残留的本地代理协助字段不得写入或继续保留在 `profile.json`",
             "旧 `profile.json`",
             "代理身份、代理 token、买家登录 token、`assist_session_id`",
-            "启动恢复时不得把旧代理登录态或旧买家 token 当成当前账号",
+            "启动恢复时不得把旧本地协助字段或旧买家 token 当成当前账号",
             "只能恢复账号提示、API Key、模型和界面偏好",
             "真正的登录、授权和部署 token 必须来自本次重新登录",
             "代理身份不再是客户端登录前模式",

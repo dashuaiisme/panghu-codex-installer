@@ -810,7 +810,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIsNone(app.agent_assist_draft.agent_user)
         self.assertEqual(app.agent_assist_draft.assist_session_id, "assist-1")
         self.assertEqual(app.agent_assist_draft.invite_code, "INVITE-KEEP")
-        self.assertIn("旧协助登录入口已停用", logs[0])
+        self.assertIn("旧本地协助入口已停用", logs[0])
 
     def test_load_profile_into_ui_hides_legacy_agentish_username_without_restoring_session(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
@@ -1330,7 +1330,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             "买家模式",
             "代理模式",
             "代理远程协助临时会话",
-            "创建代理临时会话",
             "绑定目标买家",
             "退出并清空代理资料",
         ]
@@ -1451,9 +1450,11 @@ class PanghuCommercialManifestTests(unittest.TestCase):
     def test_ui_layout_contracts_prevent_visual_regression(self) -> None:
         source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
         self.assertIn('root.geometry("1400x900")', source)
-        self.assertIn("grid_columnconfigure(2, minsize=300)", source)
-        self.assertIn("grid_columnconfigure(0, minsize=220)", source)
-        self.assertIn("width=300", source)
+        self.assertIn("LEFT_PANEL_WIDTH = 220", source)
+        self.assertIn("RIGHT_PANEL_WIDTH = 300", source)
+        self.assertIn("grid_columnconfigure(0, minsize=LEFT_PANEL_WIDTH)", source)
+        self.assertIn("grid_columnconfigure(2, minsize=RIGHT_PANEL_WIDTH)", source)
+        self.assertIn("width=RIGHT_PANEL_WIDTH", source)
         self.assertIn('PRIMARY = "#0071e3"', source)
         self.assertIn("SIDEBAR_BG", source)
         self.assertIn("login_card = tk.Frame(login_shell, bg=CARD_BG, padx=40, pady=35", source)

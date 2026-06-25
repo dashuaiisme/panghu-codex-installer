@@ -148,7 +148,7 @@ DEPLOYER_MANIFEST_URL = "https://aitokenapi.cc/api/deployer/manifest"
 POST https://aitokenapi.cc/api/user/login?turnstile=
 ```
 
-客户端在本次运行内使用 cookie jar 和内存态完成登录、授权和部署。`profile.json` 只保存账号提示、API Key、模型和界面偏好，不保存可恢复登录态、部署 token、代理登录态或第三方账号密码。重启工具后必须重新登录胖虎AI账号。
+客户端在本次运行内使用 cookie jar 和内存态完成登录、授权和部署。`profile.json` 只保存账号提示、API Key、模型和界面偏好，不保存可恢复登录态、部署 token、旧本地协助字段或第三方账号密码。重启工具后必须重新登录胖虎AI账号。
 
 ### 部署激活
 
