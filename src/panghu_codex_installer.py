@@ -674,6 +674,64 @@ def asset_path(name: str) -> Path:
     return app_root() / "assets" / name
 
 
+def ui_path(name: str) -> Path:
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        bundled = Path(bundled_root) / "ui" / name
+        if bundled.exists():
+            return bundled
+    root = app_root()
+    for candidate in (
+        root / "src" / "ui" / name,
+        root / "ui" / name,
+        root.parent / "Resources" / "ui" / name,
+    ):
+        if candidate.exists():
+            return candidate
+    return app_root() / "src" / "ui" / name
+
+
+def save_theme_preference(theme: str) -> None:
+    try:
+        pref_file = app_data_dir() / "theme.txt"
+        pref_file.parent.mkdir(parents=True, exist_ok=True)
+        pref_file.write_text(theme, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def load_theme_preference() -> str:
+    try:
+        pref_file = app_data_dir() / "theme.txt"
+        if pref_file.exists():
+            return pref_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return "light"
+
+
+def color_to_char(color: str) -> str:
+    if color == SUCCESS:
+        return "✓"
+    elif color == RUNNING:
+        return "•"
+    elif color == FAIL:
+        return "✗"
+    else:
+        return "-"
+
+
+def tag_to_css(tag: str) -> str:
+    if tag == "failed":
+        return "log-text-bad"
+    elif tag == "success":
+        return "log-text-ok"
+    elif tag == "running":
+        return "log-text-run"
+    else:
+        return "log-text-info"
+
+
 def current_system_id() -> str:
     name = platform.system()
     if name == "Windows":
@@ -3620,15 +3678,349 @@ def enable_windows_dpi_awareness() -> None:
             pass
 
 
+class WebviewApi:
+    def __init__(self, app: "InstallerApp") -> None:
+        self.app = app
+
+    def get_initial_state(self) -> dict:
+        is_logged = self.app.logged_in_user is not None and self.app.deployer_auth is not None
+        metrics = self.app._commercial_metric_values()
+
+        agent_enabled = {}
+        for k, v in self.app.agent_enabled.items():
+            agent_enabled[k] = v.get()
+
+        agent_mode = {}
+        for k, v in self.app.agent_mode.items():
+            agent_mode[k] = v.get()
+
+        agent_matrix_state = {}
+        selected_ids = {agent.id for agent, _mode in self.app.selected_agents()}
+        executable = self.app.can_access_step(5)
+        for agent in AGENTS:
+            selected = agent.id in selected_ids
+            if self.app.worker_running and selected and executable:
+                states = {
+                    "install": RUNNING,
+                    "launch": RUNNING,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            elif selected and executable:
+                states = {
+                    "install": RUNNING,
+                    "launch": NEUTRAL_DOT,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            elif selected:
+                states = {
+                    "install": SUCCESS,
+                    "launch": NEUTRAL_DOT,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            else:
+                states = {
+                    "install": NEUTRAL_DOT,
+                    "launch": NEUTRAL_DOT,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            agent_matrix_state[agent.id] = {
+                dim: color_to_char(color) for dim, color in states.items()
+            }
+
+        if not hasattr(self.app, "webview_logs"):
+            self.app.webview_logs = {i: [] for i in range(1, 10)}
+
+        return {
+            "isLogged": is_logged,
+            "loginUsername": self.app.login_username.get(),
+            "apiKeyValue": self.app.api_key.get(),
+            "skipTest": self.app.skip_test.get(),
+            "savedKeyOk": self.app.saved_key_ok,
+            "environmentChecked": self.app.environment_checked,
+            "environmentOk": self.app.environment_ok,
+            "remainingUses": metrics["remaining"],
+            "validUntil": metrics["valid_until"],
+            "deviceLimit": metrics["device_limit"],
+            "agentEnabled": agent_enabled,
+            "agentMode": agent_mode,
+            "agentMatrix": agent_matrix_state,
+            "logs": self.app.webview_logs,
+            "theme": getattr(self.app, "theme_name", "light"),
+            "currentStep": self.app.step.get(),
+            "activeSubnav": self.app.active_subnav.get(),
+            "activeModule": self.app.active_module.get(),
+        }
+
+    def login(self, username, password):
+        self.app.login_username.set(username)
+        self.app.login_password.set(password)
+        try:
+            ok, msg, data = login_panghuai(username, password, self.app.cookie_jar)
+            self.app.log(msg)
+            if not ok:
+                self.app.status.set("状态：登录失败")
+                return {"success": False, "message": msg}
+
+            auth_ok, auth_msg, auth_data = activate_deployer(data, self.app.cookie_jar)
+            self.app.log(auth_msg)
+            if not auth_ok:
+                self.app.status.set("状态：部署授权失败")
+                return {"success": False, "message": auth_msg}
+
+            self.app.logged_in_user = data
+            self.app.deployer_auth = auth_data
+            self.app.commercial_contexts = self.app.build_buyer_contexts(data)
+            buyer_profile = create_commercial_web_profile(self.app.commercial_contexts, str(web_profile_root()))
+            ensure_commercial_web_profile_dir(buyer_profile)
+            display_name = str(data.get("username") or username)
+            save_profile_data({"username": display_name}, self.app.commercial_contexts)
+
+            self.app.step.set(2)
+            self.app.status.set("状态：已登录，请按步骤部署")
+            self.app.run_later(1200, self.app.start_auto_update_check)
+            self.app.run_later(1600, self.app.start_refresh_commercial_manifest)
+            self.app.sync_webview_state()
+            return {"success": True, "message": "登录成功"}
+        except Exception as e:
+            self.app.status.set("状态：登录错误")
+            return {"success": False, "message": str(e)}
+
+    def logout(self):
+        self.app.logged_in_user = None
+        self.app.deployer_auth = None
+        self.app.commercial_contexts = None
+        self.app.step.set(1)
+        self.app.status.set("客服提示：请先登录胖虎AI账号")
+        self.app.sync_webview_state()
+        return True
+
+    def save_key(self, api_key: str, skip_test: bool):
+        self.app.api_key.set(api_key)
+        self.app.skip_test.set(skip_test)
+        try:
+            if not self.app.logged_in_user:
+                return {"success": False, "message": "请先登录胖虎AI账号。"}
+            if not self.app.deployer_auth:
+                return {"success": False, "message": "请重新登录胖虎AI账号获取部署授权。"}
+            if not api_key.strip():
+                return {"success": False, "message": "请先填写胖虎AI API Key。"}
+
+            self.app.status.set("状态：正在测试 API Key...")
+            contexts = deployment_commercial_contexts(self.app.logged_in_user or {}, self.app.agent_assist_draft)
+            verify_msg = execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.app.deployer_auth)
+            self.app.log(verify_msg)
+
+            if skip_test:
+                ok, msg = True, "已保存 Key，接口测试被跳过。"
+            else:
+                ok, msg = test_api(DEFAULT_BASE_URL, api_key)
+            self.app.log(msg)
+
+            self.app.saved_key_ok = ok
+            if ok:
+                self.app.saved_key_signature = (api_key.strip(), DEFAULT_BASE_URL, self.app.model.get().strip(), skip_test)
+                save_profile_data(
+                    {
+                        "api_key": api_key.strip(),
+                        "base_url": DEFAULT_BASE_URL,
+                        "model": self.app.model.get().strip(),
+                        "skip_test": skip_test,
+                        "open_app": self.app.open_app.get(),
+                    },
+                    contexts,
+                )
+                self.app.status.set("状态：Key 已保存")
+                self.app.step.set(3)
+                self.app.sync_webview_state()
+                return {"success": True, "message": "Key 已保存"}
+            else:
+                self.app.status.set("状态：Key 测试失败")
+                return {"success": False, "message": msg}
+        except Exception as exc:
+            self.app.status.set("状态：Key 保存失败")
+            return {"success": False, "message": str(exc)}
+
+    def run_env_check(self):
+        try:
+            self.app.run_environment_check()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def start_deploy(self):
+        try:
+            self.app.start_deploy()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def start_dual_state_config(self):
+        try:
+            self.app.start_dual_state_config()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def start_official_chatgpt_config(self):
+        try:
+            self.app.start_official_chatgpt_config()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def start_config_only(self):
+        try:
+            self.app.start_config_only()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def restore_backups(self):
+        try:
+            self.app.restore_backups()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def open_workspace(self):
+        try:
+            self.app.open_workspace()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def open_config_dir(self):
+        try:
+            self.app.open_config_dir()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def copy_logs(self):
+        try:
+            self.app.copy_logs()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def start_update_check(self):
+        try:
+            self.app.start_update_check()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def buyer_create_order(self):
+        try:
+            self.app.start_buyer_create_order()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def buyer_poll_payment(self):
+        try:
+            self.app.start_buyer_poll_payment()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def buyer_refresh_entitlements(self):
+        try:
+            self.app.start_buyer_refresh_entitlements()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def open_url(self, url):
+        try:
+            open_url(url)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def go_to_step(self, idx):
+        try:
+            self.app.go_to_step(int(idx))
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def switch_module(self, moduleId):
+        try:
+            self.app.active_module.set(str(moduleId))
+            self.app.sync_webview_state()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def switch_subnav(self, itemId):
+        try:
+            self.app.active_subnav.set(str(itemId))
+            self.app.sync_webview_state()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def toggle_agent(self, agentId, checked):
+        try:
+            if agentId in self.app.agent_enabled:
+                self.app.agent_enabled[agentId].set(bool(checked))
+                self.app.sync_webview_state()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def set_agent_mode(self, agentId, mode):
+        try:
+            if agentId in self.app.agent_mode:
+                self.app.agent_mode[agentId].set(str(mode))
+                self.app.sync_webview_state()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def set_buyer_product(self, val):
+        try:
+            self.app.buyer_product_id.set(str(val))
+            self.app.sync_webview_state()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def set_theme(self, themeName):
+        try:
+            save_theme_preference(str(themeName))
+            self.app.theme_name = str(themeName)
+            self.app.sync_webview_state()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+
 class InstallerApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, webview_mode: bool = False) -> None:
+        self.webview_mode = webview_mode
         self.root = root
-        root.title(APP_NAME)
-        root.geometry("1400x900")
-        root.minsize(1180, 760)
-        root.configure(bg=APP_BG)
+        self.theme_name = load_theme_preference()
+        self.webview_logs = {i: [] for i in range(1, 10)}
+        self.webview_window = None
+
+        if not getattr(self, 'webview_mode', False):
+            root.title(APP_NAME)
+            root.geometry("1400x900")
+            root.minsize(1180, 760)
+            root.configure(bg=APP_BG)
         self.ui_images: list[tk.PhotoImage] = []
-        self.set_window_icon()
+        if not getattr(self, 'webview_mode', False):
+            self.set_window_icon()
 
         self.cookie_jar = http.cookiejar.CookieJar()
         self.logged_in_user: dict | None = None
@@ -3650,7 +4042,8 @@ class InstallerApp:
         self.auto_update_checked = False
         self.app_closed = False
         self.after_handles: set[str] = set()
-        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
+        if not getattr(self, 'webview_mode', False):
+            self.root.protocol("WM_DELETE_WINDOW", self.close_app)
 
         self.login_username = tk.StringVar()
         self.login_password = tk.StringVar()
@@ -3688,9 +4081,29 @@ class InstallerApp:
             variable.trace_add("write", self.mark_key_dirty)
         self.selected_system.trace_add("write", self.mark_environment_dirty)
 
+        if getattr(self, 'webview_mode', False):
+            for agent in AGENTS:
+                enabled = tk.BooleanVar(value=agent.id == "codex")
+                mode = tk.StringVar(value="cli")
+                enabled.trace_add("write", self.mark_agent_selection_changed)
+                mode.trace_add("write", self.mark_agent_selection_changed)
+                self.agent_enabled[agent.id] = enabled
+                self.agent_mode[agent.id] = mode
+
+            def on_state_change(*_args):
+                self.sync_webview_state()
+
+            for var in (
+                self.login_username, self.api_key, self.model, self.skip_test,
+                self.selected_system, self.status, self.step,
+                self.active_module, self.active_subnav
+            ):
+                var.trace_add("write", on_state_change)
+
         self.load_profile_into_ui()
-        self._build_ui()
-        self.apply_restored_login_state()
+        if not getattr(self, 'webview_mode', False):
+            self._build_ui()
+            self.apply_restored_login_state()
         self.log("系统提示：请先登录胖虎AI账号。登录后再填写 Key、检测环境并安装 Agent。", replace=True)
 
     def set_window_icon(self) -> None:
@@ -3746,6 +4159,91 @@ class InstallerApp:
             self.login_username.set("")
             return
         self.login_username.set(str(profile.get("username") or ""))
+
+    def sync_webview_state(self) -> None:
+        if not getattr(self, 'webview_mode', False) or not getattr(self, "webview_window", None):
+            return
+
+        is_logged = self.logged_in_user is not None and self.deployer_auth is not None
+        metrics = self._commercial_metric_values()
+
+        agent_enabled = {}
+        for k, v in self.agent_enabled.items():
+            agent_enabled[k] = v.get()
+
+        agent_mode = {}
+        for k, v in self.agent_mode.items():
+            agent_mode[k] = v.get()
+
+        agent_matrix_state = {}
+        selected_ids = {agent.id for agent, _mode in self.selected_agents()}
+        executable = self.can_access_step(5)
+        for agent in AGENTS:
+            selected = agent.id in selected_ids
+            if self.worker_running and selected and executable:
+                states = {
+                    "install": RUNNING,
+                    "launch": RUNNING,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            elif selected and executable:
+                states = {
+                    "install": RUNNING,
+                    "launch": NEUTRAL_DOT,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            elif selected:
+                states = {
+                    "install": SUCCESS,
+                    "launch": NEUTRAL_DOT,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            else:
+                states = {
+                    "install": NEUTRAL_DOT,
+                    "launch": NEUTRAL_DOT,
+                    "dialogue": NEUTRAL_DOT,
+                    "acceptance": NEUTRAL_DOT,
+                    "delivery": NEUTRAL_DOT,
+                }
+            agent_matrix_state[agent.id] = {
+                dim: color_to_char(color) for dim, color in states.items()
+            }
+
+        if not hasattr(self, "webview_logs"):
+            self.webview_logs = {i: [] for i in range(1, 10)}
+
+        state_dict = {
+            "isLogged": is_logged,
+            "loginUsername": self.login_username.get(),
+            "apiKeyValue": self.api_key.get(),
+            "skipTest": self.skip_test.get(),
+            "savedKeyOk": self.saved_key_ok,
+            "environmentChecked": self.environment_checked,
+            "environmentOk": self.environment_ok,
+            "remainingUses": metrics["remaining"],
+            "validUntil": metrics["valid_until"],
+            "deviceLimit": metrics["device_limit"],
+            "agentEnabled": agent_enabled,
+            "agentMode": agent_mode,
+            "agentMatrix": agent_matrix_state,
+            "logs": self.webview_logs,
+            "theme": getattr(self, "theme_name", "light"),
+            "currentStep": self.step.get(),
+            "activeSubnav": self.active_subnav.get(),
+            "activeModule": self.active_module.get(),
+        }
+
+        try:
+            self.webview_window.evaluate_js(f"updatePythonState({json.dumps(state_dict)})")
+        except Exception:
+            pass
 
     def apply_restored_login_state(self) -> None:
         username = self.login_username.get().strip()
@@ -4316,6 +4814,8 @@ class InstallerApp:
         self.log(f"网站页面打开结果：{result.message} URL={result.url}")
 
     def _show_active_module_content(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            return
         module_id = self.active_module.get() if hasattr(self, "active_module") else MODULE_AGENT
         if module_id == MODULE_AGENT:
             self.steps_host.lift()
@@ -4365,6 +4865,9 @@ class InstallerApp:
         frame.lift()
 
     def refresh_module_nav(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         active_module = self.active_module.get() if hasattr(self, "active_module") else MODULE_AGENT
         for module_id, button in getattr(self, "module_buttons", {}).items():
             active = module_id == active_module
@@ -4528,6 +5031,9 @@ class InstallerApp:
         self.log_box.configure(state="disabled")
 
     def refresh_topbar(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         metrics = self._commercial_metric_values()
         if hasattr(self, "topbar_account_label"):
             self.topbar_account_label.configure(text=f"账号：{metrics['account']}")
@@ -4628,6 +5134,9 @@ class InstallerApp:
         return
 
     def refresh_commercial_info_panel(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         metrics = self._commercial_metric_values()
         for key, value in metrics.items():
             label = getattr(self, "commercial_info_labels", {}).get(key)
@@ -4654,6 +5163,9 @@ class InstallerApp:
         return text, color
 
     def refresh_agent_matrix_panel(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         selected_ids = {agent.id for agent, _mode in self.selected_agents()}
         executable = self.can_access_step(5)
         for agent in AGENTS:
@@ -4839,6 +5351,9 @@ class InstallerApp:
         self.login_mode_summary_label.pack(fill="x", pady=(0, 10))
 
     def refresh_login_entry_mode(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         if hasattr(self, "login_entry_mode"):
             self.login_entry_mode.set("buyer")
         if hasattr(self, "login_mode_summary_label"):
@@ -5060,6 +5575,9 @@ class InstallerApp:
         self.agent_assist_panel.pack_forget()
 
     def refresh_agent_assist_status(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         label = getattr(self, "agent_assist_status_label", None)
         if not label:
             return
@@ -5068,6 +5586,9 @@ class InstallerApp:
         self.refresh_customer_purchase_products()
 
     def refresh_customer_purchase_products(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         label = getattr(self, "agent_product_summary_label", None)
         if not label:
             return
@@ -5079,6 +5600,9 @@ class InstallerApp:
         label.configure(text=text)
 
     def refresh_buyer_purchase_status(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         product_label = getattr(self, "buyer_product_summary_label", None)
         if product_label:
             lines = build_customer_purchase_product_lines(self.commercial_products)
@@ -5872,11 +6396,17 @@ class InstallerApp:
         return "请先登录买家账号；商品、权益、次数、有效期和设备数均以服务端返回为准。"
 
     def refresh_commercial_summary(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         label = getattr(self, "commercial_summary_label", None)
         if label:
             label.configure(text=self.current_commercial_summary_text())
 
     def refresh_agent_commercial_states(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
+            return
         commercial_manifest_present = bool(self.deployer_manifest and manifest_has_commercial_controls(self.deployer_manifest))
         for agent in AGENTS:
             state = build_agent_customer_state(
@@ -5910,6 +6440,15 @@ class InstallerApp:
     def refresh_recommended_agent_product(self) -> None:
         if not hasattr(self, "buyer_product_id"):
             return
+        product = find_listed_product(
+            self.commercial_products,
+            agent_id="codex",
+            mode_key=CodexConfigMode.DIRECT_API.value,
+        )
+        if product and not self.buyer_product_id.get().strip():
+            self.buyer_product_id.set(product.product_id)
+        if getattr(self, 'webview_mode', False):
+            self.sync_webview_state()
         product = find_listed_product(
             self.commercial_products,
             agent_id="codex",
@@ -5986,6 +6525,15 @@ class InstallerApp:
             )
 
     def refresh_steps(self) -> None:
+        if getattr(self, 'webview_mode', False):
+            if not self.logged_in_user or not self.deployer_auth:
+                self.step.set(1)
+                self.active_module.set(MODULE_AGENT)
+                self.active_subnav.set("1")
+            elif self.active_module.get() == MODULE_AGENT:
+                self.active_subnav.set(str(self.step.get()))
+            self.sync_webview_state()
+            return
         if not self.logged_in_user or not self.deployer_auth:
             self.step.set(1)
             if hasattr(self, "active_module"):
@@ -6074,16 +6622,31 @@ class InstallerApp:
     def log(self, message: str, replace: bool = False) -> None:
         safe = sanitize_log_text(message, self.api_key.get().strip())
         tag = self._log_tag_for_message(safe)
-        self.log_box.configure(state="normal")
-        if replace:
-            self.log_box.delete("1.0", "end")
-            self.log_box.insert("end", safe, tag)
-        else:
+        if getattr(self, 'webview_mode', False):
+            current_step = self.step.get()
+            if not hasattr(self, "webview_logs"):
+                self.webview_logs = {i: [] for i in range(1, 10)}
             now = time.strftime("%H:%M:%S")
-            self.log_box.insert("end", f"[{now}] {safe}\n", tag)
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
-        self.root.update_idletasks()
+            log_line = {"t": now, "c": tag_to_css(tag), "m": safe}
+            if replace:
+                self.webview_logs[current_step] = [log_line]
+            else:
+                self.webview_logs[current_step].append(log_line)
+            if getattr(self, "webview_window", None):
+                if replace:
+                    self.webview_window.evaluate_js(f"logsData[{current_step}] = []; renderLogs();")
+                self.webview_window.evaluate_js(f"appendPythonLog({json.dumps(log_line)})")
+        else:
+            self.log_box.configure(state="normal")
+            if replace:
+                self.log_box.delete("1.0", "end")
+                self.log_box.insert("end", safe, tag)
+            else:
+                now = time.strftime("%H:%M:%S")
+                self.log_box.insert("end", f"[{now}] {safe}\n", tag)
+            self.log_box.see("end")
+            self.log_box.configure(state="disabled")
+            self.root.update_idletasks()
 
     def close_app(self) -> None:
         self.app_closed = True
@@ -6093,34 +6656,59 @@ class InstallerApp:
         for handle in list(getattr(self, "after_handles", set())):
             try:
                 self.root.after_cancel(handle)
-            except tk.TclError:
+            except (tk.TclError, AttributeError):
                 pass
         self.after_handles.clear()
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except (tk.TclError, AttributeError):
+            pass
+        if getattr(self, "webview_window", None):
+            try:
+                self.webview_window.destroy()
+            except Exception:
+                pass
 
     def run_on_ui(self, callback) -> None:
         if self.app_closed:
             return
-        try:
-            self.root.after(0, callback)
-        except RuntimeError:
-            self.app_closed = True
+        if getattr(self, 'webview_mode', False):
+            try:
+                callback()
+            except Exception as e:
+                self.log(f"Error in run_on_ui: {e}")
+        else:
+            try:
+                self.root.after(0, callback)
+            except RuntimeError:
+                self.app_closed = True
 
     def run_later(self, delay_ms: int, callback) -> None:
         if self.app_closed:
             return
+        if getattr(self, 'webview_mode', False):
+            def wrapped() -> None:
+                if self.app_closed:
+                    return
+                try:
+                    callback()
+                except Exception as e:
+                    self.log(f"Error in run_later callback: {e}")
+            t = threading.Timer(delay_ms / 1000.0, wrapped)
+            t.daemon = True
+            t.start()
+        else:
+            def wrapped() -> None:
+                if self.app_closed:
+                    return
+                self.after_handles.discard(handle)
+                callback()
 
-        def wrapped() -> None:
-            if self.app_closed:
-                return
-            self.after_handles.discard(handle)
-            callback()
-
-        try:
-            handle = self.root.after(delay_ms, wrapped)
-            self.after_handles.add(handle)
-        except RuntimeError:
-            self.app_closed = True
+            try:
+                handle = self.root.after(delay_ms, wrapped)
+                self.after_handles.add(handle)
+            except RuntimeError:
+                self.app_closed = True
 
     def log_from_worker(self, message: str) -> None:
         self.run_on_ui(lambda: self.log(sanitize_worker_message(message)))
@@ -7312,10 +7900,50 @@ def main() -> int:
         self_test()
         return 0
     enable_windows_dpi_awareness()
-    root = tk.Tk()
-    InstallerApp(root)
-    root.mainloop()
-    return 0
+
+    use_tkinter = "--tkinter" in sys.argv
+    webview_available = False
+    if not use_tkinter:
+        try:
+            import webview
+            webview_available = True
+        except ImportError:
+            pass
+
+    if webview_available:
+        try:
+            root = tk.Tk()
+            root.withdraw()
+
+            app = InstallerApp(root, webview_mode=True)
+
+            html_file = ui_path("index.html")
+            if not html_file.exists():
+                raise FileNotFoundError(f"index.html not found at {html_file}")
+
+            window = webview.create_window(
+                title=APP_NAME,
+                url=str(html_file.absolute()),
+                js_api=WebviewApi(app),
+                width=1400,
+                height=900,
+                min_size=(1180, 760),
+                resizable=True
+            )
+            app.webview_window = window
+
+            webview.start(debug=False)
+            app.close_app()
+            return 0
+        except Exception as e:
+            print(f"Failed to start PyWebview GUI, falling back to Tkinter: {e}")
+            use_tkinter = True
+
+    if use_tkinter:
+        root = tk.Tk()
+        InstallerApp(root, webview_mode=False)
+        root.mainloop()
+        return 0
 
 
 if __name__ == "__main__":
