@@ -187,8 +187,8 @@ RUNNING = "#b06000"
 SUCCESS = "#1a7f37"
 NEUTRAL_DOT = "#9a9aa0"
 INPUT_BG = "#ffffff"
-LOG_BG = "#ffffff"
-LOG_FG = "#3f3f46"
+LOG_BG = "#1d1d1f"
+LOG_FG = "#f5f5f7"
 SEGMENTED_BG = "#e3e3e6"
 SEGMENTED_ACTIVE = "#ffffff"
 APP_FRAME_BG = SURFACE_BG
@@ -3898,10 +3898,10 @@ class InstallerApp:
             activeforeground=fg,
             relief="flat",
             bd=0,
-            padx=14,
-            pady=9,
+            padx=12,
+            pady=6,
             cursor="hand2",
-            font=("Microsoft YaHei UI", 10, "bold"),
+            font=("Microsoft YaHei UI", 9, "bold"),
             highlightthickness=border_thickness,
             highlightbackground=BORDER,
         )
@@ -3951,9 +3951,9 @@ class InstallerApp:
         self.topbar_outer.configure(height=TOPBAR_HEIGHT)
         self.topbar = tk.Frame(self.topbar_outer, bg=APP_FRAME_BG, padx=16, pady=0, highlightthickness=0)
         self.topbar.pack(fill="both", expand=True)
-        self.topbar.grid_columnconfigure(0, minsize=260)
+        self.topbar.grid_columnconfigure(0, minsize=250)
         self.topbar.grid_columnconfigure(1, weight=1)
-        self.topbar.grid_columnconfigure(2, minsize=350)
+        self.topbar.grid_columnconfigure(2, minsize=340)
         self.topbar.grid_rowconfigure(0, weight=1)
         brand = tk.Frame(self.topbar, bg=APP_FRAME_BG)
         brand.grid(row=0, column=0, sticky="w")
@@ -4018,8 +4018,9 @@ class InstallerApp:
         self.user_label = self.topbar_account_label
 
     def _build_module_nav(self, parent: tk.Frame) -> None:
-        self.module_nav = tk.Frame(parent, bg=SEGMENTED_BG, padx=4, pady=4, highlightthickness=0)
-        self.module_nav.grid(row=0, column=1, sticky="ew", padx=(20, 20))
+        self.module_nav = tk.Frame(parent, bg=SEGMENTED_BG, padx=4, pady=4, width=560, height=36, highlightthickness=0)
+        self.module_nav.grid(row=0, column=1, sticky="", padx=(16, 16))
+        self.module_nav.grid_propagate(False)
         self.module_buttons: dict[str, tk.Frame] = {}
         self.module_button_labels: dict[str, tuple[tk.Label, tk.Label]] = {}
         for col, (module_id, title, subtitle) in enumerate(TOP_MODULES):
@@ -4028,7 +4029,7 @@ class InstallerApp:
                 self.module_nav,
                 bg=SEGMENTED_BG,
                 padx=10,
-                pady=4,
+                pady=5,
                 highlightthickness=0,
                 cursor="hand2",
             )
@@ -4042,7 +4043,7 @@ class InstallerApp:
                 font=("Microsoft YaHei UI", 8, "bold"),
                 cursor="hand2",
             )
-            title_label.pack(fill="x")
+            title_label.pack(fill="both", expand=True)
             subtitle_label = tk.Label(
                 item,
                 text=subtitle,
@@ -4052,7 +4053,6 @@ class InstallerApp:
                 font=("Microsoft YaHei UI", 7),
                 cursor="hand2",
             )
-            subtitle_label.pack(fill="x")
             for widget in (item, title_label, subtitle_label):
                 widget.bind("<Button-1>", lambda _event, value=module_id: self.switch_module(value))
             self.module_buttons[module_id] = item
@@ -4106,17 +4106,16 @@ class InstallerApp:
         for idx, title, subtitle in FLOW_STEPS:
             row = tk.Frame(body, bg=SIDEBAR_BG)
             row.pack(fill="x", pady=(0, 5))
-            dot = tk.Label(
+            dot = tk.Canvas(
                 row,
-                text=str(idx),
                 bg=WAIT_BG if "WAIT_BG" in globals() else LOCKED_BG,
-                fg=MUTED,
-                width=2,
-                height=1,
-                font=("Microsoft YaHei UI", 8, "bold"),
-                highlightthickness=1,
-                highlightbackground=LIGHT_BORDER,
+                width=24,
+                height=24,
+                highlightthickness=0,
+                bd=0,
             )
+            dot.create_oval(2, 2, 22, 22, fill=WAIT_BG, outline=WAIT_BORDER, tags=("circle",))
+            dot.create_text(12, 12, text=str(idx), fill=MUTED, font=("Microsoft YaHei UI", 8, "bold"), tags=("label",))
             dot.pack(side="left", padx=(0, 8), pady=(6, 0))
             btn = self._step_button(row, idx, title, subtitle)
             btn.pack(side="left", fill="x", expand=True)
@@ -4502,30 +4501,30 @@ class InstallerApp:
             ).pack(side="left", padx=(5, 0))
 
     def _build_execution_log(self) -> None:
-        self.log_shell = tk.Frame(self.app_frame, bg=CARD_BG, padx=16, pady=8, highlightthickness=1, highlightbackground=LIGHT_BORDER)
-        top = tk.Frame(self.log_shell, bg=CARD_BG)
+        self.log_shell = tk.Frame(self.app_frame, bg=LOG_BG, padx=16, pady=5, highlightthickness=1, highlightbackground="#2f2f32")
+        top = tk.Frame(self.log_shell, bg=LOG_BG)
         top.pack(fill="x")
-        tk.Label(top, text=">_  Execution Trace Log", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
-        tk.Label(top, text="● ACTIVE TRACE", bg=CARD_BG, fg=FAIL, font=("Microsoft YaHei UI", 7, "bold")).pack(side="left", padx=(10, 0))
-        tk.Label(top, textvariable=self.status, bg=CARD_BG, fg=SECONDARY, font=("Microsoft YaHei UI", 8)).pack(side="right")
+        tk.Label(top, text=">_  Execution Trace Log", bg=LOG_BG, fg="#ffffff", font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
+        tk.Label(top, text="● ACTIVE TRACE", bg=LOG_BG, fg="#ff4d4d", font=("Microsoft YaHei UI", 7, "bold")).pack(side="left", padx=(10, 0))
+        tk.Label(top, textvariable=self.status, bg=LOG_BG, fg="#b9c0cc", font=("Microsoft YaHei UI", 8)).pack(side="right")
         self.log_box = tk.Text(
             self.log_shell,
-            height=3,
+            height=1,
             bg=LOG_BG,
             fg=LOG_FG,
             insertbackground=LOG_FG,
             relief="flat",
             borderwidth=0,
             padx=10,
-            pady=5,
+            pady=3,
             wrap="word",
             font=("Cascadia Mono", 8),
         )
-        self.log_box.pack(fill="x", expand=False, pady=(6, 0))
-        self.log_box.tag_configure("success", foreground=SUCCESS)
-        self.log_box.tag_configure("running", foreground=RUNNING)
-        self.log_box.tag_configure("failed", foreground=FAIL)
-        self.log_box.tag_configure("muted", foreground=MUTED)
+        self.log_box.pack(fill="x", expand=False, pady=(3, 0))
+        self.log_box.tag_configure("success", foreground="#8fd19e")
+        self.log_box.tag_configure("running", foreground="#f2c66d")
+        self.log_box.tag_configure("failed", foreground="#ff8a80")
+        self.log_box.tag_configure("muted", foreground="#d8dee9")
         self.log_box.configure(state="disabled")
 
     def refresh_topbar(self) -> None:
@@ -4588,7 +4587,7 @@ class InstallerApp:
         if hasattr(self, "update_button") and not self.update_button.winfo_ismapped():
             self._show_topbar_action_widget(self.update_button)
         if hasattr(self, "module_nav") and not self.module_nav.winfo_ismapped():
-            self.module_nav.grid(row=0, column=1, sticky="ew", padx=(20, 20))
+            self.module_nav.grid(row=0, column=1, sticky="", padx=(16, 16))
         self._sync_surface_layouts()
 
     def _hide_managed_widget(self, widget: tk.Widget) -> None:
@@ -5216,24 +5215,25 @@ class InstallerApp:
         ).pack(anchor="w")
 
     def _build_buyer_purchase_panel(self, parent: tk.Frame) -> None:
-        panel = tk.Frame(parent, bg=INFO_BG, padx=12, pady=12, highlightthickness=1, highlightbackground=BORDER)
+        panel = tk.Frame(parent, bg=INFO_BG, padx=12, pady=9, highlightthickness=1, highlightbackground=BORDER)
         self.buyer_purchase_panel = panel
+        panel.pack(fill="x", pady=(0, 14))
         tk.Label(
             panel,
             text="买家自助购买与权益刷新",
             bg=INFO_BG,
             fg=PRIMARY_DARK,
-            font=("Microsoft YaHei UI", 11, "bold"),
+            font=("Microsoft YaHei UI", 10, "bold"),
         ).pack(anchor="w")
         tk.Label(
             panel,
-            text="登录后工具会显示服务端返回的可购买商品。价格、次数、有效期和设备数只以服务端为准，支付成功并刷新权益后再继续交付。",
+            text="显示服务端返回的可购买商品。价格、次数、有效期和设备数以服务端为准，支付成功并刷新权益后再继续交付。",
             bg=INFO_BG,
             fg=MUTED,
             wraplength=760,
             justify="left",
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", pady=(5, 8))
+            font=("Microsoft YaHei UI", 8),
+        ).pack(anchor="w", pady=(4, 7))
         buyer_product = tk.Frame(panel, bg=INFO_BG)
         buyer_product.pack(fill="x")
         buyer_product.grid_columnconfigure(0, weight=1)
@@ -5256,9 +5256,9 @@ class InstallerApp:
             anchor="w",
             font=("Microsoft YaHei UI", 9),
         )
-        self.buyer_product_summary_label.pack(fill="x", pady=(8, 0))
+        self.buyer_product_summary_label.pack(fill="x", pady=(6, 0))
         actions = tk.Frame(panel, bg=INFO_BG)
-        actions.pack(fill="x", pady=(10, 0))
+        actions.pack(fill="x", pady=(8, 0))
         self._button(actions, "创建订单", self.start_buyer_create_order, "primary").pack(side="left")
         self._button(actions, "查询支付", self.start_buyer_poll_payment, "secondary").pack(side="left", padx=(10, 0))
         self._button(actions, "刷新权益", self.start_buyer_refresh_entitlements, "secondary").pack(side="left", padx=(10, 0))
@@ -5274,7 +5274,7 @@ class InstallerApp:
             anchor="w",
             font=("Microsoft YaHei UI", 9),
         )
-        self.buyer_purchase_status_label.pack(fill="x", pady=(8, 0))
+        self.buyer_purchase_status_label.pack(fill="x", pady=(6, 0))
 
     def _build_agent_assist_panel(self, parent: tk.Frame) -> None:
         self.agent_assist_panel = tk.Frame(parent, bg=CARD_BG)
@@ -5343,7 +5343,7 @@ class InstallerApp:
 
         return tk.Button(
             parent,
-            text=f"{idx}. {title}\n未开始",
+            text=f"{title}\n未开始",
             command=activate,
             anchor="w",
             justify="left",
@@ -5354,7 +5354,7 @@ class InstallerApp:
             relief="flat",
             bd=0,
             padx=8,
-            pady=6,
+            pady=7,
             cursor="hand2",
             font=("Microsoft YaHei UI", 8),
         )
@@ -5453,18 +5453,6 @@ class InstallerApp:
         )
         self._step_hint(frame, 2)
 
-        guide = self._notice_strip(
-            frame,
-            "创建前确认",
-            "新注册账号需要先充值或确保账户有余额；余额不足时，Key 即使创建成功也可能测试失败。",
-            "warning",
-            "创建 Key 详细步骤",
-            lambda: self._show_help("API Key 创建说明", key_creation_help_text()),
-            compact=True,
-        )
-        open_row = tk.Frame(guide, bg=WARNING_BG)
-        open_row.pack(fill="x", pady=(10, 0))
-        self._button(open_row, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL), "secondary").pack(side="left")
         self._build_buyer_purchase_panel(frame)
 
         key_row = tk.Frame(frame, bg=CARD_BG)
@@ -5480,8 +5468,10 @@ class InstallerApp:
 
         form = tk.Frame(frame, bg=CARD_BG)
         form.pack(fill="x", pady=(14, 0))
+        form.grid_columnconfigure(0, weight=1)
+        form.grid_columnconfigure(1, weight=1)
         base_frame = tk.Frame(form, bg=CARD_BG)
-        base_frame.pack(fill="x")
+        base_frame.grid(row=0, column=0, sticky="ew", padx=(0, 14))
         self._field_label(base_frame, "接口地址")
         self.base_url_entry = ttk.Entry(
             base_frame,
@@ -5491,7 +5481,7 @@ class InstallerApp:
         )
         self.base_url_entry.pack(fill="x", ipady=7, pady=(6, 0))
         model_frame = tk.Frame(form, bg=CARD_BG)
-        model_frame.pack(fill="x", pady=(12, 0))
+        model_frame.grid(row=0, column=1, sticky="ew")
         self._field_label(model_frame, "默认模型")
         ttk.Combobox(model_frame, textvariable=self.model, values=["gpt-5.5", "gpt-5.4", "gpt-4.1"]).pack(
             fill="x", ipady=5, pady=(6, 0)
@@ -5499,8 +5489,8 @@ class InstallerApp:
 
         options = tk.Frame(frame, bg=CARD_BG)
         options.pack(fill="x", pady=(18, 0))
-        ttk.Checkbutton(options, text="跳过接口测试", variable=self.skip_test).pack(side="left")
-        self._button(options, "保存并测试 Key", self.start_save_key, "primary").pack(side="left", padx=(16, 0))
+        ttk.Checkbutton(options, text="跳过接口测试", variable=self.skip_test).pack(side="right", padx=(0, 12))
+        self._button(options, "保存并测试 Key", self.start_save_key, "primary").pack(side="right", padx=(12, 0))
         self.step_next_buttons[2] = self._button(options, "下一步：检测系统", lambda: self.go_to_step(3), "secondary")
         self.step_next_buttons[2].pack(side="right")
 
@@ -6022,7 +6012,7 @@ class InstallerApp:
             else:
                 dot_color = NEUTRAL_DOT
             button.configure(
-                text=f"{idx}. {title}\n{status}",
+                text=f"{title}\n{status}",
                 bg=PRIMARY_LIGHT if active else SIDEBAR_BG,
                 fg=PRIMARY if active else MUTED if locked else INK,
                 activebackground=PRIMARY_LIGHT,
@@ -6031,11 +6021,19 @@ class InstallerApp:
             )
             dot = getattr(self, "step_status_dots", {}).get(idx)
             if dot:
-                dot.configure(
-                    fg="#ffffff" if active or dot_color == SUCCESS else dot_color,
-                    bg=PRIMARY if active else SUCCESS if dot_color == SUCCESS else CARD_BG,
-                    highlightbackground=PRIMARY if active else SUCCESS if dot_color == SUCCESS else BORDER,
-                )
+                fill = PRIMARY if active else SUCCESS if dot_color == SUCCESS else WAIT_BG
+                outline = PRIMARY if active else SUCCESS if dot_color == SUCCESS else WAIT_BORDER
+                text_color = "#ffffff" if active or dot_color == SUCCESS else MUTED if locked else SECONDARY
+                if isinstance(dot, tk.Canvas):
+                    dot.configure(bg=SIDEBAR_BG)
+                    dot.itemconfigure("circle", fill=fill, outline=outline)
+                    dot.itemconfigure("label", fill=text_color, text=str(idx))
+                else:
+                    dot.configure(
+                        fg=text_color,
+                        bg=fill,
+                        highlightbackground=outline,
+                    )
         if hasattr(self, "flow_status_label"):
             if getattr(self, "active_module", tk.StringVar(value=MODULE_AGENT)).get() == MODULE_AGENT:
                 self.flow_status_label.configure(text=self.current_flow_message())
