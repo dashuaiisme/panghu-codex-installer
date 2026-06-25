@@ -2,6 +2,9 @@
 
 最后更新：2026-06-19
 
+> 产品结构、界面规则、客户可见交付口径，以 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md` 为准。
+> 本手册负责技术维护、接口、构建、发布、脚本和限制说明。
+
 ## 1. 项目边界
 
 本项目是独立的客户侧桌面工具，正式名称为“胖虎AI多 Agent 一键部署工具”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上安装和配置 Codex、ClaudeCode、OpenClaw、Hermes。
@@ -47,10 +50,16 @@ https://aitokenapi.cc/deployer/latest.json
 
 | Agent | 当前策略 |
 | --- | --- |
-| Codex | 安装或检测官方客户端/CLI，并自动写入胖虎AI中转配置、中文规则、工作区说明 |
-| ClaudeCode | 只安装，不写 Key，不改账号或配置 |
-| OpenClaw | 只安装并生成中文说明，不强写未确认安全的配置 |
-| Hermes | 只安装并生成中文说明，不强写未确认安全的配置 |
+| Codex | 安装或检测官方客户端/CLI，并自动写入胖虎AI中转配置、中文规则、工作区说明；通过胖虎AI网关真实任务验证 |
+| ClaudeCode | 覆盖官方 CLI 和客户端入口；写入 `~/.claude/settings.json` 的 `env`，配置 `ANTHROPIC_BASE_URL=https://aitokenapi.cc`、`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 和模型，并用 `claude --model <模型> -p <中文验收提示>` 最小中文对话验收。注意 Claude Code 会自行拼接 `/v1/messages`，这里不能写成 `/v1`，否则会变成 `/v1/v1/messages`。当前只读检测到 CLI，但独立客户端形态未稳定确认 |
+| OpenClaw | 覆盖官方 CLI 和 Hub/客户端入口；安装优先使用官方 npm 包 `openclaw@latest`，写入 `~/.openclaw/openclaw.json` 的 `models.providers.panghuai` 自定义 OpenAI-compatible 提供商（`baseUrl=https://aitokenapi.cc/v1`、`api=openai-completions`、`apiKey=买家 Key`），并用 `openclaw infer model run --model panghuai/<模型> --prompt ... --json` 最小中文对话验收。未检测到 CLI、`openclaw config validate` 未通过或最小对话失败时，不能声明完整交付 |
+| Hermes | 覆盖官方 CLI 和客户端入口；按官方文档写入 Hermes Home 下的 `config.yaml` 与 `.env`，配置 `custom_providers.panghuai`、`model.provider=custom:panghuai`、`PANGHUAI_API_KEY`，并用 `hermes --provider custom:panghuai --model <模型> -z <中文验收提示>` 最小中文对话验收。当前只读检测到 CLI，但独立客户端形态未稳定确认 |
+
+当前状态说明：
+
+- 以上三项表示“代码中已有配置写入和验收链路”，不等于所有客户机器已经完整打通。
+- 完整交付必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准。
+- OpenClaw CLI 未检测到、`openclaw config validate` 未通过、Hermes `hermes config check` 未通过、客户端形态未确认或最小中文对话未返回有效内容时，不得扣次或包装成完整交付。测试 Key 返回 401 只能证明请求链路打到胖虎AI网关，不能证明客户交付已完成。
 
 风险插件拦截：
 
@@ -139,7 +148,7 @@ DEPLOYER_MANIFEST_URL = "https://aitokenapi.cc/api/deployer/manifest"
 POST https://aitokenapi.cc/api/user/login?turnstile=
 ```
 
-客户端使用 cookie jar 保存登录态。登录成功后，客户端保存必要的本地 profile 数据。
+客户端在本次运行内使用 cookie jar 和内存态完成登录、授权和部署。`profile.json` 只保存账号提示、API Key、模型和界面偏好，不保存可恢复登录态、部署 token、代理登录态或第三方账号密码。重启工具后必须重新登录胖虎AI账号。
 
 ### 部署激活
 
@@ -204,12 +213,13 @@ download_with_trusted_certs()
 
 ## 7. Codex 配置模式
 
-Codex 配置必须保留两条链路：
+Codex 配置必须保留三条链路：
 
-- 普通模式：默认路径，直接使用胖虎AI API Key。
-- 双态模式：额外路径，只给需要 ChatGPT 登录态共存的客户使用。
+- 普通模式：默认路径，Codex 只走胖虎AI中转站 API，消耗胖虎AI额度。
+- 双态模式：付费高级路径，保留客户自己的 ChatGPT 登录态，但模型请求仍走胖虎AI中转站 API，消耗胖虎AI额度。
+- 官方直登：免费切换路径，Codex 使用客户自己的 ChatGPT 账号登录态，模型请求走官方账号额度，不写入胖虎AI中转站 Key。
 
-普通模式无需登录 ChatGPT 账号，也可以正常使用 Codex。任何模式只要写入 Codex 配置，都必须提示客户完全退出 Codex 后重新打开。
+胖虎AI账号只用于登录本工具和胖虎AI网站，不是 Codex 登录账号，不能写成“胖虎AI账号登录 Codex”。普通模式无需登录 ChatGPT 账号，也可以正常使用 Codex。任何模式只要写入 Codex 配置，都必须提示客户完全退出 Codex 后重新打开。
 
 普通模式写入 `auth.json`：
 
@@ -219,10 +229,12 @@ Codex 配置必须保留两条链路：
 }
 ```
 
+普通模式 `config.toml` 使用 `model_provider = "panghuAI"` 和 `[model_providers.panghuAI]`，不写 `experimental_bearer_token`。
+
 双态模式规则：
 
-- 客户自己的 ChatGPT 账号负责登录态。
-- 胖虎AI API Key 负责模型调用消耗。
+- 客户自己的 ChatGPT 账号只负责登录态。
+- 胖虎AI API Key 负责模型调用消耗，消耗的是胖虎AI额度，不是 ChatGPT 账号额度。
 - 工具不代替客户登录 ChatGPT 账号。
 - 工具不保存 ChatGPT 账号密码。
 
@@ -253,11 +265,57 @@ requires_openai_auth = true
 - 写入 `auth_mode=chatgpt`。
 - 将 `OPENAI_API_KEY` 置为 `null`。
 
+官方直登规则：
+
+- 只用于客户明确要消耗自己 ChatGPT 账号额度的场景。
+- 不写 `experimental_bearer_token`。
+- 不保留 `[model_providers.panghuAI]`。
+- `config.toml` 应恢复官方 provider：
+
+```toml
+model_provider = "openai"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit =600000
+```
+
+- `auth.json` 必须保留客户自己的 ChatGPT 登录态：
+
+```json
+{
+  "auth_mode": "chatgpt",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "access_token": "客户本机已有 token",
+    "refresh_token": "客户本机已有 refresh token"
+  }
+}
+```
+
+- 如果本机没有 ChatGPT 登录态，工具不能伪造，也不能要求客户提供账号密码；只能提示客户完全退出并重开 Codex 后自行登录 ChatGPT 账号。
+- 官方直登不执行胖虎AI API Key 测试，不创建商业配置会话，不扣胖虎AI配置次数。
+
+模式切换机制：
+
+- 切换前必须保存当前 `~/.codex/config.toml`、`~/.codex/auth.json`、全局 `AGENTS.md` 和工作区 `AGENTS.md`。
+- 模式快照目录固定为 `~/.codex/panghu_modes/`。
+- 已识别模式写入对应目录：`direct_api/`、`dual_state/`、`official_chatgpt/`。
+- 未识别模式写入 `history/<timestamp>/`，作为人工恢复线索。
+- 切换到目标模式时，允许读取目标快照作为历史基准，但 API Key、`experimental_bearer_token` 等动态字段必须按当前输入重新生成，不能把旧快照里的旧 Key 带回主配置。
+- 官方直登和双态模式优先继承当前主 `auth.json` 中最新 ChatGPT 登录态；当前主文件没有登录态时，才从目标模式快照读取登录态。
+- 写入失败时必须使用原有 `backup_file()` / `restore_backup()` 回滚到本次写入前状态。
+
 客户操作提示必须保留：
 
 ```text
 配置写完后，必须完全退出 Codex，再重新打开 Codex，新的配置才会生效。
-双态模式需要客户重新打开后自行登录自己的 ChatGPT 账号。
+普通模式和双态模式都消耗胖虎AI中转站额度；官方直登消耗客户自己的 ChatGPT 账号额度。
+双态模式和官方直登都需要客户在 Codex 内使用自己的 ChatGPT 账号登录，本工具不接收、不保存 ChatGPT 账号密码。
 ```
 
 ## 8. 临时 OpenAI 官网访问窗口
@@ -315,7 +373,7 @@ Mac 包选择：
 - 手动点击“检查更新”也使用同一套检查逻辑。
 - 有新版时弹窗提示客户在线更新。
 - 客户确认后下载对应系统 zip，启动独立更新脚本，退出当前工具，解压覆盖当前程序目录，再重新打开新版。
-- 更新只覆盖工具安装目录；`profile.json`、客户登录状态、API Key、Codex 配置、备份和工作区资料都在用户目录，不能被更新流程删除。
+- 更新只覆盖工具安装目录；`profile.json`、API Key、Codex 配置、备份和工作区资料都在用户目录，不能被更新流程删除。`profile.json` 不能被当作登录态恢复来源，更新后仍应要求客户重新登录胖虎AI账号。
 
 维护重点：
 
@@ -391,7 +449,59 @@ Windows 构建要求：
 - 安装 `requirements-build.txt`。
 - PyInstaller 必须打包 `assets`。
 - PyInstaller 必须打包 `certifi` 数据。
+- 商业版生产构建必须设置 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM`，构建脚本会生成 `src/commercial_manifest_public_key.py`；该生成文件不得提交。
 - 构建后执行 exe 的 `--self-test`。
+
+商业 manifest 签名工具：
+
+```powershell
+python scripts\commercial_manifest_signer.py generate-keypair --private-key C:\secure\manifest-private.pem --public-key C:\secure\manifest-public.pem
+python scripts\commercial_manifest_signer.py sign --manifest manifest.json --private-key C:\secure\manifest-private.pem --key-id prod-2026-06 --output manifest.signed.json
+```
+
+私钥只能放在后端或离线签名环境，不能写入客户端源码、客户包、GitHub Release、下载页或 `latest.json`。生产构建只注入公钥。
+
+商业流程离线验收：
+
+```powershell
+python scripts\commercial_flow_acceptance.py --json
+```
+
+凡是修改订单、支付、权益、配置会话、扣次、撤销或返佣合同，都必须先跑这个脚本。该脚本只使用本地模拟账本，不访问生产服务器。
+
+商业版本地发布验收：
+
+```powershell
+python scripts\commercial_release_acceptance.py --json
+```
+
+凡是修改商业版客户端、商业 manifest、构建脚本或客户包前置逻辑，都必须先跑这个轻量脚本。它只读取本地源码和 `release/` 包，校验三端客户包是否存在、每个客户包是否早于当前源码或构建脚本、客户包 zip 内容、商业合同离线主链路、生成公钥模块、私钥材料和客户 App 运行面硬边界；不会执行 GitHub Release、下载页、`latest.json` 或生产服务器操作。
+
+发布前深度验收或 CI 才运行：
+
+```powershell
+python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json
+```
+
+`--with-exe-self-test` 会把 Windows 客户 zip 解压到临时目录并运行包内 exe 自检，容易触发 Windows Defender 和索引器扫描 PyInstaller 文件树；本地日常开发不要反复跑。`--deep-scan` 会额外扫描 `docs/`、`tests/` 和 `.github/` 里的发布边界提示；本地快速回归默认保持轻量扫描。
+
+报告里的 `release_artifacts` 会给 Windows、Mac AppleSilicon、Mac Intel 三个客户包分别输出 `freshness`：
+
+- `fresh`：客户包时间不早于当前源码和构建脚本，可作为当前本地构建结果继续验收。
+- `stale`：客户包早于当前源码或构建脚本，需要重包；Mac AppleSilicon 或 Mac Intel 出现 `stale` 时，不能把三端本地客户包视为已收口。
+- `missing`：本地缺少客户包，需要从构建产物、GitHub Release 或统一下载入口补齐后再验收。
+
+报告里的 `packaged_artifact_contents` 会打开每个本地 zip 做黑箱扫描。`internal_file_hits` 必须为空，避免客户包里带出内部维护、测试、源码或签名资料；正常第三方依赖文件不应被当作内部泄露。
+
+报告里的 `release_temp_files` 会检查 `release/` 下是否残留 `.tmp`、`*.tmp.zip`、`zip-validation-*` 等本地验证临时文件。若出现 `release 目录存在临时验证残留` 警告，只能删除已经确认属于验证残留的临时文件；不得删除 Windows、Mac 客户 zip，也不得删除 `release/` 下的软件本体目录。
+
+报告里的 `packaged_app_source_files_scanned` 是客户包商业源码扫描清单，只代表客户 App 运行面。该清单至少应包含主界面、商业核心和商业 API 模块，用于确认商业价格、返佣比例、次数、有效期、设备数、上架状态等参数没有被写死在客户侧源码里；这些值只能来自服务端商品、权益或 manifest。
+
+后端合约模拟器、商业流程验收脚本、商业发布验收脚本、签名脚本、维护手册和测试用例属于内部验收面，不属于客户 App 运行面。它们可以作为本地和 CI 验收依据，但不得进入客户包；如果 `packaged_artifact_contents.internal_file_hits` 命中这些文件，必须重包并排查打包规则。
+
+报告里的 `non_codex_full_config_delivery_found` 必须为 `false`。该扫描用于防止 ClaudeCode、OpenClaw、Hermes 等 Agent 在未完成配置写入、启动检测、最小对话验证前，被主程序静态包装成无条件完整付费交付。真实交付状态必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准；矩阵未通过时必须 fail 配置会话、不扣次。
+
+若报告为 `WARN`，需要人工确认警告项后再进入发版步骤；生产商业构建必须注入 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM`，否则商业清单保持拒绝状态是预期结果。
 
 ## 12. Mac 打包
 
@@ -423,7 +533,9 @@ Mac 构建要求：
 - AppleSilicon runner 产出 arm64 包。
 - Intel runner 产出 x86_64 包。
 - PyInstaller 必须使用 `--collect-data certifi`。
+- 商业版生产构建必须设置 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM`，构建脚本会生成 `src/commercial_manifest_public_key.py`；该生成文件不得提交。
 - 构建后执行 app 内二进制 `--self-test`。
+- workflow 里的 `Test final Mac zip` 必须在公证和可能的重新压包后执行；最终 Mac zip 必须先解压到临时目录，再运行解压出来的 `.app` 内二进制 `--self-test`。
 - 当前允许未 Apple Developer ID 公证的包公开下载，但页面必须提示 macOS 可能拦截。
 
 如果后续要减少 macOS 安装拦截，需要配置 GitHub secrets：
@@ -439,6 +551,16 @@ APPLE_TEAM_ID
 ```
 
 ## 13. GitHub Release 发布流程
+
+商业版 CI 硬要求：
+
+- GitHub Actions 必须配置 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM` secret。
+- Windows 和 Mac 构建步骤都必须注入该 secret，生成的客户包才会内置商业 manifest 验签公钥。
+- 构建脚本每次都覆盖生成 `src/commercial_manifest_public_key.py`；CI 和生产构建缺少该 secret 时必须快速失败，不能生成可上传客户包。本地未设置强制开关的测试包会写入空公钥并保持商业清单拒绝状态，不能沿用旧公钥文件。
+- workflow 必须运行 `commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，先在 CI 中确认商业主链路、客户包自检、公钥生成、私钥隔离和发布边界扫描结果。
+- CI 单平台验收必须使用 `--artifact-scope` 和 `--strict`；本地人工验收默认看三端包，CI 里 Windows、Mac AppleSilicon、Mac Intel 各自只验刚构建出的平台包，避免还未构建的其它平台包造成误判，同时让商业公钥缺失、包自检失败或商业链路失败直接中断 workflow。
+- Mac 公证后如果重新压 zip，必须在 `Prepare release asset` 前再次运行商业发布验收，确保最终上传的 zip 仍通过内容扫描、freshness、公钥和硬边界检查。
+- Mac 的 `Test final Mac zip` 必须在最终商业发布验收之前执行，确认最终 Mac zip 必须先解压到临时目录，且解压出来的 `.app` 内二进制 `--self-test` 通过后，才能改名为公开 Release asset。
 
 推荐流程：
 
