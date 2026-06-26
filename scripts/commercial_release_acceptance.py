@@ -42,6 +42,14 @@ def customer_app_name() -> str:
     return APP_NAME
 
 
+def legacy_release_dir_name() -> str:
+    try:
+        from panghu_codex_installer import LEGACY_RELEASE_DIR_NAME
+    except Exception:
+        return ""
+    return str(LEGACY_RELEASE_DIR_NAME or "")
+
+
 WINDOWS_RELEASE_ARTIFACT = f"{customer_app_name()}-Windows.zip"
 MAC_APPLE_SILICON_RELEASE_ARTIFACT = f"{customer_app_name()}-Mac-AppleSilicon.zip"
 MAC_INTEL_RELEASE_ARTIFACT = f"{customer_app_name()}-Mac-Intel.zip"
@@ -177,7 +185,8 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
     report = {}
     source_baseline = _source_baseline_mtime()
     for artifact_name in artifact_names:
-        path = ROOT / "release" / artifact_name
+        path, resolved_from, resolved_name = resolve_release_artifact_path(artifact_name)
+        canonical_path = ROOT / "release" / artifact_name
         exists = path.exists()
         mtime = path.stat().st_mtime if exists else None
         freshness = "missing"
@@ -185,6 +194,10 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
             freshness = "fresh" if mtime is not None and mtime >= source_baseline else "stale"
         report[artifact_name] = {
             "exists": exists,
+            "canonical_exists": canonical_path.exists(),
+            "resolved_from": resolved_from,
+            "resolved_name": resolved_name,
+            "resolved_path": path.relative_to(ROOT).as_posix() if exists else "",
             "size": path.stat().st_size if exists else 0,
             "sha256": _sha256(path) if exists else "",
             "last_write_time": mtime,
@@ -192,6 +205,29 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
             "source_baseline_time": source_baseline,
         }
     return report
+
+
+def release_artifact_aliases(artifact_name: str) -> list[str]:
+    aliases = [artifact_name]
+    legacy_name = legacy_release_dir_name()
+    if not legacy_name:
+        return aliases
+    if artifact_name == WINDOWS_RELEASE_ARTIFACT:
+        aliases.append(f"{legacy_name}-Windows.zip")
+    elif artifact_name == MAC_APPLE_SILICON_RELEASE_ARTIFACT:
+        aliases.append(f"{legacy_name}-Mac-AppleSilicon.zip")
+        aliases.append(f"{legacy_name}-Mac.zip")
+    elif artifact_name == MAC_INTEL_RELEASE_ARTIFACT:
+        aliases.append(f"{legacy_name}-Mac-Intel.zip")
+    return aliases
+
+
+def resolve_release_artifact_path(artifact_name: str) -> tuple[Path, str, str]:
+    for index, candidate_name in enumerate(release_artifact_aliases(artifact_name)):
+        candidate_path = ROOT / "release" / candidate_name
+        if candidate_path.exists():
+            return candidate_path, "canonical" if index == 0 else "legacy", candidate_name
+    return ROOT / "release" / artifact_name, "missing", artifact_name
 
 
 def _is_packaged_internal_file(name: str) -> bool:
@@ -236,7 +272,12 @@ def inspect_packaged_zip_contents(path: Path) -> dict:
 def build_packaged_artifact_content_report(artifact_scope: str = "all") -> dict:
     report = {}
     for artifact_name in ARTIFACT_SCOPES[artifact_scope]:
-        report[artifact_name] = inspect_packaged_zip_contents(ROOT / "release" / artifact_name)
+        path, resolved_from, resolved_name = resolve_release_artifact_path(artifact_name)
+        artifact_report = inspect_packaged_zip_contents(path)
+        artifact_report["resolved_from"] = resolved_from
+        artifact_report["resolved_name"] = resolved_name
+        artifact_report["resolved_path"] = path.relative_to(ROOT).as_posix() if path.exists() else ""
+        report[artifact_name] = artifact_report
     return report
 
 
@@ -478,6 +519,9 @@ def build_report(include_exe_self_test: bool, artifact_scope: str = "all", deep_
     packaged_content_report = build_packaged_artifact_content_report(artifact_scope=artifact_scope)
     release_temp_files = build_release_temp_file_report()
     missing_artifacts = [name for name, info in artifact_report.items() if not info["exists"]]
+    canonical_missing_artifacts = [
+        name for name, info in artifact_report.items() if info["exists"] and not info.get("canonical_exists")
+    ]
     commercial_flow = run_acceptance()
     generated_public_key = build_generated_public_key_module_report()
     hard_boundaries = build_hard_boundary_report(deep_scan=deep_scan)
@@ -498,6 +542,8 @@ def build_report(include_exe_self_test: bool, artifact_scope: str = "all", deep_
     review_notes = []
     if missing_artifacts:
         warnings.append("缺少本地客户包：" + ", ".join(missing_artifacts))
+    if canonical_missing_artifacts:
+        warnings.append("当前仅找到旧名历史客户包，新产品名客户包需要重包：" + ", ".join(canonical_missing_artifacts))
     stale_artifacts = [name for name, info in artifact_report.items() if info.get("freshness") == "stale"]
     if stale_artifacts:
         warnings.append("以下客户包早于当前源码或构建脚本，需要重包：" + ", ".join(stale_artifacts))

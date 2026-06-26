@@ -837,3 +837,23 @@ def parse_payment_status_data(data: dict[str, Any]) -> dict[str, Any]:
         "ready_for_delivery": ready_for_delivery,
         "requires_manual_review": payment_status in successful_statuses and not ready_for_delivery,
     }
+
+
+def parse_mobile_control_order_status_data(data: dict[str, Any]) -> dict[str, Any]:
+    order_id = str(data.get("order_id") or data.get("service_order_id") or data.get("id") or "").strip()
+    status = str(data.get("status") or data.get("order_status") or "").strip().lower()
+    charge_status = str(data.get("charge_status") or data.get("payment_status") or "").strip().lower()
+    if not order_id:
+        raise ValueError("服务端手机控制Agent订单状态缺少订单 ID。")
+    paid_statuses = {"paid", "success", "completed"}
+    manual_review_statuses = {"manual_review", "manual-review", "presale_review", "staff_review"}
+    session_allowed = charge_status in paid_statuses or charge_status in manual_review_statuses
+    return {
+        "order_id": order_id,
+        "status": status,
+        "charge_status": charge_status,
+        "payment_id": str(data.get("payment_id") or "").strip(),
+        "session_allowed": session_allowed,
+        "requires_payment": not session_allowed,
+        "requires_manual_review": charge_status in manual_review_statuses,
+    }

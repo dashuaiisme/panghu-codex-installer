@@ -200,7 +200,7 @@ python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan
 请把下面这段作为新后端任务窗口的启动说明：
 
 ```text
-你是“胖虎AI多 Agent 客户交付工具”的新后端执行窗口。不要进入 goal 模式，不要调用 create_goal。
+你是“胖虎AI”的新后端执行窗口。不要进入 goal 模式，不要调用 create_goal。
 
 真实项目主目录：
 C:\Users\Administrator\Documents\codex\panghu-codex-installer
@@ -241,4 +241,3 @@ python -m unittest discover -s tests -p "test_*.py"
 - 运行了哪些验证命令和结果
 - 给主控的合并注意事项
 ```
-

@@ -47,6 +47,7 @@ from commercial_api import (
     execute_commercial_api_request,
     mask_business_identifier,
     parse_config_session_reserve_data,
+    parse_mobile_control_order_status_data,
     parse_payment_status_data,
     sanitize_commercial_text,
     stable_config_reserve_idempotency_key,
@@ -100,7 +101,7 @@ except Exception:  # pragma: no cover - optional dependency for embedded custome
     webview = None
 
 
-APP_NAME = "胖虎AI多Agent一键部署工具"
+APP_NAME = "胖虎AI"
 APP_VERSION = "1.0.15"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
@@ -128,20 +129,35 @@ def load_commercial_manifest_public_key() -> str:
 COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM = load_commercial_manifest_public_key()
 GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
 PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
-WINDOWS_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
+WINDOWS_RELEASE_DIR_NAME = "胖虎AI"
+LEGACY_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
 WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
-WINDOWS_RELEASE_ASSET_ALIASES = (WINDOWS_RELEASE_ASSET_NAME, "AI.Agent.-Windows.zip")
+WINDOWS_RELEASE_ASSET_ALIASES = (
+    WINDOWS_RELEASE_ASSET_NAME,
+    f"{LEGACY_RELEASE_DIR_NAME}-Windows.zip",
+    "AI.Agent.-Windows.zip",
+)
 MAC_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac.zip"
-MAC_RELEASE_ASSET_ALIASES = (MAC_RELEASE_ASSET_NAME, "AI.Agent.-Mac.zip")
+MAC_RELEASE_ASSET_ALIASES = (
+    MAC_RELEASE_ASSET_NAME,
+    f"{LEGACY_RELEASE_DIR_NAME}-Mac.zip",
+    "AI.Agent.-Mac.zip",
+)
 MAC_APPLE_SILICON_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip"
 MAC_INTEL_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-Intel.zip"
 MAC_APPLE_SILICON_RELEASE_ASSET_ALIASES = (
     MAC_APPLE_SILICON_RELEASE_ASSET_NAME,
+    f"{LEGACY_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip",
     "AI.Agent.-Mac-AppleSilicon.zip",
     MAC_RELEASE_ASSET_NAME,
+    f"{LEGACY_RELEASE_DIR_NAME}-Mac.zip",
     "AI.Agent.-Mac.zip",
 )
-MAC_INTEL_RELEASE_ASSET_ALIASES = (MAC_INTEL_RELEASE_ASSET_NAME, "AI.Agent.-Mac-Intel.zip")
+MAC_INTEL_RELEASE_ASSET_ALIASES = (
+    MAC_INTEL_RELEASE_ASSET_NAME,
+    f"{LEGACY_RELEASE_DIR_NAME}-Mac-Intel.zip",
+    "AI.Agent.-Mac-Intel.zip",
+)
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
 DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
@@ -911,7 +927,7 @@ def _write_login_account_store(state: dict) -> None:
         username = _normalize_login_username(item.get("username") or "")
         if not username:
             continue
-        protected_password = str(item.get("protected_password") or item.get("password") or "")
+        protected_password = str(item.get("protected_password") or "")
         remember_password = bool(item.get("remember_password") and protected_password)
         auto_login = bool(item.get("auto_login") and remember_password)
         stored = {
@@ -952,9 +968,15 @@ def load_login_account_state() -> dict:
         if not username or username in seen:
             continue
         seen.add(username)
-        protected_password = str(raw.get("password") or raw.get("protected_password") or "")
+        protected_password = str(raw.get("protected_password") or "")
         password = unprotect_local_secret(protected_password) if protected_password else ""
-        remember_password = bool(raw.get("remember_password") and protected_password)
+        if not password:
+            legacy_protected_password = str(raw.get("password") or "")
+            legacy_password = unprotect_local_secret(legacy_protected_password) if legacy_protected_password else ""
+            if legacy_password:
+                protected_password = legacy_protected_password
+                password = legacy_password
+        remember_password = bool(raw.get("remember_password") and protected_password and password)
         accounts.append(
             {
                 "username": username,
@@ -1041,6 +1063,22 @@ def save_login_account_state(
     ]
     accounts.insert(0, account)
     _write_login_account_store({"last_username": normalized, "accounts": accounts})
+
+
+def disable_login_account_auto_login(username: str) -> dict:
+    normalized = _normalize_login_username(username)
+    if not normalized:
+        return load_login_account_public_state()
+    state = load_login_account_state()
+    changed = False
+    for account in state.get("accounts", []):
+        if _normalize_login_username(account.get("username") or "") == normalized:
+            account["auto_login"] = False
+            changed = True
+            break
+    if changed:
+        _write_login_account_store(state)
+    return load_login_account_public_state()
 
 
 def remove_login_account_state(username: str) -> dict:
@@ -4537,11 +4575,25 @@ class WebviewApi:
         auto_login = target.get("auto_login", False)
         return self.login(target.get("username", username), password, remember_password, auto_login)
 
+    def select_login_account(self, username):
+        account = login_account_public_entry(username)
+        self.app.login_username.set(account.get("username", ""))
+        self.app.login_password.set("")
+        self.app.sync_webview_state()
+        return {"success": True, "account": account}
+
     def remove_login_account(self, username):
         try:
             state = remove_login_account_state(username)
             if _normalize_login_username(self.app.login_username.get()) == _normalize_login_username(username):
                 self.app.login_password.set("")
+                clear_buyer_session_state(self.app.cookie_jar)
+                self.app.cookie_jar = load_buyer_cookie_jar()
+                self.app.logged_in_user = None
+                self.app.deployer_auth = None
+                self.app.commercial_contexts = None
+                self.app.step.set(1)
+                self.app.status.set("客服提示：请先登录胖虎AI账号")
             self.app.sync_webview_state()
             return {"success": True, "state": state}
         except Exception as e:
@@ -4550,12 +4602,7 @@ class WebviewApi:
     def logout(self):
         last_user = self.app.login_username.get().strip()
         if last_user:
-            state = load_login_account_state()
-            for acc in state.get("accounts", []):
-                if _normalize_login_username(acc.get("username") or "") == _normalize_login_username(last_user):
-                    acc["auto_login"] = False
-                    save_login_account_state(acc["username"], acc.get("password", ""), acc.get("remember_password", False), False, acc.get("user_id", ""))
-                    break
+            disable_login_account_auto_login(last_user)
         clear_buyer_session_state(self.app.cookie_jar)
         self.app.cookie_jar = load_buyer_cookie_jar()
         self.app.logged_in_user = None
@@ -4906,6 +4953,7 @@ class InstallerApp:
         self.agent_downstreams_live_data: dict = {}
         self.agent_commissions_live_data: dict[str, dict] = {}
         self.mobile_control_offering_data: dict = {}
+        self.mobile_control_order_statuses: dict[str, dict] = {}
         self.commercial_api = CommercialApiContract(DEFAULT_BASE_URL)
         self.last_diagnostic_code = ""
         self.saved_key_ok = False
@@ -5460,7 +5508,7 @@ class InstallerApp:
         title_block.pack(side="left")
         tk.Label(
             title_block,
-            text="多 Agent 客户交付工具",
+            text="胖虎AI",
             bg=APP_FRAME_BG,
             fg=INK,
             font=("Microsoft YaHei UI", 10, "bold"),
@@ -6562,6 +6610,8 @@ class InstallerApp:
             order_id = str(data.get("order_id") or data.get("service_order_id") or data.get("id") or "").strip()
             if not order_id:
                 raise ValueError("创建手机控制Agent订单返回缺少订单 ID。")
+            order_status = parse_mobile_control_order_status_data(data)
+            self.mobile_control_order_statuses[order_id] = order_status
             self.run_on_ui(lambda: self.mobile_order_id.set(order_id))
             self.set_status_from_worker("状态：手机控制Agent订单已创建")
             self.show_info_from_worker("手机控制Agent订单已创建", build_customer_payment_instruction(data))
@@ -6587,7 +6637,21 @@ class InstallerApp:
             order_id=order_id,
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_generic_worker, args=("订单状态已刷新", request), daemon=True).start()
+        threading.Thread(target=self._mobile_control_get_order_worker, args=(request,), daemon=True).start()
+
+    def _mobile_control_get_order_worker(self, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            order_status = parse_mobile_control_order_status_data(data)
+            self.mobile_control_order_statuses[order_status["order_id"]] = order_status
+            self.set_status_from_worker("状态：手机控制Agent订单状态已刷新")
+            self.run_on_ui(self.refresh_steps)
+        except Exception as exc:
+            self.log_from_worker(f"手机控制Agent订单查询失败：{exc}")
+            self.show_error_from_worker("手机控制Agent订单查询失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def start_mobile_control_create_session(self) -> None:
         if self.worker_running:
@@ -6597,6 +6661,13 @@ class InstallerApp:
         order_id = self.mobile_order_id.get().strip()
         if not order_id:
             messagebox.showwarning("缺少订单", "请先创建或填写手机控制Agent订单 ID。")
+            return
+        order_status = self.mobile_control_order_statuses.get(order_id)
+        if not order_status or not order_status.get("session_allowed"):
+            messagebox.showwarning(
+                "订单未确认",
+                "请先查询手机控制Agent订单状态；订单必须已支付，或服务端明确进入人工预售/人工复核后，才能创建配置会话。",
+            )
             return
         request = commercial_api_request_with_auth(
             "mobile_control_session_create",
@@ -6927,7 +6998,7 @@ class InstallerApp:
         title_block.pack(side="left")
         tk.Label(
             title_block,
-            text="多 Agent 客户交付工具",
+            text="胖虎AI",
             bg=CARD_BG,
             fg=INK,
             font=("Microsoft YaHei UI", 15, "bold"),

@@ -178,6 +178,7 @@ class ContractServiceOrder:
     agent_source: str
     status: str = "created"
     charge_status: str = "unpaid"
+    payment_id: str = ""
     delivered_at: str = ""
     cancelled_at: str = ""
 
@@ -800,6 +801,23 @@ class CommercialLedgerContract:
         self.service_order_idempotency_payloads[idempotency_key] = payload
         return order
 
+    def mark_mobile_control_order_paid(self, order_id: str, payment_id: str) -> ContractServiceOrder:
+        order = self.service_orders[order_id]
+        if order.service_type != MOBILE_CONTROL_SERVICE_TYPE:
+            raise ValueError("订单不是手机控制Agent服务。")
+        if not str(payment_id or "").strip():
+            raise ValueError("手机控制Agent支付 ID 为空。")
+        if order.status in {"delivered", "failed", "cancelled"}:
+            raise ValueError("手机控制Agent订单状态不可支付。")
+        if order.charge_status == "paid":
+            if order.payment_id != payment_id:
+                raise ValueError("手机控制Agent订单支付 ID 不一致。")
+            return order
+        order.charge_status = "paid"
+        order.payment_id = payment_id
+        order.status = "paid"
+        return order
+
     def create_mobile_control_session(
         self,
         idempotency_key: str,
@@ -831,6 +849,8 @@ class CommercialLedgerContract:
             raise ValueError("订单不是手机控制Agent服务。")
         if order.status in {"delivered", "failed", "cancelled"}:
             raise ValueError("手机控制Agent订单状态不可创建会话。")
+        if order.charge_status not in {"paid", "manual_review"}:
+            raise ValueError("手机控制Agent订单未支付或未进入人工预售审核，不能创建配置会话。")
         if order.buyer_user_id != buyer_user_id or order.agent_id != agent_id or order.channel != channel:
             raise ValueError("手机控制Agent会话与订单不一致。")
         if order.agent_source != agent_source:

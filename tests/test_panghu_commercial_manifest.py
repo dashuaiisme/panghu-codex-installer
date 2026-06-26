@@ -1003,6 +1003,157 @@ class PanghuCommercialManifestTests(unittest.TestCase):
 
         self.assertEqual(app.buyer_product_id.value, "prod-codex")
 
+    def test_mobile_control_get_order_caches_payment_state_for_session_guard(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value) -> None:
+                self.value = value
+
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=None):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                self.target(*self.args)
+
+        app = InstallerApp.__new__(InstallerApp)
+        app.worker_running = False
+        app.commercial_contexts = installer_module.create_buyer_contexts(
+            UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
+        )
+        app.deployer_auth = {"token": "deploy-token"}
+        app.mobile_order_id = FakeVar("svc-ord-1")
+        app.mobile_control_order_statuses = {}
+        app.set_busy = lambda _busy: None
+        app.log_from_worker = lambda _message: None
+        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
+        app.run_on_ui = lambda callback: callback()
+        app.show_error_from_worker = lambda _title, _message: None
+
+        original_request = installer_module.commercial_api_request_with_auth
+        original_execute = installer_module.execute_commercial_api_with_trusted_certs
+        original_thread = installer_module.threading.Thread
+        try:
+            installer_module.commercial_api_request_with_auth = lambda *_args, **_kwargs: object()
+            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
+                {"order_id": "svc-ord-1", "status": "paid", "charge_status": "paid", "payment_id": "pay-1"},
+                "订单已支付",
+            )
+            installer_module.threading.Thread = ImmediateThread
+
+            app.start_mobile_control_get_order()
+        finally:
+            installer_module.commercial_api_request_with_auth = original_request
+            installer_module.execute_commercial_api_with_trusted_certs = original_execute
+            installer_module.threading.Thread = original_thread
+
+        self.assertTrue(app.mobile_control_order_statuses["svc-ord-1"]["session_allowed"])
+        self.assertEqual(app.mobile_control_order_statuses["svc-ord-1"]["payment_id"], "pay-1")
+        self.assertEqual(app.last_status, "状态：手机控制Agent订单状态已刷新")
+
+    def test_mobile_control_create_session_blocks_until_order_payment_or_manual_review_confirmed(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        app = InstallerApp.__new__(InstallerApp)
+        app.worker_running = False
+        app.commercial_contexts = installer_module.create_buyer_contexts(
+            UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
+        )
+        app.deployer_auth = {"token": "deploy-token"}
+        app.mobile_order_id = FakeVar("svc-ord-1")
+        app.mobile_control_order_statuses = {"svc-ord-1": {"session_allowed": False}}
+        warnings = []
+
+        original_warning = installer_module.messagebox.showwarning
+        try:
+            installer_module.messagebox.showwarning = lambda title, message: warnings.append((title, message))
+            app.start_mobile_control_create_session()
+        finally:
+            installer_module.messagebox.showwarning = original_warning
+
+        self.assertEqual(warnings[0][0], "订单未确认")
+        self.assertIn("已支付", warnings[0][1])
+
+    def test_mobile_control_create_session_allows_paid_order_status(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value) -> None:
+                self.value = value
+
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=None):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                self.target(*self.args)
+
+        app = InstallerApp.__new__(InstallerApp)
+        app.worker_running = False
+        app.commercial_contexts = installer_module.create_buyer_contexts(
+            UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
+        )
+        app.deployer_auth = {"token": "deploy-token"}
+        app.mobile_order_id = FakeVar("svc-ord-1")
+        app.mobile_session_id = FakeVar("")
+        app.mobile_agent_id = FakeVar("hermes")
+        app.mobile_channel = FakeVar("feishu")
+        app.mobile_agent_source = FakeVar("existing_local_agent")
+        app.mobile_platform_account_id = FakeVar("bot-account-1")
+        app.mobile_platform_chat_id = FakeVar("chat-1")
+        app.mobile_gateway_mode = FakeVar("official_bot")
+        app.mobile_control_order_statuses = {"svc-ord-1": {"session_allowed": True}}
+        app.set_busy = lambda _busy: None
+        app.log_from_worker = lambda _message: None
+        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
+        app.run_on_ui = lambda callback: callback()
+        app.show_error_from_worker = lambda _title, _message: None
+        app.refresh_steps = lambda: None
+        captured = {}
+
+        original_request = installer_module.commercial_api_request_with_auth
+        original_execute = installer_module.execute_commercial_api_with_trusted_certs
+        original_thread = installer_module.threading.Thread
+        try:
+            def fake_request(action, contexts, **kwargs):
+                captured["action"] = action
+                captured["kwargs"] = kwargs
+                return object()
+
+            installer_module.commercial_api_request_with_auth = fake_request
+            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
+                {"session_id": "mca-1"},
+                "会话已创建",
+            )
+            installer_module.threading.Thread = ImmediateThread
+
+            app.start_mobile_control_create_session()
+        finally:
+            installer_module.commercial_api_request_with_auth = original_request
+            installer_module.execute_commercial_api_with_trusted_certs = original_execute
+            installer_module.threading.Thread = original_thread
+
+        self.assertEqual(captured["action"], "mobile_control_session_create")
+        self.assertEqual(captured["kwargs"]["order_id"], "svc-ord-1")
+        self.assertEqual(app.mobile_session_id.get(), "mca-1")
+        self.assertEqual(app.last_status, "状态：手机控制Agent配置会话已创建")
+
     def test_buyer_purchase_status_shows_key_creation_gap_and_balance_hint_when_no_products(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
         app.commercial_products = []

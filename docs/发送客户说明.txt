@@ -1,16 +1,16 @@
-胖虎AI多 Agent 一键部署工具 - Windows / Mac 客户版
+胖虎AI - Windows / Mac 客户版
 
 发送给客户：
-1. 优先发送二维码图片：docs\多Agent一键配置工具下载二维码.png
+1. 优先发送二维码图片：docs\胖虎AI下载二维码.png
 2. 客户扫码进入下载页后，按自己的电脑系统选择 Windows 版、Mac Apple 芯片版或 Mac Intel 版。
 3. 如果平台不允许发链接，不要公开贴明文下载链接，直接发二维码图片。
 4. 如果客户扫码失败，再私下发送统一下载入口：https://aitokenapi.cc/deployer/download
-5. 如果需要手动转发文件，Windows 客户发送 胖虎AI多Agent一键部署工具-Windows.zip；Mac 客户先确认芯片类型，M1/M2/M3/M4 等 Apple 芯片发送 胖虎AI多Agent一键部署工具-Mac-AppleSilicon.zip，Intel Mac 发送 胖虎AI多Agent一键部署工具-Mac-Intel.zip。
+5. 如果需要手动转发文件，Windows 客户发送 胖虎AI-Windows.zip；Mac 客户先确认芯片类型，M1/M2/M3/M4 等 Apple 芯片发送 胖虎AI-Mac-AppleSilicon.zip，Intel Mac 发送 胖虎AI-Mac-Intel.zip。
 
 客户使用：
 1. 解压 zip。
-2. Windows 打开 胖虎AI多Agent一键部署工具 文件夹，双击 胖虎AI多Agent一键部署工具.exe。
-3. Mac 双击 胖虎AI多Agent一键部署工具.app；当前 Mac 包未做 Apple Developer ID 公证。如果系统提示无法验证开发者、已损坏或无法打开，先确认客户下载的是对应芯片版本，再按 macOS 安全提示自行处理。
+2. Windows 打开 胖虎AI 文件夹，双击 胖虎AI.exe。
+3. Mac 双击 胖虎AI.app；当前 Mac 包未做 Apple Developer ID 公证。如果系统提示无法验证开发者、已损坏或无法打开，先确认客户下载的是对应芯片版本，再按 macOS 安全提示自行处理。
 4. 先用胖虎AI注册账号登录软件；没有账号就点击“去胖虎AI注册账号”。该登录模式无需 ChatGPT 账号。
 5. 登录后软件会自动向胖虎AI服务端申请部署授权，未授权账号不能继续部署。
 6. 登录后可在“胖虎AI网站”模块内打开控制台、创建 API Key、充值购买、推广返佣和代理中心等服务端页面；内置浏览器会优先复用本次工具会话。如果当前环境无法加载内置浏览器或无法桥接会话，软件会明确阻断并提示内置浏览器未完成/不可用，不会自动打开系统浏览器，且不能算完成内嵌网页闭环。

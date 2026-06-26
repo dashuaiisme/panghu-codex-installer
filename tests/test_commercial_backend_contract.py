@@ -669,6 +669,7 @@ class CommercialBackendContractTests(unittest.TestCase):
             "feishu",
             "current_delivery",
         )
+        ledger.mark_mobile_control_order_paid(mobile_order.order_id, "mca-pay-1")
         mobile_session = ledger.create_mobile_control_session(
             "mca-session-1",
             mobile_order.order_id,
@@ -696,7 +697,7 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertNotEqual(mobile_order.order_id, ledger.config_sessions[base_session_id].config_session_id)
         self.assertEqual(ledger.config_sessions[base_session_id].status, "completed")
         self.assertEqual(ledger.service_orders[mobile_order.order_id].status, "delivered")
-        self.assertEqual(ledger.service_orders[mobile_order.order_id].charge_status, "chargeable")
+        self.assertEqual(ledger.service_orders[mobile_order.order_id].charge_status, "paid")
         self.assertEqual(acceptance.order_id, mobile_order.order_id)
         self.assertEqual(len(ledger.service_ledger_events), 1)
         ledger_event = next(iter(ledger.service_ledger_events.values()))
@@ -718,6 +719,7 @@ class CommercialBackendContractTests(unittest.TestCase):
             "feishu",
             "current_delivery",
         )
+        ledger.mark_mobile_control_order_paid(mobile_order.order_id, "mca-pay-1")
         mobile_session = ledger.create_mobile_control_session(
             "mca-session-1",
             mobile_order.order_id,
@@ -735,15 +737,58 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertEqual(ledger.config_sessions[base_session_id].status, "completed")
         self.assertTrue(ledger.config_sessions[base_session_id].deducted)
         self.assertEqual(ledger.service_orders[mobile_order.order_id].status, "failed")
-        self.assertEqual(ledger.service_orders[mobile_order.order_id].charge_status, "unpaid")
+        self.assertEqual(ledger.service_orders[mobile_order.order_id].charge_status, "paid")
         self.assertEqual(len(ledger.mobile_control_acceptance_records), 0)
         self.assertEqual(len(ledger.service_ledger_events), 0)
+
+    def test_mobile_control_session_requires_paid_or_manual_review_order(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_mobile_control_order(
+            "mca-order-1",
+            "svc-mobile-control",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "current_delivery",
+        )
+
+        with self.assertRaisesRegex(ValueError, "未支付"):
+            ledger.create_mobile_control_session(
+                "mca-session-1",
+                order.order_id,
+                "buyer-1",
+                "hermes",
+                "feishu",
+                "bot-account-1",
+                "chat-1",
+                "official_bot",
+                "current_delivery",
+            )
+
+        paid = ledger.mark_mobile_control_order_paid(order.order_id, "mca-pay-1")
+        self.assertEqual(paid.charge_status, "paid")
+        session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+
+        self.assertEqual(session.order_id, order.order_id)
 
     def test_mobile_control_acceptance_requires_full_inbound_agent_outbound_evidence(self) -> None:
         ledger = CommercialLedgerContract()
         self._configure_mobile_control_product(ledger)
         self._complete_base_agent_delivery(ledger)
         order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "feishu", "current_delivery")
+        ledger.mark_mobile_control_order_paid(order.order_id, "mca-pay-1")
         session = ledger.create_mobile_control_session(
             "mca-session-1",
             order.order_id,
@@ -781,6 +826,7 @@ class CommercialBackendContractTests(unittest.TestCase):
         ledger.bind_referral("buyer-1", profile.invite_code)
         ledger.configure_commission_policy_rule("mobile_control_agent_delivered", "L1", depth=1, rate_bps=1000)
         order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "feishu", "current_delivery")
+        ledger.mark_mobile_control_order_paid(order.order_id, "mca-pay-1")
         session = ledger.create_mobile_control_session(
             "mca-session-1",
             order.order_id,
@@ -880,6 +926,7 @@ class CommercialBackendContractTests(unittest.TestCase):
         self._configure_mobile_control_product(ledger)
         self._complete_base_agent_delivery(ledger)
         order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "qq_bot", "current_delivery")
+        ledger.mark_mobile_control_order_paid(order.order_id, "mca-pay-1")
         session = ledger.create_mobile_control_session(
             "mca-session-1",
             order.order_id,
@@ -934,6 +981,7 @@ class CommercialBackendContractTests(unittest.TestCase):
         self._configure_mobile_control_product(ledger)
         self._complete_base_agent_delivery(ledger)
         order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "feishu", "current_delivery")
+        ledger.mark_mobile_control_order_paid(order.order_id, "mca-pay-1")
         session = ledger.create_mobile_control_session(
             "mca-session-1",
             order.order_id,
@@ -964,7 +1012,7 @@ class CommercialBackendContractTests(unittest.TestCase):
 
         self.assertEqual(paused.status, "paused_external_dependency")
         self.assertEqual(ledger.service_orders[order.order_id].status, "delivered")
-        self.assertEqual(ledger.service_orders[order.order_id].charge_status, "chargeable")
+        self.assertEqual(ledger.service_orders[order.order_id].charge_status, "paid")
 
 
 if __name__ == "__main__":

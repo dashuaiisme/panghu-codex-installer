@@ -121,6 +121,278 @@ class InstallerBackendTests(unittest.TestCase):
         self.assertNotIn("second@example.com", saved_text)
         self.assertNotIn("second-pass", saved_text)
 
+    def test_login_account_store_drops_legacy_plaintext_password_field(self) -> None:
+        original_account_path = pci.login_account_store_path
+        original_protect = pci.protect_local_secret
+        original_unprotect = pci.unprotect_local_secret
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            store_path = temp_root / "login_accounts.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "last_username": "buyer@example.com",
+                        "accounts": [
+                            {
+                                "username": "buyer@example.com",
+                                "remember_password": True,
+                                "auto_login": True,
+                                "password": "plain-secret",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                pci.login_account_store_path = lambda: store_path  # type: ignore[assignment]
+                pci.protect_local_secret = lambda value: "enc:" + value[::-1]  # type: ignore[assignment]
+                pci.unprotect_local_secret = lambda value: value[4:][::-1] if value.startswith("enc:") else ""  # type: ignore[assignment]
+
+                state = pci.load_login_account_state()
+                pci.save_login_account_state("buyer@example.com", "", True, True)
+                saved_text = store_path.read_text(encoding="utf-8")
+            finally:
+                pci.login_account_store_path = original_account_path  # type: ignore[assignment]
+                pci.protect_local_secret = original_protect  # type: ignore[assignment]
+                pci.unprotect_local_secret = original_unprotect  # type: ignore[assignment]
+
+        self.assertFalse(state["accounts"][0]["remember_password"])
+        self.assertFalse(state["accounts"][0]["auto_login"])
+        self.assertEqual(state["accounts"][0]["password"], "")
+        self.assertNotIn("plain-secret", saved_text)
+        self.assertNotIn('"password"', saved_text)
+
+    def test_login_account_store_migrates_legacy_protected_password_field_only(self) -> None:
+        original_account_path = pci.login_account_store_path
+        original_protect = pci.protect_local_secret
+        original_unprotect = pci.unprotect_local_secret
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            store_path = temp_root / "login_accounts.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "last_username": "buyer@example.com",
+                        "accounts": [
+                            {
+                                "username": "buyer@example.com",
+                                "remember_password": True,
+                                "auto_login": True,
+                                "password": "enc:terces",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                pci.login_account_store_path = lambda: store_path  # type: ignore[assignment]
+                pci.protect_local_secret = lambda value: "enc:" + value[::-1]  # type: ignore[assignment]
+                pci.unprotect_local_secret = lambda value: value[4:][::-1] if value.startswith("enc:") else ""  # type: ignore[assignment]
+
+                state = pci.load_login_account_state()
+                pci.save_login_account_state("buyer@example.com", "", True, True)
+                saved_text = store_path.read_text(encoding="utf-8")
+            finally:
+                pci.login_account_store_path = original_account_path  # type: ignore[assignment]
+                pci.protect_local_secret = original_protect  # type: ignore[assignment]
+                pci.unprotect_local_secret = original_unprotect  # type: ignore[assignment]
+
+        self.assertEqual(state["accounts"][0]["password"], "secret")
+        self.assertNotIn('"password"', saved_text)
+        self.assertIn('"protected_password"', saved_text)
+        self.assertIn("enc:terces", saved_text)
+
+    def test_login_account_store_drops_unreadable_protected_password_blob(self) -> None:
+        original_account_path = pci.login_account_store_path
+        original_unprotect = pci.unprotect_local_secret
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            store_path = temp_root / "login_accounts.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "last_username": "buyer@example.com",
+                        "accounts": [
+                            {
+                                "username": "buyer@example.com",
+                                "remember_password": True,
+                                "auto_login": True,
+                                "protected_password": "enc:broken",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                pci.login_account_store_path = lambda: store_path  # type: ignore[assignment]
+                pci.unprotect_local_secret = lambda _value: ""  # type: ignore[assignment]
+
+                state = pci.load_login_account_state()
+                public_state = pci.load_login_account_public_state()
+            finally:
+                pci.login_account_store_path = original_account_path  # type: ignore[assignment]
+                pci.unprotect_local_secret = original_unprotect  # type: ignore[assignment]
+
+        self.assertFalse(state["accounts"][0]["remember_password"])
+        self.assertFalse(state["accounts"][0]["auto_login"])
+        self.assertEqual(state["accounts"][0]["password"], "")
+        self.assertFalse(public_state["accounts"][0]["has_password"])
+
+    def test_webview_select_login_account_returns_public_account_only(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def set(self, value) -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        original_account_path = pci.login_account_store_path
+        original_protect = pci.protect_local_secret
+        original_unprotect = pci.unprotect_local_secret
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            try:
+                pci.login_account_store_path = lambda: temp_root / "login_accounts.json"  # type: ignore[assignment]
+                pci.protect_local_secret = lambda value: "enc:" + value[::-1]  # type: ignore[assignment]
+                pci.unprotect_local_secret = lambda value: value[4:][::-1] if value.startswith("enc:") else ""  # type: ignore[assignment]
+                pci.save_login_account_state("buyer@example.com", "secret-password", True, True, "buyer-1")
+                app = pci.InstallerApp.__new__(pci.InstallerApp)
+                app.login_username = FakeVar("")
+                app.login_password = FakeVar("typed-secret")
+                app.sync_called = False
+                app.sync_webview_state = lambda: setattr(app, "sync_called", True)
+
+                result = pci.WebviewApi(app).select_login_account("buyer@example.com")
+            finally:
+                pci.login_account_store_path = original_account_path  # type: ignore[assignment]
+                pci.protect_local_secret = original_protect  # type: ignore[assignment]
+                pci.unprotect_local_secret = original_unprotect  # type: ignore[assignment]
+
+        self.assertTrue(result["success"])
+        self.assertEqual(app.login_username.get(), "buyer@example.com")
+        self.assertEqual(app.login_password.get(), "")
+        self.assertTrue(app.sync_called)
+        self.assertTrue(result["account"]["has_password"])
+        self.assertNotIn("password", result["account"])
+        self.assertNotIn("secret-password", json.dumps(result, ensure_ascii=False))
+
+    def test_webview_logout_disables_current_auto_login_without_removing_saved_password(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def set(self, value) -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        original_account_path = pci.login_account_store_path
+        original_protect = pci.protect_local_secret
+        original_unprotect = pci.unprotect_local_secret
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            try:
+                pci.login_account_store_path = lambda: temp_root / "login_accounts.json"  # type: ignore[assignment]
+                pci.protect_local_secret = lambda value: "enc:" + value[::-1]  # type: ignore[assignment]
+                pci.unprotect_local_secret = lambda value: value[4:][::-1] if value.startswith("enc:") else ""  # type: ignore[assignment]
+                pci.save_login_account_state("buyer@example.com", "secret-password", True, True, "buyer-1")
+                app = pci.InstallerApp.__new__(pci.InstallerApp)
+                app.login_username = FakeVar("buyer@example.com")
+                app.login_password = FakeVar("typed-secret")
+                app.step = FakeVar(9)
+                app.status = FakeVar("")
+                app.cookie_jar = http.cookiejar.CookieJar()
+                app.logged_in_user = {"id": "buyer-1", "username": "buyer@example.com"}
+                app.deployer_auth = {"token": "deploy-token"}
+                app.commercial_contexts = {"target_buyer_context": {"buyer_user_id": "buyer-1"}}
+                app.sync_called = False
+                app.sync_webview_state = lambda: setattr(app, "sync_called", True)
+
+                with patch.object(pci, "clear_buyer_session_state") as clear_session, \
+                     patch.object(pci, "load_buyer_cookie_jar", return_value=http.cookiejar.CookieJar()):
+                    result = pci.WebviewApi(app).logout()
+
+                state = pci.load_login_account_state()
+                saved_text = (temp_root / "login_accounts.json").read_text(encoding="utf-8")
+            finally:
+                pci.login_account_store_path = original_account_path  # type: ignore[assignment]
+                pci.protect_local_secret = original_protect  # type: ignore[assignment]
+                pci.unprotect_local_secret = original_unprotect  # type: ignore[assignment]
+
+        self.assertTrue(result)
+        clear_session.assert_called_once()
+        self.assertTrue(app.sync_called)
+        self.assertIsNone(app.logged_in_user)
+        self.assertIsNone(app.deployer_auth)
+        self.assertIsNone(app.commercial_contexts)
+        self.assertEqual(app.login_password.get(), "")
+        self.assertEqual(app.step.get(), 1)
+        self.assertTrue(state["accounts"][0]["remember_password"])
+        self.assertFalse(state["accounts"][0]["auto_login"])
+        self.assertEqual(state["accounts"][0]["password"], "secret-password")
+        self.assertIn('"protected_password"', saved_text)
+        self.assertNotIn("secret-password", saved_text)
+
+    def test_webview_remove_current_login_account_clears_live_session_and_returns_gate(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def set(self, value) -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        original_account_path = pci.login_account_store_path
+        original_protect = pci.protect_local_secret
+        original_unprotect = pci.unprotect_local_secret
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            try:
+                pci.login_account_store_path = lambda: temp_root / "login_accounts.json"  # type: ignore[assignment]
+                pci.protect_local_secret = lambda value: "enc:" + value[::-1]  # type: ignore[assignment]
+                pci.unprotect_local_secret = lambda value: value[4:][::-1] if value.startswith("enc:") else ""  # type: ignore[assignment]
+                pci.save_login_account_state("buyer@example.com", "secret-password", True, True, "buyer-1")
+                app = pci.InstallerApp.__new__(pci.InstallerApp)
+                app.login_username = FakeVar("buyer@example.com")
+                app.login_password = FakeVar("typed-secret")
+                app.step = FakeVar(4)
+                app.status = FakeVar("")
+                app.cookie_jar = http.cookiejar.CookieJar()
+                app.logged_in_user = {"id": "buyer-1", "username": "buyer@example.com"}
+                app.deployer_auth = {"token": "deploy-token"}
+                app.commercial_contexts = {"target_buyer_context": {"buyer_user_id": "buyer-1"}}
+                app.sync_called = False
+                app.sync_webview_state = lambda: setattr(app, "sync_called", True)
+
+                with patch.object(pci, "clear_buyer_session_state") as clear_session, \
+                     patch.object(pci, "load_buyer_cookie_jar", return_value=http.cookiejar.CookieJar()):
+                    result = pci.WebviewApi(app).remove_login_account("buyer@example.com")
+
+                state = pci.load_login_account_state()
+            finally:
+                pci.login_account_store_path = original_account_path  # type: ignore[assignment]
+                pci.protect_local_secret = original_protect  # type: ignore[assignment]
+                pci.unprotect_local_secret = original_unprotect  # type: ignore[assignment]
+
+        self.assertTrue(result["success"])
+        clear_session.assert_called_once()
+        self.assertEqual(state["accounts"], [])
+        self.assertEqual(app.login_password.get(), "")
+        self.assertEqual(app.step.get(), 1)
+        self.assertIsNone(app.logged_in_user)
+        self.assertIsNone(app.deployer_auth)
+        self.assertIsNone(app.commercial_contexts)
+        self.assertTrue(app.sync_called)
+
     def test_profile_payload_keeps_only_safe_persistent_fields(self) -> None:
         original_profile_path = pci.profile_path
         with TemporaryDirectory() as temp_dir:

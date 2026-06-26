@@ -49,6 +49,7 @@ from commercial_api import (  # noqa: E402
     with_operator_auth,
     mask_business_identifier,
     parse_config_session_reserve_data,
+    parse_mobile_control_order_status_data,
     parse_payment_status_data,
     parse_api_envelope,
     sanitize_commercial_text,
@@ -608,6 +609,24 @@ class CommercialApiContractTests(unittest.TestCase):
             parse_payment_status_data({"payment_status": "paid"})
         with self.assertRaises(ValueError):
             parse_payment_status_data({"order_id": "ord-real"})
+
+    def test_parse_mobile_control_order_status_allows_paid_or_manual_review_only(self) -> None:
+        paid = parse_mobile_control_order_status_data(
+            {"service_order_id": "svc-ord-1", "status": "paid", "charge_status": "paid", "payment_id": "pay-1"}
+        )
+        manual = parse_mobile_control_order_status_data(
+            {"order_id": "svc-ord-2", "status": "created", "charge_status": "manual_review"}
+        )
+        unpaid = parse_mobile_control_order_status_data(
+            {"order_id": "svc-ord-3", "status": "created", "charge_status": "unpaid"}
+        )
+
+        self.assertTrue(paid["session_allowed"])
+        self.assertEqual(paid["payment_id"], "pay-1")
+        self.assertTrue(manual["session_allowed"])
+        self.assertTrue(manual["requires_manual_review"])
+        self.assertFalse(unpaid["session_allowed"])
+        self.assertTrue(unpaid["requires_payment"])
 
 
 if __name__ == "__main__":

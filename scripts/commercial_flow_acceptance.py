@@ -14,6 +14,93 @@ from commercial_backend_contract import CommercialLedgerContract  # noqa: E402
 from commercial_core import CommercialProduct, DeliveryScope, find_orderable_product  # noqa: E402
 
 
+def _run_mobile_control_acceptance(ledger: CommercialLedgerContract) -> dict:
+    ledger.configure_service_product(
+        product_id="svc-mobile-control",
+        service_type="mobile_control_agent",
+        name="手机控制Agent",
+        price_cents=19900,
+        requires_base_agent_delivery=True,
+        supported_agent_ids=("codex", "hermes"),
+        supported_channels=("feishu", "qq_bot"),
+        allowed_agent_sources=("current_delivery", "existing_local_agent", "manual_review"),
+    )
+    order = ledger.create_mobile_control_order(
+        idempotency_key="mca-order-flow-1",
+        service_product_id="svc-mobile-control",
+        buyer_user_id="buyer-1",
+        agent_id="codex",
+        channel="feishu",
+        agent_source="current_delivery",
+    )
+    try:
+        ledger.create_mobile_control_session(
+            idempotency_key="mca-session-unpaid-flow-1",
+            order_id=order.order_id,
+            buyer_user_id="buyer-1",
+            agent_id="codex",
+            channel="feishu",
+            platform_account_id="feishu-bot-offline",
+            platform_chat_id="feishu-chat-offline",
+            gateway_mode="official_bot",
+            agent_source="current_delivery",
+        )
+        unpaid_session_blocked = False
+    except ValueError:
+        unpaid_session_blocked = True
+    paid_order = ledger.mark_mobile_control_order_paid(order.order_id, "pay-mca-flow-1")
+    session = ledger.create_mobile_control_session(
+        idempotency_key="mca-session-flow-1",
+        order_id=order.order_id,
+        buyer_user_id="buyer-1",
+        agent_id="codex",
+        channel="feishu",
+        platform_account_id="feishu-bot-offline",
+        platform_chat_id="feishu-chat-offline",
+        gateway_mode="official_bot",
+        agent_source="current_delivery",
+    )
+    connected_session = ledger.mark_mobile_control_connected(session.session_id)
+    connected_session_status = connected_session.status
+    callback = ledger.evaluate_mobile_control_callback(
+        session_id=session.session_id,
+        channel="feishu",
+        platform_message_id="inbound-mca-flow-1",
+        sender_id="buyer-1",
+        text="@胖虎 ping",
+        mentioned_bot=True,
+        authorized_sender_ids={"buyer-1"},
+    )
+    acceptance = ledger.record_mobile_control_acceptance(
+        session_id=session.session_id,
+        source_event_id="mca-delivery-flow-1",
+        inbound_platform_message_id="inbound-mca-flow-1",
+        outbound_platform_message_id="outbound-mca-flow-1",
+        test_prompt="@胖虎 ping",
+        agent_response_digest="pong",
+        evidence_url="offline://mobile-control/flow-1",
+        accepted_by="admin-offline",
+    )
+    ledger_event = next(
+        event
+        for event in ledger.service_ledger_events.values()
+        if event.source_event_id == "mca-delivery-flow-1"
+    )
+    return {
+        "order_id": order.order_id,
+        "session_id": session.session_id,
+        "acceptance_id": acceptance.acceptance_id,
+        "unpaid_session_blocked": unpaid_session_blocked,
+        "paid_charge_status": paid_order.charge_status,
+        "connected_session_status": connected_session_status,
+        "callback_status": callback.status,
+        "final_order_status": ledger.service_orders[order.order_id].status,
+        "final_charge_status": ledger.service_orders[order.order_id].charge_status,
+        "service_ledger_event_type": ledger_event.event_type,
+        "service_ledger_service_type": ledger_event.service_type,
+    }
+
+
 def run_acceptance() -> dict:
     ledger = CommercialLedgerContract()
     agent_chain = ["agent-1", "agent-2", "agent-3", "agent-4", "agent-5", "agent-6"]
@@ -331,6 +418,7 @@ def run_acceptance() -> dict:
     )
     ledger.complete_config_session(completed_session.config_session_id, real_task_verified=True)
     remaining_after_completed = ledger.entitlements[completed_entitlement.entitlement_id].remaining_uses
+    mobile_control = _run_mobile_control_acceptance(ledger)
 
     ledger.reverse_order(order.order_id, "离线验收撤销")
     ledger.reverse_order(order.order_id, "离线验收撤销")
@@ -515,6 +603,7 @@ def run_acceptance() -> dict:
             "agent_key_blocked": agent_key_blocked,
         },
         "agent_center": agent_center,
+        "mobile_control": mobile_control,
         "agent_business": {
             "free_l1_status": free_profile.status,
             "paid_l2_status": paid_l2_initial_status,
@@ -563,6 +652,7 @@ def main() -> None:
     print(f"人工复核会话后剩余次数：{report['entitlement']['remaining_uses_after_manual_review_session']}")
     print(f"设备超限拦截：{report['device_policy']['new_device_blocked']}")
     print(f"成功会话后剩余次数：{report['entitlement']['remaining_uses_after_completed_session']}")
+    print(f"手机控制Agent支付门禁：{report['mobile_control']['unpaid_session_blocked']}")
     print(f"佣金冲正：{report['commissions']['reversed_count']}/{report['commissions']['created_count']}")
 
 

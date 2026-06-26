@@ -22,7 +22,7 @@ C:\Users\Administrator\Documents\codex\panghu-codex-installer
 C:\Users\Administrator\.codex\进化.md
 C:\Users\Administrator\Documents\codex\工具项目目录\README.md
 C:\Users\Administrator\Documents\codex\工具项目目录\PROJECTS.md
-C:\Users\Administrator\Documents\codex\工具项目目录\projects\多 Agent 一键配置工具.md
+C:\Users\Administrator\Documents\codex\工具项目目录\projects\胖虎AI.md
 ```
 
 然后按顺序读本项目文件：

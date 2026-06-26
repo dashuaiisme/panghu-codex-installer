@@ -20,7 +20,7 @@ Path("src/commercial_manifest_public_key.py").write_text(
     encoding="utf-8",
 )
 PY
-APP_NAME="胖虎AI多Agent一键部署工具"
+APP_NAME="胖虎AI"
 APP_VERSION="${APP_VERSION:-$(.venv/bin/python - <<'PY'
 import ast
 from pathlib import Path

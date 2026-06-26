@@ -110,9 +110,9 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertGreater(mac_job.index(final_zip_test), mac_job.index("Notarize app"))
         self.assertLess(mac_job.index(final_zip_test), mac_job.index(final_acceptance))
         self.assertLess(mac_job.index(final_zip_test), mac_job.index("Prepare release asset"))
-        self.assertIn('ZIP_PATH="release/胖虎AI多Agent一键部署工具-Mac-${{ matrix.package_suffix }}.zip"', mac_job)
+        self.assertIn('ZIP_PATH="release/胖虎AI-Mac-${{ matrix.package_suffix }}.zip"', mac_job)
         self.assertIn("/usr/bin/ditto -x -k \"$ZIP_PATH\" \"$FINAL_ZIP_TEST_DIR\"", mac_job)
-        self.assertIn("\"$FINAL_ZIP_TEST_DIR/胖虎AI多Agent一键部署工具.app/Contents/MacOS/胖虎AI多Agent一键部署工具\" --self-test", mac_job)
+        self.assertIn("\"$FINAL_ZIP_TEST_DIR/胖虎AI.app/Contents/MacOS/胖虎AI\" --self-test", mac_job)
 
 
 if __name__ == "__main__":

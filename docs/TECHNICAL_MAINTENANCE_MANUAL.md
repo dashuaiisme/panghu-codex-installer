@@ -1,4 +1,4 @@
-# 多 Agent 一键配置工具技术维护手册
+# 胖虎AI技术维护手册
 
 最后更新：2026-06-26
 
@@ -8,9 +8,9 @@
 
 ## 1. 项目边界
 
-本项目是独立的客户侧桌面工具，正式名称为“胖虎AI多 Agent 一键部署工具”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上安装和配置已接入完整配置链路的 Agent；Gemini / agy 当前只保留官方入口和待接入状态。
+本项目是独立的客户侧桌面工具，正式名称为“胖虎AI”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上进入一站式 AI 客户端服务流程：配置已接入完整链路的 Agent，打开胖虎AI中转站/网站入口，查看充值购买、增值业务、手机号/短信接码、GPT 会员服务、手机控制 Agent 和代理中心等服务端入口。Gemini / agy 当前只保留官方入口和待接入状态。
 
-本项目不是“胖虎AI 本地源码仓”的一部分。它只对接胖虎AI的登录、部署授权、更新清单、API Key 和公开下载入口。胖虎AI网站、控制台、后端、数据库、支付、钱包等内容归另一个长期项目维护。
+本项目不是“胖虎AI 本地源码仓”的一部分。它只对接胖虎AI的登录、部署授权、更新清单、API Key、服务端业务入口和公开下载入口。胖虎AI网站、控制台、后端、数据库、支付、钱包、商品上架、代充履约和接码平台结算等内容归服务端或另一个长期项目维护。
 
 文档权威顺序：
 
@@ -54,8 +54,9 @@ https://aitokenapi.cc/deployer/latest.json
 9. 对安全可写的 Codex 写入胖虎AI配置。
 10. 登录后通过“胖虎AI网站”模块的内置浏览器入口打开控制台、创建 API Key、充值购买、推广返佣和代理中心等服务端页面。
 11. 登录后可进入“配置Agent -> 手机控制Agent”配置独立增值服务。该入口不能只因为本次基础 Agent 配置会话未完成而锁死；已有可用 Agent、历史交付记录或人工复核通过时，都可以作为手机控制Agent的 Agent 来源。
-12. 如果服务端下发临时 OpenAI 官网访问窗口，工具短时间启用 PAC 系统代理，并到点恢复。
-13. 后续用“检查更新”从公开清单下载新版包。
+12. 登录后可进入“增值业务”查看服务端下发的 GPT 会员代充、账号服务、手机号/短信接码、手机控制 Agent 和其他业务入口；客户端只展示服务端状态，不计算价格、库存、履约或上架规则。
+13. 如果服务端下发临时 OpenAI 官网访问窗口，工具短时间启用 PAC 系统代理，并到点恢复。
+14. 后续用“检查更新”从公开清单下载新版包。
 
 当前登录后主模块固定为：
 
@@ -150,7 +151,7 @@ GitHub Actions 三端发布工作流。虽然文件名叫 `build-mac-release.yml
 docs/发送客户说明.txt
 docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md
 docs/COMMERCIAL_BACKEND_API_CONTRACT.md
-docs/多Agent一键配置工具下载二维码.png
+docs/胖虎AI下载二维码.png
 assets/deployer-download-qr.png
 ```
 
@@ -261,6 +262,7 @@ X-Panghu-Deployer-Token: 部署令牌
 - 平台通道：`qq_bot`、`weixin`、`feishu`、`dingtalk`、`wecom`
 - 验收证据：入站平台消息 ID、Agent 调用证据、出站平台消息 ID、响应摘要、验收时间、`source_event_id`
 - 状态区分：待配置、等待平台授权、已连接、测试中、验收通过、失败、暂停、人工复核
+- 创建手机控制Agent配置会话前，服务端订单必须已支付，或明确进入人工预售/人工复核；未支付订单不得写入平台账号或聊天对象。
 
 入口规则：
 
@@ -532,6 +534,16 @@ Agent 交付只读检查：
 python scripts\agent_delivery_acceptance.py
 ```
 
+Agent 真实对话验收必须使用临时隔离配置，不能读取或污染维护机已有 ClaudeCode、OpenClaw、Hermes 配置。只有拿到当前买家的真实胖虎AI API Key 后，才允许在当前 PowerShell 会话中临时设置 `PANGHU_AGENT_ACCEPTANCE_API_KEY` 并运行：
+
+```powershell
+$env:PANGHU_AGENT_ACCEPTANCE_API_KEY="<current-buyer-panghuai-api-key>"
+python scripts\agent_delivery_acceptance.py --run-dialogue --isolated-config-from-env --run-codex-gateway-probe --dialogue-timeout 60
+Remove-Item Env:\PANGHU_AGENT_ACCEPTANCE_API_KEY
+```
+
+报告中 Codex、ClaudeCode/CC、OpenClaw、Hermes 的最小中文对话必须为 `pass` 才能计入完整交付；Gemini / agy 当前只保留官方安装入口，报告为 `not_supported` 或“配置待开发”时是预期状态，不能包装成完整配置交付。
+
 商业合同离线验收：
 
 ```powershell
@@ -577,7 +589,7 @@ AI.Agent.-Windows.zip
 本地客户包应保留为：
 
 ```text
-release/胖虎AI多Agent一键部署工具-Windows.zip
+release/胖虎AI-Windows.zip
 ```
 
 Windows 构建要求：
@@ -652,8 +664,8 @@ scripts/build-mac-app.command
 输出：
 
 ```text
-release/胖虎AI多Agent一键部署工具-Mac-AppleSilicon.zip
-release/胖虎AI多Agent一键部署工具-Mac-Intel.zip
+release/胖虎AI-Mac-AppleSilicon.zip
+release/胖虎AI-Mac-Intel.zip
 ```
 
 这两个 Mac zip 也是本地客户交付物；即使本机是 Windows，清理项目时也必须从 GitHub Release 或统一下载入口补齐后再收尾。
@@ -887,7 +899,7 @@ unable to get local issuer certificate
 7. 读工具项目登记文件：
 
 ```text
-C:\Users\Administrator\Documents\codex\工具项目目录\projects\多 Agent 一键配置工具.md
+C:\Users\Administrator\Documents\codex\工具项目目录\projects\胖虎AI.md
 ```
 
 8. 查看 `git status --short`。
