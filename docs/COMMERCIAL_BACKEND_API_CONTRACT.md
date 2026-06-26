@@ -14,7 +14,7 @@
 
 所有商业接口必须要求请求头 `Authorization: Bearer <operator_token>`。服务端必须用 token 校验 `operator_context`，不能只信任客户端请求体里的 `operator_user_id`。创建订单、查询支付、刷新权益、API Key 归属校验、配置会话预占、配置成功和配置失败都必须使用当前登录买家 token。日志、摘要和诊断包不得输出完整 token 或授权头。
 
-本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID 或配置会话 ID，下一次保存必须清除，不能继续带入长期登录态。启动恢复时不得把商业污染字段或买家 token 当成当前账号，只能恢复账号提示、API Key、模型和界面偏好；真正的登录、授权和部署 token 必须来自本次重新登录。
+本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID 或配置会话 ID，下一次保存必须清除。买家登录态允许通过独立 cookie 文件和内置浏览器 profile 持久化；`buyer_session.json` 只能保存非敏感买家标识。启动恢复时不得把商业污染字段或部署 token 当成当前授权，只能用保存的买家会话向服务端重新申请本次部署授权；服务端返回 401/403 时客户端必须清理保存会话并回到登录门禁。
 
 ## 2. 商品配置
 

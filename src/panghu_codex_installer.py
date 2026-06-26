@@ -702,6 +702,14 @@ def profile_path() -> Path:
     return app_data_dir() / "profile.json"
 
 
+def buyer_session_metadata_path() -> Path:
+    return app_data_dir() / "buyer_session.json"
+
+
+def buyer_session_cookie_path() -> Path:
+    return app_data_dir() / "buyer_session_cookies.txt"
+
+
 def web_profile_root() -> Path:
     return app_data_dir() / "web_profiles"
 
@@ -1055,6 +1063,94 @@ def save_profile_data(data: dict, contexts=None) -> None:
         default_model=DEFAULT_MODEL,
     )
     write_text(profile_path(), json.dumps(safe, ensure_ascii=False, indent=2) + "\n")
+
+
+def load_buyer_cookie_jar() -> http.cookiejar.MozillaCookieJar:
+    path = buyer_session_cookie_path()
+    jar = http.cookiejar.MozillaCookieJar(str(path))
+    if path.exists():
+        try:
+            jar.load(ignore_discard=True, ignore_expires=False)
+        except Exception:
+            jar.clear()
+    return jar
+
+
+def save_buyer_cookie_jar(cookie_jar: http.cookiejar.CookieJar) -> None:
+    path = buyer_session_cookie_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(cookie_jar, http.cookiejar.FileCookieJar):
+        cookie_jar.filename = str(path)
+        jar_to_save = cookie_jar
+    else:
+        jar_to_save = http.cookiejar.MozillaCookieJar(str(path))
+        for cookie in cookie_jar:
+            jar_to_save.set_cookie(cookie)
+    jar_to_save.save(ignore_discard=True, ignore_expires=True)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+def safe_buyer_session_user(user: dict) -> dict:
+    if not isinstance(user, dict):
+        return {}
+    user_id = str(user.get("id") or user.get("user_id") or "").strip()
+    if not user_id:
+        return {}
+    role = str(user.get("role") or "buyer").strip().lower()
+    if role == "agent":
+        return {}
+    username = str(user.get("username") or user.get("email") or user.get("account") or "").strip()
+    display_name = str(user.get("display_name") or username or user_id).strip()
+    return {
+        "id": user_id,
+        "username": username,
+        "display_name": display_name,
+        "role": "buyer",
+    }
+
+
+def save_buyer_session_state(user: dict, cookie_jar: http.cookiejar.CookieJar) -> None:
+    safe_user = safe_buyer_session_user(user)
+    if not safe_user:
+        return
+    save_buyer_cookie_jar(cookie_jar)
+    payload = {
+        "base_url": DEFAULT_BASE_URL,
+        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "user": safe_user,
+    }
+    write_text(buyer_session_metadata_path(), json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def load_buyer_session_user() -> dict:
+    path = buyer_session_metadata_path()
+    if not path.exists() or not buyer_session_cookie_path().exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict) or str(payload.get("base_url") or "") != DEFAULT_BASE_URL:
+        return {}
+    return safe_buyer_session_user(payload.get("user") or {})
+
+
+def clear_buyer_session_state(cookie_jar: http.cookiejar.CookieJar | None = None) -> None:
+    if cookie_jar is not None:
+        try:
+            cookie_jar.clear()
+        except Exception:
+            pass
+    for path in (buyer_session_metadata_path(), buyer_session_cookie_path()):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
 
 
 def ensure_commercial_web_profile_dir(profile) -> Path:
@@ -2444,8 +2540,13 @@ def open_path(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
-def open_url(url: str, cookie_jar: http.cookiejar.CookieJar | None = None, log=None) -> CustomerPageOpenResult:
-    return open_customer_page(url, cookie_jar=cookie_jar, log=log)
+def open_url(
+    url: str,
+    cookie_jar: http.cookiejar.CookieJar | None = None,
+    log=None,
+    storage_path: Path | str | None = None,
+) -> CustomerPageOpenResult:
+    return open_customer_page(url, cookie_jar=cookie_jar, log=log, storage_path=storage_path)
 
 
 def build_webview_cookie_bridge_script(cookie_jar: http.cookiejar.CookieJar | None) -> str:
@@ -2472,6 +2573,7 @@ def open_customer_page(
     url: str,
     cookie_jar: http.cookiejar.CookieJar | None = None,
     log=None,
+    storage_path: Path | str | None = None,
 ) -> CustomerPageOpenResult:
     title = embedded_customer_page_title(url)
     page_url = str(url or "").strip()
@@ -2480,9 +2582,15 @@ def open_customer_page(
     bridge_script = build_webview_cookie_bridge_script(cookie_jar)
     if title:
         if cookie_jar is None and log is None:
-            embedded_ok = try_open_embedded_webview(page_url, title=title)
+            embedded_ok = try_open_embedded_webview(page_url, title=title, storage_path=storage_path)
         else:
-            embedded_ok = try_open_embedded_webview(page_url, title=title, cookie_jar=cookie_jar, log=log)
+            embedded_ok = try_open_embedded_webview(
+                page_url,
+                title=title,
+                cookie_jar=cookie_jar,
+                log=log,
+                storage_path=storage_path,
+            )
     else:
         embedded_ok = False
     if title and embedded_ok:
@@ -2538,6 +2646,7 @@ def try_open_embedded_webview(
     title: str = "",
     cookie_jar: http.cookiejar.CookieJar | None = None,
     log=None,
+    storage_path: Path | str | None = None,
 ) -> bool:
     if webview is None:
         return False
@@ -2546,6 +2655,8 @@ def try_open_embedded_webview(
         return False
     window_title = title or "胖虎AI"
     bridge_script = build_webview_cookie_bridge_script(cookie_jar)
+    persistent_storage_path = Path(storage_path) if storage_path else web_profile_root() / "buyer-site"
+    persistent_storage_path.mkdir(parents=True, exist_ok=True)
 
     def launch() -> None:
         start_url = PANGHU_HOME_URL if bridge_script else page_url
@@ -2563,7 +2674,7 @@ def try_open_embedded_webview(
                     log(f"已向内置 WebView 桥接本次胖虎AI登录态：{window_title}")
 
             window.events.loaded += on_loaded
-        webview.start(private_mode=True)
+        webview.start(private_mode=False, storage_path=str(persistent_storage_path))
 
     threading.Thread(target=launch, daemon=True).start()
     return True
@@ -3907,6 +4018,7 @@ class WebviewApi:
             buyer_profile = create_commercial_web_profile(self.app.commercial_contexts, str(web_profile_root()))
             ensure_commercial_web_profile_dir(buyer_profile)
             display_name = str(data.get("username") or username)
+            save_buyer_session_state(data, self.app.cookie_jar)
             save_profile_data({"username": display_name}, self.app.commercial_contexts)
 
             self.app.step.set(2)
@@ -3920,6 +4032,8 @@ class WebviewApi:
             return {"success": False, "message": str(e)}
 
     def logout(self):
+        clear_buyer_session_state(self.app.cookie_jar)
+        self.app.cookie_jar = load_buyer_cookie_jar()
         self.app.logged_in_user = None
         self.app.deployer_auth = None
         self.app.commercial_contexts = None
@@ -4067,7 +4181,12 @@ class WebviewApi:
 
     def open_url(self, url):
         try:
-            open_url(url, cookie_jar=self.app.cookie_jar, log=self.app.log)
+            open_url(
+                url,
+                cookie_jar=self.app.cookie_jar,
+                log=self.app.log,
+                storage_path=self.app.current_buyer_web_profile_path(),
+            )
             return {"success": True}
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -4148,7 +4267,7 @@ class InstallerApp:
         if not getattr(self, 'webview_mode', False):
             self.set_window_icon()
 
-        self.cookie_jar = http.cookiejar.CookieJar()
+        self.cookie_jar = load_buyer_cookie_jar()
         self.logged_in_user: dict | None = None
         self.deployer_auth: dict | None = None
         self.deployer_manifest: dict | None = None
@@ -4219,6 +4338,9 @@ class InstallerApp:
         if not getattr(self, 'webview_mode', False):
             self._build_ui()
             self.apply_restored_login_state()
+            self.start_restore_saved_session()
+        else:
+            self.start_restore_saved_session()
         self.log("系统提示：请先登录胖虎AI账号。登录后再填写 Key、检测环境并安装 Agent。", replace=True)
 
     def set_window_icon(self) -> None:
@@ -4365,9 +4487,63 @@ class InstallerApp:
         if username:
             display_username = username if len(username) <= 20 else f"{username[:17]}..."
             self.user_label.configure(text=f"上次账号：{display_username}")
-            self.status.set("状态：已恢复上次填写信息，请重新登录胖虎AI账号")
+            self.status.set("状态：已恢复上次账号提示，正在尝试恢复胖虎AI登录态")
         else:
             self.user_label.configure(text="账号：未登录")
+
+    def start_restore_saved_session(self) -> None:
+        if self.logged_in_user or self.deployer_auth:
+            return
+        user = load_buyer_session_user()
+        if not user:
+            return
+        username = str(user.get("username") or user.get("display_name") or "").strip()
+        if username and not self.login_username.get().strip():
+            self.login_username.set(username)
+        self.status.set("状态：正在恢复上次胖虎AI登录态...")
+        threading.Thread(target=self._restore_saved_session_worker, args=(user,), daemon=True).start()
+
+    def _restore_saved_session_worker(self, user: dict) -> None:
+        try:
+            auth_ok, auth_msg, auth_data = activate_deployer(user, self.cookie_jar)
+            self.log_from_worker(f"恢复胖虎AI登录态：{auth_msg}")
+            if not auth_ok:
+                if "HTTP 401" in auth_msg or "HTTP 403" in auth_msg:
+                    clear_buyer_session_state(self.cookie_jar)
+                    self.cookie_jar = load_buyer_cookie_jar()
+                    self.set_status_from_worker("状态：保存的胖虎AI登录态已失效，请重新登录")
+                else:
+                    self.set_status_from_worker("状态：暂时无法验证上次登录态，请检查网络后重试")
+                return
+            save_buyer_session_state(user, self.cookie_jar)
+            self.logged_in_user = user
+            self.deployer_auth = auth_data
+            self.commercial_contexts = self.build_buyer_contexts(user)
+            buyer_profile = create_commercial_web_profile(self.commercial_contexts, str(web_profile_root()))
+            ensure_commercial_web_profile_dir(buyer_profile)
+            display_name = str(user.get("username") or user.get("display_name") or self.login_username.get())
+            save_profile_data({"username": display_name}, self.commercial_contexts)
+            display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
+
+            def finish_restore() -> None:
+                if hasattr(self, "user_label"):
+                    self.user_label.configure(text=f"已登录：{display_username}")
+                self.step.set(max(2, int(self.step.get() or 2)))
+                self.status.set("状态：已恢复上次胖虎AI登录态，可继续使用")
+                self.show_wizard()
+
+            self.run_on_ui(finish_restore)
+            self.run_later(1200, self.start_auto_update_check)
+            self.run_later(1600, self.start_refresh_commercial_manifest)
+        except Exception as exc:
+            self.set_status_from_worker(f"状态：恢复登录态失败：{exc}")
+
+    def current_buyer_web_profile_path(self) -> Path:
+        if self.commercial_contexts is not None:
+            return ensure_commercial_web_profile_dir(
+                create_commercial_web_profile(self.commercial_contexts, str(web_profile_root()))
+            )
+        return web_profile_root() / "buyer-site"
 
     def build_buyer_contexts(self, user: dict):
         user_id = str(user.get("id") or "").strip()
@@ -4924,7 +5100,12 @@ class InstallerApp:
 
     def open_current_module_url(self) -> None:
         _title, url, _note = self.current_module_page_meta()
-        result = open_customer_page(url, cookie_jar=self.cookie_jar, log=self.log)
+        result = open_customer_page(
+            url,
+            cookie_jar=self.cookie_jar,
+            log=self.log,
+            storage_path=self.current_buyer_web_profile_path(),
+        )
         self.status.set(f"状态：{result.message}")
         self.log(f"网站页面打开结果：{result.message} URL={result.url}")
 
@@ -5098,7 +5279,7 @@ class InstallerApp:
         self.rules_card = rules_card
         audit_rules = [
             "API Key 不输出到日志",
-            "不保存可恢复登录 token",
+            "保留买家会话，不保存密码或部署授权 token",
             "代理中心只走登录后服务端权益",
             "所有请求走公共域名 https://aitokenapi.cc",
             "未通过功能验收矩阵不得包装成完整交付",
@@ -5757,7 +5938,11 @@ class InstallerApp:
         buttons.pack(fill="x", pady=(5, 0))
         self.login_button = self._button(buttons, "登录并激活工具", self.start_login, "primary")
         self.login_button.pack(side="left")
-        self._text_button(buttons, "没有账号？先去注册", lambda: open_url(REGISTER_URL)).pack(side="left", padx=(18, 0), pady=(4, 0))
+        self._text_button(
+            buttons,
+            "没有账号？先去注册",
+            lambda: open_url(REGISTER_URL, storage_path=self.current_buyer_web_profile_path()),
+        ).pack(side="left", padx=(18, 0), pady=(4, 0))
 
         tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(20, 15))
         tk.Label(
@@ -5818,7 +6003,17 @@ class InstallerApp:
         self._button(actions, "创建订单", self.start_buyer_create_order, "primary").pack(side="left")
         self._button(actions, "查询支付", self.start_buyer_poll_payment, "secondary").pack(side="left", padx=(10, 0))
         self._button(actions, "刷新权益", self.start_buyer_refresh_entitlements, "secondary").pack(side="left", padx=(10, 0))
-        self._button(actions, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL, cookie_jar=self.cookie_jar, log=self.log), "secondary").pack(side="left", padx=(10, 0))
+        self._button(
+            actions,
+            "打开 API Key 创建页面",
+            lambda: open_url(
+                KEY_CREATE_URL,
+                cookie_jar=self.cookie_jar,
+                log=self.log,
+                storage_path=self.current_buyer_web_profile_path(),
+            ),
+            "secondary",
+        ).pack(side="left", padx=(10, 0))
         self._button(actions, "查看创建说明", lambda: self._show_help("API Key 创建说明", key_creation_help_text()), "secondary").pack(side="left", padx=(10, 0))
         self.buyer_purchase_status_label = tk.Label(
             panel,
@@ -6512,7 +6707,7 @@ class InstallerApp:
                 else "未解锁：请先完成登录、Key 保存、环境检测和 Agent 选择。"
             ),
             6: (
-                "待验收：部署执行后检查配置写入结果。不得保存可恢复登录 token，不把 Key 输出到日志。"
+                "待验收：部署执行后检查配置写入结果。保留胖虎AI买家会话，但不保存密码或部署授权 token，不把 Key 输出到日志。"
                 if self.can_access_step(6)
                 else "未解锁：请先完成前 4 步并执行安装。"
             ),
@@ -6808,6 +7003,7 @@ class InstallerApp:
             buyer_profile = create_commercial_web_profile(self.commercial_contexts, str(web_profile_root()))
             ensure_commercial_web_profile_dir(buyer_profile)
             display_name = str(data.get("username") or username)
+            save_buyer_session_state(data, self.cookie_jar)
             save_profile_data({"username": display_name}, self.commercial_contexts)
             display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
             self.run_on_ui(lambda: self.user_label.configure(text=f"已登录：{display_username}"))
@@ -7958,7 +8154,9 @@ def main() -> int:
             )
             app.webview_window = window
 
-            webview.start(debug=False)
+            app_shell_storage = web_profile_root() / "app-shell"
+            app_shell_storage.mkdir(parents=True, exist_ok=True)
+            webview.start(debug=False, private_mode=False, storage_path=str(app_shell_storage))
             app.close_app()
             return 0
         except Exception as e:

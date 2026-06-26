@@ -136,15 +136,15 @@ model_auto_compact_token_limit =600000
 1. 读取当前 `config.toml` 和 `auth.json`。
 2. 用 `detect_codex_config_mode(...)` 判断当前模式。
 3. 切换前保存当前模式快照。
-4. 读取目标模式快照作为历史基准。
+4. 读取目标模式快照作为恢复基准。
 5. 重新生成目标模式的动态字段。
 6. 写入主 `config.toml`、`auth.json`、`AGENTS.md`。
 7. 失败时用原有 `backup_file(...)` / `restore_backup(...)` 回滚本次写入。
 
 重要规则：
 
-- 目标模式快照可以作为基准，但不能直接把旧快照原样恢复到主配置。
-- 普通/双态里的 API Key 和 `experimental_bearer_token` 必须用当前输入重新生成，不能把旧快照里的旧 Key 带回来。
+- 目标模式快照可以作为基准，但不能直接把快照原样恢复到主配置。
+- 普通/双态里的 API Key 和 `experimental_bearer_token` 必须用当前输入重新生成，不能把快照里的过期 Key 带回来。
 - 双态和官方直登优先继承当前主 `auth.json` 里的最新 ChatGPT 登录态；当前没有登录态时，才从目标模式快照取登录态。
 - 未识别模式保存到 `history/<timestamp>/`，作为人工恢复线索。
 
@@ -232,6 +232,6 @@ C:\Users\Administrator\Documents\胖虎ai codex一键配置
 - 不要把双态模式说成消耗 ChatGPT 账号额度。
 - 不要让官方直登走胖虎AI API Key 测试。
 - 不要让官方直登创建商业配置会话或扣胖虎AI次数。
-- 不要直接恢复旧快照里的旧 API Key。
+- 不要直接恢复快照里的过期 API Key。
 - 不要删客户本机已有的 ChatGPT 登录态。
 - 不要忘记所有模式都要求完全退出 Codex 后重开。

@@ -11,7 +11,7 @@
 1. 普通 API 模式 `direct_api`
 2. 官方直登模式 `official_chatgpt`
 
-重点是避免后端写脚本时误删 ChatGPT 登录态、误保留胖虎AI中转配置、或者把旧 Key 从快照恢复回来。
+重点是避免后端写脚本时误删 ChatGPT 登录态、误保留胖虎AI中转配置、或者把过期 Key 从快照恢复回来。
 
 ## 2. 双态模式当前长什么样
 
@@ -237,7 +237,7 @@ base_auth = snapshot["auth"] if snapshot else old_auth
 
 注意：
 
-- 快照是历史基准，不是最终主配置。
+- 快照是恢复基准，不是最终主配置。
 - API Key 和 `experimental_bearer_token` 必须按当前输入重新生成。
 - 官方直登和双态要优先继承当前主 `auth.json` 里的最新 ChatGPT 登录态。
 - 当前主 `auth.json` 没有登录态时，才从目标快照读取登录态。

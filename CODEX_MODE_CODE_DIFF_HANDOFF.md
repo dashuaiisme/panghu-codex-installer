@@ -359,7 +359,7 @@ base_auth = snapshot["auth"] if snapshot else old_auth
 
 关键原则：
 
-- 快照只能作为历史基准。
+- 快照只能作为恢复基准。
 - 不能把目标模式快照原样复制回主配置。
 - API Key 和 `experimental_bearer_token` 必须根据当前输入重新生成。
 - ChatGPT 登录态优先使用当前主 `auth.json`，当前没有时才从快照取。
@@ -376,7 +376,7 @@ base_auth = snapshot["auth"] if snapshot else old_auth
 6. 不要让官方直登跑 `test_api(base_url, api_key)`。
 7. 不要让官方直登创建商业配置会话或扣胖虎AI次数。
 8. 不要把普通 API 模式的 `build_direct_api_auth_json` 用到官方直登。
-9. 不要把旧快照里的旧 Key 原样恢复到主配置。
+9. 不要把快照里的过期 Key 原样恢复到主配置。
 10. 不要覆盖客户已有的 ChatGPT `tokens`。
 
 ## 10. 本轮相关验证

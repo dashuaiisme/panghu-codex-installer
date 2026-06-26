@@ -18,14 +18,16 @@
 - 不删除 `release/`、Windows/Mac 客户 zip、exe/app 软件本体
 - 不运行 `python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`
 - 不硬编码价格、次数、有效期、设备数、返佣比例、上架状态
+- 不硬编码 token 返佣、激活返佣、安装返佣、下游客户归因、代理等级、结算状态
 - 不把可恢复买家登录 token 写入 `profile.json`
 - 不把部署授权 token 写入 `profile.json`
-- 不把 ClaudeCode、OpenClaw、Hermes 未打通项包装成完整付费交付
+- 不把 ClaudeCode、OpenClaw、Hermes 未打通项包装成完整付费交付；Gemini / agy 未接入前只允许作为官方入口或待接入状态
+- 不把代理中心写成已完成业务闭环；没有服务端合同时只能写待接入或占位状态
 
 ## 2. 敏感信息边界
 
 - API Key 不输出到日志
-- token、Authorization、邀请码、订单号、权益 ID、配置会话 ID 不输出到客服日志或诊断包
+- token、Authorization、邀请码、订单号、权益 ID、配置会话 ID、下游客户明细、佣金账本明细不输出到客服日志或诊断包
 - 不把真实密钥、账号密码、生产敏感日志发给网页端或其他 agent
 
 ## 3. 生产边界
@@ -37,5 +39,5 @@
 ## 4. 删除与覆盖边界
 
 - 不覆盖或回退用户现有未确认改动
-- 不把历史文档静默删除为“清理”
+- 不静默删除归档资料或客户交付物
 - 不把客户本地资料、登录信息、工作区资料、备份文件当成普通缓存处理

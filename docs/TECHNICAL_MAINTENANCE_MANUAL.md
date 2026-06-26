@@ -1,15 +1,24 @@
 # 多 Agent 一键配置工具技术维护手册
 
-最后更新：2026-06-19
+最后更新：2026-06-26
 
 > 产品结构、界面规则、客户可见交付口径，以 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md` 为准。
 > 本手册负责技术维护、接口、构建、发布、脚本和限制说明。
+> 当前真实状态和是否允许进入发布阶段，以 `FINAL_REPORT.md` 为准。
 
 ## 1. 项目边界
 
-本项目是独立的客户侧桌面工具，正式名称为“胖虎AI多 Agent 一键部署工具”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上安装和配置 Codex、ClaudeCode、OpenClaw、Hermes。
+本项目是独立的客户侧桌面工具，正式名称为“胖虎AI多 Agent 一键部署工具”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上安装和配置已接入完整配置链路的 Agent；Gemini / agy 当前只保留官方入口和待接入状态。
 
 本项目不是“胖虎AI 本地源码仓”的一部分。它只对接胖虎AI的登录、部署授权、更新清单、API Key 和公开下载入口。胖虎AI网站、控制台、后端、数据库、支付、钱包等内容归另一个长期项目维护。
+
+文档权威顺序：
+
+1. 产品结构、客户可见规则、交付边界：`docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md`
+2. 技术维护、接口、构建、发布、脚本：本文件
+3. 商业版服务端合同：`docs/COMMERCIAL_BACKEND_API_CONTRACT.md`
+4. 蓝图、计划、任务图、验收、运行和状态：`PROJECT_BLUEPRINT.md`、`PLAN.md`、`TASK_GRAPH.md`、`ACCEPTANCE.md`、`RUNBOOK.md`、`FINAL_REPORT.md`
+5. `legacy/` 目录不作为当前产品判断依据。
 
 正式仓库：
 
@@ -43,8 +52,18 @@ https://aitokenapi.cc/deployer/latest.json
 7. 工具正式部署前再次拉取服务端授权清单。
 8. 工具调用官方安装入口安装 Agent。
 9. 对安全可写的 Codex 写入胖虎AI配置。
-10. 如果服务端下发临时 OpenAI 官网访问窗口，工具短时间启用 PAC 系统代理，并到点恢复。
-11. 后续用“检查更新”从公开清单下载新版包。
+10. 登录后通过“胖虎AI网站”模块的内置浏览器入口打开控制台、创建 API Key、充值购买、推广返佣和代理中心等服务端页面。
+11. 如果服务端下发临时 OpenAI 官网访问窗口，工具短时间启用 PAC 系统代理，并到点恢复。
+12. 后续用“检查更新”从公开清单下载新版包。
+
+当前登录后主模块固定为：
+
+- 配置Agent
+- 胖虎AI网站
+- 增值业务
+- 代理中心
+
+“代理中心”是登录后的独立代理业务模块。它不能只等同于胖虎AI网站推广返佣页；本工具代理中心需要服务端合同覆盖 token 返佣、下游付费激活返佣、付费安装 Agent 返佣、下游客户归因和结算状态。
 
 支持的 Agent：
 
@@ -54,12 +73,14 @@ https://aitokenapi.cc/deployer/latest.json
 | ClaudeCode | 覆盖官方 CLI 和客户端入口；写入 `~/.claude/settings.json` 的 `env`，配置 `ANTHROPIC_BASE_URL=https://aitokenapi.cc`、`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 和模型，并用 `claude --model <模型> -p <中文验收提示>` 最小中文对话验收。注意 Claude Code 会自行拼接 `/v1/messages`，这里不能写成 `/v1`，否则会变成 `/v1/v1/messages`。当前只读检测到 CLI，但独立客户端形态未稳定确认 |
 | OpenClaw | 覆盖官方 CLI 和 Hub/客户端入口；安装优先使用官方 npm 包 `openclaw@latest`，写入 `~/.openclaw/openclaw.json` 的 `models.providers.panghuai` 自定义 OpenAI-compatible 提供商（`baseUrl=https://aitokenapi.cc/v1`、`api=openai-completions`、`apiKey=买家 Key`），并用 `openclaw infer model run --model panghuai/<模型> --prompt ... --json` 最小中文对话验收。未检测到 CLI、`openclaw config validate` 未通过或最小对话失败时，不能声明完整交付 |
 | Hermes | 覆盖官方 CLI 和客户端入口；按官方文档写入 Hermes Home 下的 `config.yaml` 与 `.env`，配置 `custom_providers.panghuai`、`model.provider=custom:panghuai`、`PANGHUAI_API_KEY`，并用 `hermes --provider custom:panghuai --model <模型> -z <中文验收提示>` 最小中文对话验收。当前只读检测到 CLI，但独立客户端形态未稳定确认 |
+| Gemini / agy | 只保留 Google Antigravity 官方 CLI 和客户端入口；配置功能待开发，默认通过 Google 账号自行登录，不写入胖虎AI API Key 或网关配置，未接入前不算完整交付 |
 
 当前状态说明：
 
 - 以上三项表示“代码中已有配置写入和验收链路”，不等于所有客户机器已经完整打通。
 - 完整交付必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准。
 - OpenClaw CLI 未检测到、`openclaw config validate` 未通过、Hermes `hermes config check` 未通过、客户端形态未确认或最小中文对话未返回有效内容时，不得扣次或包装成完整交付。测试 Key 返回 401 只能证明请求链路打到胖虎AI网关，不能证明客户交付已完成。
+- 当前仓库处于“文档收束后的后端审计与功能闭环补齐阶段”，不等于最终交付完成状态；未完成真实客户闭环前，不进入三端打包、GitHub Release、下载页或 `latest.json` 更新。
 
 风险插件拦截：
 
@@ -87,7 +108,21 @@ src/panghu_codex_installer.py
 - 备份和恢复。
 - 临时 OpenAI 官网访问窗口。
 - 在线更新。
+- 内置网站入口与 pywebview / 外部浏览器回退。
 - 自检入口 `--self-test`。
+
+```text
+src/commercial_core.py
+src/commercial_api.py
+src/commercial_backend_contract.py
+```
+
+商业版核心、API 合同和后端合同模拟结构。维护重点：
+
+- 不硬编码价格、次数、有效期、设备数、返佣比例或上架状态。
+- 商业 manifest 必须走服务端签名和客户端验签。
+- 当前客户端只围绕登录后的买家上下文工作；代理身份、下游客户、token 返佣、激活返佣、安装返佣和结算状态只由网站服务端和代理后端承载。
+- `profile.json` 必须按白名单保存，只能保留账号提示、API Key、模型和界面偏好；买家登录态由独立会话 cookie 文件和内置浏览器 profile 持久化，不能把部署 token、订单号、权益 ID 或配置会话 ID 写入任一本地长期文件。
 
 ```text
 scripts/run-windows.bat
@@ -112,11 +147,25 @@ GitHub Actions 三端发布工作流。虽然文件名叫 `build-mac-release.yml
 
 ```text
 docs/发送客户说明.txt
+docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md
+docs/COMMERCIAL_BACKEND_API_CONTRACT.md
 docs/多Agent一键配置工具下载二维码.png
 assets/deployer-download-qr.png
 ```
 
-客户交付材料。
+客户交付材料和产品 / 商业合同文档。
+
+```text
+PROJECT_BLUEPRINT.md
+PLAN.md
+TASK_GRAPH.md
+ACCEPTANCE.md
+SAFETY.md
+RUNBOOK.md
+FINAL_REPORT.md
+```
+
+项目蓝图、当前计划、节点状态、验收标准、安全边界、运行手册和真实状态报告。
 
 ## 4. 关键常量
 
@@ -142,13 +191,15 @@ DEPLOYER_MANIFEST_URL = "https://aitokenapi.cc/api/deployer/manifest"
 
 ## 5. 胖虎AI服务端接口
 
+商业版服务端合同以 `docs/COMMERCIAL_BACKEND_API_CONTRACT.md` 为准。本节只列客户端必须对接或不能绕过的关键接口和技术边界。
+
 ### 登录
 
 ```text
 POST https://aitokenapi.cc/api/user/login?turnstile=
 ```
 
-客户端在本次运行内使用 cookie jar 和内存态完成登录、授权和部署。`profile.json` 只保存账号提示、API Key、模型和界面偏好，不保存可恢复登录态、部署 token、历史商业污染字段或第三方账号密码。重启工具后必须重新登录胖虎AI账号。
+客户端使用持久化 cookie jar 保存胖虎AI买家会话，并在启动时用该会话重新向服务端申请本次运行的部署授权。`profile.json` 只保存账号提示、API Key、模型和界面偏好；`buyer_session.json` 只保存非敏感买家标识，`buyer_session_cookies.txt` 保存胖虎AI站点 cookie。客户端不得保存账号密码、第三方账号密码、部署 token、订单号、权益 ID 或配置会话 ID；如果服务端返回 401/403 或用户主动退出，则清理保存会话并回到登录门禁。
 
 ### 部署激活
 
@@ -184,6 +235,29 @@ X-Panghu-Deployer-Token: 部署令牌
 - 是否下发 `temporary_openai_access`。
 
 如果服务端接口未上线或返回 401/403，客户端应停止部署，不要绕过授权。
+
+### 商业 API 合同
+
+商业能力必须由服务端控制，客户端只做展示、入口、校验请求和结果记录。当前固定边界：
+
+- 商品价格、次数、有效期、设备数、返佣比例、代理等级、上架状态和灰度规则只能来自服务端。
+- token 返佣、下游付费激活返佣、付费安装 Agent 返佣、下游客户归因和结算状态只能来自服务端或代理后端，不能由客户端计算。
+- 所有商业接口必须围绕当前登录买家 token 工作；客户端不得建立本地代操作会话，也不得让代理身份作为本地配置操作者。
+- API Key 归属校验必须由服务端确认；归属失败时不得保存 Key、不得进入配置会话、不得扣次。
+- 配置会话预占、成功、失败必须支持幂等；失败释放预占且不扣次，真实任务验证通过后才允许扣次。
+- 客户端日志、诊断包和客服摘要不得输出完整 API Key、token、Authorization、邀请码、订单号、权益 ID 或配置会话 ID。
+- 修改商业合同、权益、配置会话、扣次、撤销、返佣、manifest 验签或客户包前置逻辑后，必须跑对应商业验收脚本。
+
+### 胖虎AI网站内置入口
+
+注册、邀请码、创建 API Key、充值购买、推广返佣、代理中心和增值业务入口都属于胖虎AI网站、工具代理后端或服务端页面。客户端规则：
+
+- 优先通过 `pywebview` 在软件内打开服务端页面。
+- WebView 必须使用 `private_mode=False` 和买家专属 `storage_path` 保存 cookie/localStorage，打开前优先桥接当前持久 cookie jar，让客户重启工具后不需要在系统浏览器里二次登录胖虎AI。
+- `pywebview` 不可用、cookie 桥接失败或运行环境阻止嵌入时，必须明确提示回退到系统浏览器，并标明不能算完成内嵌网页闭环。
+- 入口 URL 必须使用 `https://aitokenapi.cc`。
+- 不能把网站购买、返佣、代理等级、套餐、钱包规则、下游客户归因或三类返佣规则复制到本地硬编码。
+- 内置入口和 WebView 前提通过，不等于真实网页登录、充值、支付、创建 Key 或代理中心闭环已完成。
 
 ## 6. HTTPS 证书处理
 
@@ -306,7 +380,7 @@ model_auto_compact_token_limit =600000
 - 模式快照目录固定为 `~/.codex/panghu_modes/`。
 - 已识别模式写入对应目录：`direct_api/`、`dual_state/`、`official_chatgpt/`。
 - 未识别模式写入 `history/<timestamp>/`，作为人工恢复线索。
-- 切换到目标模式时，允许读取目标快照作为历史基准，但 API Key、`experimental_bearer_token` 等动态字段必须按当前输入重新生成，不能把旧快照里的旧 Key 带回主配置。
+- 切换到目标模式时，允许读取目标快照作为恢复基准，但 API Key、`experimental_bearer_token` 等动态字段必须按当前输入重新生成，不能把快照里的过期 Key 带回主配置。
 - 官方直登和双态模式优先继承当前主 `auth.json` 中最新 ChatGPT 登录态；当前主文件没有登录态时，才从目标模式快照读取登录态。
 - 写入失败时必须使用原有 `backup_file()` / `restore_backup()` 回滚到本次写入前状态。
 
@@ -373,7 +447,7 @@ Mac 包选择：
 - 手动点击“检查更新”也使用同一套检查逻辑。
 - 有新版时弹窗提示客户在线更新。
 - 客户确认后下载对应系统 zip，启动独立更新脚本，退出当前工具，解压覆盖当前程序目录，再重新打开新版。
-- 更新只覆盖工具安装目录；`profile.json`、API Key、Codex 配置、备份和工作区资料都在用户目录，不能被更新流程删除。`profile.json` 不能被当作登录态恢复来源，更新后仍应要求客户重新登录胖虎AI账号。
+- 更新只覆盖工具安装目录；账号提示、API Key、Codex 配置、买家会话 cookie、内置浏览器 profile、备份和工作区资料都在用户目录，不能被更新流程删除。胖虎AI网站入口优先复用保存的买家会话；客户端不把部署授权写入 `profile.json` 或买家会话文件，会话失效时按登录门禁处理。
 
 维护重点：
 
@@ -409,6 +483,37 @@ scripts\run-windows.bat
 python src\panghu_codex_installer.py --self-test
 ```
 
+代码健康检查：
+
+```powershell
+python -m py_compile src\panghu_codex_installer.py src\commercial_core.py src\commercial_api.py src\commercial_backend_contract.py
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+网站入口前提检查：
+
+```powershell
+python scripts\customer_web_entry_acceptance.py
+```
+
+Agent 交付只读检查：
+
+```powershell
+python scripts\agent_delivery_acceptance.py
+```
+
+商业合同离线验收：
+
+```powershell
+python scripts\commercial_flow_acceptance.py --json
+```
+
+商业版本地轻量发布前检查：
+
+```powershell
+python scripts\commercial_release_acceptance.py --json
+```
+
 如果使用项目虚拟环境：
 
 ```powershell
@@ -420,6 +525,8 @@ python src\panghu_codex_installer.py --self-test
 - 当前仓库可能已有用户或上一轮 Agent 未提交改动。不要随意回退。
 - 修改前先看 `git diff`。
 - 文档、客户说明、主程序改动要分清楚。
+- 当前阶段不要运行 `python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，除非明确进入发布前深度验收或 CI 场景。
+- 自动化测试通过只代表代码健康和已有回归通过，不代表客户可交付。
 
 ## 11. Windows 打包
 
@@ -499,7 +606,7 @@ python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan
 
 后端合约模拟器、商业流程验收脚本、商业发布验收脚本、签名脚本、维护手册和测试用例属于内部验收面，不属于客户 App 运行面。它们可以作为本地和 CI 验收依据，但不得进入客户包；如果 `packaged_artifact_contents.internal_file_hits` 命中这些文件，必须重包并排查打包规则。
 
-报告里的 `non_codex_full_config_delivery_found` 必须为 `false`。该扫描用于防止 ClaudeCode、OpenClaw、Hermes 等 Agent 在未完成配置写入、启动检测、最小对话验证前，被主程序静态包装成无条件完整付费交付。真实交付状态必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准；矩阵未通过时必须 fail 配置会话、不扣次。
+报告里的 `non_codex_full_config_delivery_found` 必须为 `false`。该扫描用于防止 ClaudeCode、OpenClaw、Hermes 等 Agent 在未完成配置写入、启动检测、最小对话验证前，被主程序静态包装成无条件完整付费交付；Gemini / agy 未接入前也只能显示官方入口或待接入状态。真实交付状态必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准；矩阵未通过时必须 fail 配置会话、不扣次。
 
 若报告为 `WARN`，需要人工确认警告项后再进入发版步骤；生产商业构建必须注入 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM`，否则商业清单保持拒绝状态是预期结果。
 
@@ -674,11 +781,11 @@ unable to get local issuer certificate
 检查：
 
 - 客户下载的是否是 `v1.0.15` 或更高版本。
-- 下载页是否还指向旧版。
+- 下载页是否还指向过期版本。
 - Mac 包是否包含 certifi 数据。
 - 主程序是否仍使用 trusted HTTPS helper。
 
-### 用户重新下载仍是旧版
+### 用户重新下载仍是过期版本
 
 常见原因：
 
@@ -723,31 +830,40 @@ unable to get local issuer certificate
 
 - 不要把本项目当成胖虎AI源码仓。
 - 不要把胖虎AI控制台、后端、支付、钱包逻辑写进本仓。
-- 不要把 OpenAI/Codex、ClaudeCode、OpenClaw、Hermes 本体提交进源码仓。
+- 不要把 OpenAI/Codex、ClaudeCode、OpenClaw、Hermes、Gemini / agy 本体提交进源码仓。
 - 不要使用内部域名作为客户默认接口。
 - 不要绕过胖虎AI服务端部署授权。
 - 不要把临时 OpenAI 官网访问窗口改成常驻代理。
 - 不要静默删除客户电脑上的第三方程序。
 - 不要让 ClaudeCode/OpenClaw/Hermes 自动写入未确认安全的配置。
 - 不要只发布 GitHub Release 就说客户入口已上线。
+- 不要提供登录前身份分流、本地代操作会话或第三方账号代登录能力。
+- 不要把注册、邀请码、创建 Key、充值购买、代理中心、返佣规则或套餐规则硬编码进客户端。
+- 不要把代理中心写成已完成业务闭环；没有服务端合同时只能显示待接入状态。
+- 不要把 `profile.json` 当成登录态恢复来源；它只保存账号提示、API Key、模型和界面偏好。买家登录态恢复只来自独立会话 cookie 文件和内置浏览器 profile。
+- 不要把未完成真实客户闭环的状态写成最终交付完成。
 
 ## 18. 后续 Agent 接手顺序
 
 每次接手先做：
 
-1. 读本手册。
+1. 读 `C:\Users\Administrator\.codex\进化.md`。
 2. 读 `README.md`。
-3. 读工具项目登记文件：
+3. 读产品单一事实源 `docs\PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md`。
+4. 读本手册。
+5. 读商业后端合同 `docs\COMMERCIAL_BACKEND_API_CONTRACT.md`。
+6. 读 `PROJECT_BLUEPRINT.md`、`PLAN.md`、`TASK_GRAPH.md`、`ACCEPTANCE.md`、`SAFETY.md`、`RUNBOOK.md`、`FINAL_REPORT.md`。
+7. 读工具项目登记文件：
 
 ```text
 C:\Users\Administrator\Documents\codex\工具项目目录\projects\多 Agent 一键配置工具.md
 ```
 
-4. 查看 `git status --short`。
-5. 查看 `git diff`，不要覆盖已有未提交改动。
-6. 搜索当前任务涉及的函数或常量。
-7. 修改前明确是本地源码改动、GitHub 发布，还是生产下载入口改动。
-8. 修改后跑自检。
-9. 需要发版时按 Release 流程走完三端包和线上下载入口验证。
+8. 查看 `git status --short`。
+9. 查看 `git diff`，不要覆盖已有未提交改动。
+10. 搜索当前任务涉及的函数或常量。
+11. 修改前明确是本地源码改动、GitHub 发布，还是生产下载入口改动。
+12. 修改后跑对应自检和验收命令。
+13. 需要发版时按 Release 流程走完三端包和线上下载入口验证。
 
 如果用户问“有没有上线”“客户下载是不是新版”，必须用公网证据回答，不要只看本地代码或 GitHub Release。

@@ -14,10 +14,10 @@ import panghu_codex_installer as installer  # noqa: E402
 
 
 class AgentPlaybookTests(unittest.TestCase):
-    def test_four_agent_catalog_is_fixed_to_codex_cc_hermes_openclaw(self) -> None:
+    def test_five_agent_catalog_includes_gemini_agy_install_entry(self) -> None:
         self.assertEqual(
             {agent.id for agent in installer.AGENTS},
-            {"codex", "claude_code", "hermes", "openclaw"},
+            {"codex", "claude_code", "hermes", "openclaw", "gemini_agy"},
         )
 
     def test_every_agent_has_cli_and_client_modes_marked_configurable(self) -> None:
@@ -25,8 +25,12 @@ class AgentPlaybookTests(unittest.TestCase):
             modes = {mode.id: mode for mode in agent.modes}
             self.assertIn("cli", modes, agent.id)
             self.assertIn("client", modes, agent.id)
-            self.assertTrue(modes["cli"].supports_config, agent.id)
-            self.assertTrue(modes["client"].supports_config, agent.id)
+            if agent.id == "gemini_agy":
+                self.assertFalse(modes["cli"].supports_config, agent.id)
+                self.assertFalse(modes["client"].supports_config, agent.id)
+            else:
+                self.assertTrue(modes["cli"].supports_config, agent.id)
+                self.assertTrue(modes["client"].supports_config, agent.id)
 
     def test_non_codex_agents_have_complete_direct_conversation_playbooks(self) -> None:
         for agent_id in ("claude_code", "openclaw", "hermes"):
@@ -64,13 +68,28 @@ class AgentPlaybookTests(unittest.TestCase):
                 )
                 text = "\n".join(plan)
                 self.assertIn(agent.id, text)
-                self.assertIn("https://aitokenapi.cc/v1", text)
-                self.assertIn("gpt-5.4", text)
-                self.assertIn("第三方通道默认跳过", text)
-                self.assertIn("最小对话验证", text)
+                if agent.id == "gemini_agy":
+                    self.assertIn("配置待开发", text)
+                    self.assertIn("Google 账号自行登录", text)
+                    self.assertNotIn("sk-test-secret-123456", text)
+                else:
+                    self.assertIn("https://aitokenapi.cc/v1", text)
+                    self.assertIn("gpt-5.4", text)
+                    self.assertIn("第三方通道默认跳过", text)
+                    self.assertIn("最小对话验证", text)
                 self.assertNotIn("QQ", text)
                 self.assertNotIn("微信", text)
                 self.assertNotIn("Telegram", text)
+
+    def test_gemini_agy_is_install_only_and_not_complete_delivery(self) -> None:
+        gemini = next(agent for agent in installer.AGENTS if agent.id == "gemini_agy")
+
+        self.assertEqual(gemini.verify_command, ("agy", "--version"))
+        self.assertFalse(installer.apply_agent_config(gemini, "cli", "sk-test-secret-123456", "gpt-5.4", lambda _msg: None))
+        self.assertIn("配置待开发", installer.agent_dialogue_probe_command_text(gemini, "gpt-5.4"))
+        ok, message = installer.run_agent_dialogue_probe(gemini, "cli", "gpt-5.4")
+        self.assertFalse(ok)
+        self.assertIn("配置待开发", message)
 
     def test_claude_code_config_writes_official_settings_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

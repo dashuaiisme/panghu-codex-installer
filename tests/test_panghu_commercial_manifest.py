@@ -758,7 +758,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(app.commercial_contexts, None)
         self.assertEqual(app.api_key.value, "sk-buyer-live")
 
-    def test_load_profile_into_ui_does_not_auto_restore_buyer_session_gate(self) -> None:
+    def test_load_profile_into_ui_does_not_restore_buyer_session_from_profile_json(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
 
         class FakeVar:
@@ -811,7 +811,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(app.deployer_auth, None)
         self.assertEqual(app.commercial_contexts, None)
         self.assertEqual(app.user_label.text, "上次账号：buyer@example.com")
-        self.assertIn("请重新登录胖虎AI账号", app.status.value)
+        self.assertIn("账号提示", app.status.value)
 
     def test_save_profile_data_does_not_persist_restorable_login_identity(self) -> None:
         original_profile_path = installer_module.profile_path
@@ -1029,7 +1029,9 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         original_try = installer_module.try_open_embedded_webview
         original_browser = installer_module.webbrowser.open
         try:
-            installer_module.try_open_embedded_webview = lambda url, title="": opened.setdefault("embedded", (url, title)) or True
+            installer_module.try_open_embedded_webview = (
+                lambda url, title="", **_kwargs: opened.setdefault("embedded", (url, title)) or True
+            )
             installer_module.webbrowser.open = lambda url: opened.setdefault("browser", url) or True
 
             result = installer_module.open_url(KEY_CREATE_URL)
@@ -1050,7 +1052,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         original_webview = installer_module.webview
         try:
             installer_module.webview = None
-            installer_module.try_open_embedded_webview = lambda _url, title="": False
+            installer_module.try_open_embedded_webview = lambda _url, title="", **_kwargs: False
             installer_module.webbrowser.open = lambda url: opened.setdefault("browser", url) or True
 
             result = installer_module.open_url("https://aitokenapi.cc/pay/demo")
