@@ -11,7 +11,6 @@ sys.path.insert(0, str(SRC))
 from commercial_api import (  # noqa: E402
     CommercialApiContract,
     build_api_key_owner_verify_request,
-    build_buyer_bind_request,
     build_config_session_complete_request,
     build_config_session_fail_request,
     build_config_session_reserve_request,
@@ -41,28 +40,13 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertNotIn("api.aitokenapi.cc", self.contract.entitlements_url)
         self.assertNotIn("api.aitokenapi.cc", self.contract.api_key_owner_verify_url)
 
-    def test_buyer_bind_request_separates_operator_and_target_buyer(self) -> None:
-        request = build_buyer_bind_request(
-            self.contract,
-            operator_user_id="agent-1",
-            target_buyer_user_id="buyer-1",
-            assist_session_id="assist-1",
-            invite_code="INV-1",
-        )
-
-        self.assertEqual(request.body["operator_user_id"], "agent-1")
-        self.assertEqual(request.body["target_buyer_user_id"], "buyer-1")
-        self.assertEqual(request.body["assist_session_id"], "assist-1")
+    def test_legacy_buyer_bind_endpoint_is_not_exposed_on_client_contract(self) -> None:
+        self.assertFalse(hasattr(self.contract, "buyer_bind_url"))
+        self.assertFalse(hasattr(self.contract, "agent_assist_login_url"))
 
     def test_operator_auth_header_is_added_without_exposing_token_in_payload_summary(self) -> None:
         request = with_operator_auth(
-            build_buyer_bind_request(
-                self.contract,
-                operator_user_id="agent-1",
-                target_buyer_user_id="buyer-1",
-                assist_session_id="assist-1",
-                invite_code="INV-1",
-            ),
+            build_entitlement_query_request(self.contract, buyer_user_id="buyer-1", operator_user_id="buyer-1"),
             token="secret-operator-token",
         )
 
@@ -77,7 +61,6 @@ class CommercialApiContractTests(unittest.TestCase):
             product_id="prod-1",
             buyer_user_id="buyer-1",
             operator_user_id="agent-1",
-            assist_session_id="assist-1",
             idempotency_key="idem-1",
         )
         payment = build_payment_poll_request(self.contract, order_id="order-1", buyer_user_id="buyer-1")
@@ -100,25 +83,12 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(config.body["diagnostic_code"], "PH-CFG-1")
         self.assertEqual(config.headers["Idempotency-Key"], "idem-2")
 
-    def test_order_create_request_omits_legacy_assist_session_when_empty(self) -> None:
-        request = build_order_create_request(
-            self.contract,
-            product_id="prod-1",
-            buyer_user_id="buyer-1",
-            operator_user_id="buyer-1",
-            assist_session_id="",
-            idempotency_key="idem-1",
-        )
-
-        self.assertNotIn("assist_session_id", request.body)
-
     def test_api_key_owner_verify_request_targets_buyer_without_logging_raw_key(self) -> None:
         request = build_api_key_owner_verify_request(
             self.contract,
             api_key="sk-live-secret-token",
             target_buyer_user_id="buyer-1",
             operator_user_id="agent-1",
-            assist_session_id="assist-1",
         )
 
         self.assertTrue(request.url.endswith("/api/deployer/api-keys/verify-owner"))
@@ -128,16 +98,6 @@ class CommercialApiContractTests(unittest.TestCase):
         safe_payload = sanitize_commercial_api_payload(request.body)
         self.assertNotIn("sk-live-secret-token", str(safe_payload))
         self.assertNotIn("buyer-1", str(safe_payload))
-
-    def test_api_key_owner_verify_request_omits_legacy_assist_session_when_empty(self) -> None:
-        request = build_api_key_owner_verify_request(
-            self.contract,
-            api_key="sk-live-secret-token",
-            target_buyer_user_id="buyer-1",
-            operator_user_id="buyer-1",
-        )
-
-        self.assertNotIn("assist_session_id", request.body)
 
     def test_config_session_complete_and_fail_requests_are_separate_contracts(self) -> None:
         complete = build_config_session_complete_request(
@@ -196,7 +156,6 @@ class CommercialApiContractTests(unittest.TestCase):
                 "buyer_user_id": "buyer-1",
                 "operator_user_id": "agent-1",
                 "target_buyer_user_id": "buyer-2",
-                "assist_session_id": "assist-1",
                 "order_id": "order-1",
                 "config_session_id": "cfg-real",
                 "diagnostic_code": "PH-CFG-1",

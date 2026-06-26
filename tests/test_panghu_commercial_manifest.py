@@ -13,7 +13,6 @@ sys.path.insert(0, str(SRC))
 import panghu_codex_installer as installer_module  # noqa: E402
 from panghu_codex_installer import (  # noqa: E402
     CodexConfigMode,
-    AgentAssistDraft,
     InstallerApp,
     UserContext,
     KEY_CREATE_URL,
@@ -31,7 +30,7 @@ from panghu_codex_installer import (  # noqa: E402
     operator_auth_token,
     execute_api_key_owner_verify,
     cleanup_ephemeral_web_profile,
-    cleanup_agent_assist_web_profiles,
+    cleanup_legacy_ephemeral_web_profiles,
     agent_center_summary_text,
     sanitize_worker_message,
     manifest_commercial_entitlements,
@@ -39,11 +38,10 @@ from panghu_codex_installer import (  # noqa: E402
     load_commercial_manifest_public_key,
     DEFAULT_BASE_URL,
 )
-from commercial_core import CommercialProduct, DeliveryScope, EntitlementContract, create_agent_assist_contexts, create_commercial_web_profile  # noqa: E402
+from commercial_core import CommercialProduct, DeliveryScope, EntitlementContract, create_commercial_web_profile  # noqa: E402
 from commercial_core import build_customer_purchase_product_lines  # noqa: E402
 from commercial_core import canonical_commercial_manifest_payload  # noqa: E402
-from commercial_core import AgentAssistNode, BuyerSelfServiceNode, NodeStatus  # noqa: E402
-
+from commercial_core import BuyerSelfServiceNode, NodeStatus  # noqa: E402
 
 def sign_manifest_for_test(manifest: dict) -> str:
     from cryptography.hazmat.primitives import serialization
@@ -234,21 +232,14 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(commercial_mode_key_for_config_mode(CodexConfigMode.DIRECT_API), "direct_api")
         self.assertEqual(commercial_mode_key_for_config_mode(CodexConfigMode.DUAL_STATE), "dual_state")
 
-    def test_deployment_context_ignores_legacy_agent_assist_and_uses_logged_in_buyer(self) -> None:
-        draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-1", display_name="客服", role="agent"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-            assist_session_id="assist-1",
-        )
-
-        contexts = deployment_commercial_contexts({"id": "login-buyer", "username": "本人"}, draft)
+    def test_deployment_context_uses_logged_in_buyer_only(self) -> None:
+        contexts = deployment_commercial_contexts({"id": "login-buyer", "username": "本人"})
 
         self.assertEqual(contexts.operator.user_id, "login-buyer")
         self.assertEqual(contexts.target_buyer.user_id, "login-buyer")
-        self.assertFalse(contexts.is_agent_assist)
 
-    def test_deployment_context_falls_back_to_logged_in_buyer_without_agent_assist(self) -> None:
-        contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"}, AgentAssistDraft())
+    def test_deployment_context_falls_back_to_logged_in_buyer(self) -> None:
+        contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"})
 
         self.assertEqual(contexts.operator.user_id, "buyer-self")
         self.assertEqual(contexts.target_buyer.user_id, "buyer-self")
@@ -258,53 +249,34 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         if root.exists():
             import shutil
             shutil.rmtree(root)
-        buyer_contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"}, AgentAssistDraft())
+        buyer_contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"})
         buyer_profile = create_commercial_web_profile(buyer_contexts, str(root))
         buyer_path = ensure_commercial_web_profile_dir(buyer_profile)
         (buyer_path / "cookie.txt").write_text("buyer", encoding="utf-8")
 
-        draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-1", display_name="客服", role="agent"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-            assist_session_id="assist-1",
-        )
-        assist_profile = create_commercial_web_profile(draft.to_contexts(), str(root))
-        assist_path = ensure_commercial_web_profile_dir(assist_profile)
-        (assist_path / "cookie.txt").write_text("agent", encoding="utf-8")
-
-        cleanup_ephemeral_web_profile(assist_profile)
         cleanup_ephemeral_web_profile(buyer_profile)
 
         self.assertTrue(buyer_path.exists())
-        self.assertFalse(assist_path.exists())
         import shutil
         shutil.rmtree(root)
 
-    def test_agent_assist_cleanup_removes_real_and_placeholder_web_profiles_only(self) -> None:
+    def test_legacy_ephemeral_web_profile_cleanup_removes_only_old_agent_assist_dirs(self) -> None:
         root = ROOT / "tmp-test-agent-assist-cleanup"
         if root.exists():
             import shutil
             shutil.rmtree(root)
-        buyer_contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"}, AgentAssistDraft())
+        buyer_contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"})
         buyer_path = ensure_commercial_web_profile_dir(create_commercial_web_profile(buyer_contexts, str(root)))
         (buyer_path / "cookie.txt").write_text("buyer", encoding="utf-8")
 
-        draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-real", display_name="客服", role="agent", token="agent-token"),
-            target_buyer=UserContext(user_id="buyer-real", display_name="客户", role="buyer"),
-            assist_session_id="assist-real",
-        )
-        real_path = ensure_commercial_web_profile_dir(create_commercial_web_profile(draft.to_contexts(), str(root)))
+        real_path = root / "agent-assist-real"
+        real_path.mkdir(parents=True)
         (real_path / "cookie.txt").write_text("real", encoding="utf-8")
-        placeholder_contexts = create_agent_assist_contexts(
-            UserContext(user_id="agent-pending", display_name="代理待校验", role="agent"),
-            UserContext(user_id="buyer-pending", display_name="买家待绑定", role="buyer"),
-            "assist-real",
-        )
-        placeholder_path = ensure_commercial_web_profile_dir(create_commercial_web_profile(placeholder_contexts, str(root)))
+        placeholder_path = root / "agent-assist-placeholder"
+        placeholder_path.mkdir(parents=True)
         (placeholder_path / "cookie.txt").write_text("placeholder", encoding="utf-8")
 
-        cleanup_agent_assist_web_profiles(draft, str(root))
+        cleanup_legacy_ephemeral_web_profiles(str(root))
 
         self.assertTrue(buyer_path.exists())
         self.assertFalse(real_path.exists())
@@ -330,7 +302,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             ],
         }
         public_key_pem = sign_manifest_for_test(manifest)
-        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"}, AgentAssistDraft())
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
         captured = {}
 
         class FakeResponse:
@@ -378,7 +350,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 }
             ],
         }
-        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"}, AgentAssistDraft())
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
 
         with self.assertRaisesRegex(RuntimeError, "签名"):
             codex_config_session_reserve_from_manifest(
@@ -473,14 +445,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("reserve", summary)
 
     def test_commercial_api_request_with_auth_uses_logged_in_buyer_token(self) -> None:
-        contexts = deployment_commercial_contexts(
-            {"id": "buyer-1", "username": "本人"},
-            AgentAssistDraft(
-                agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-                target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-                assist_session_id="assist-1",
-            ),
-        )
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
         request = commercial_api_request_with_auth(
             "reserve",
             contexts,
@@ -496,15 +461,22 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(request.body["operator_user_id"], "buyer-1")
 
     def test_commercial_api_actions_all_use_logged_in_buyer_token(self) -> None:
-        contexts = deployment_commercial_contexts(
-            {"id": "buyer-1", "username": "本人"},
-            AgentAssistDraft(
-                agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-                target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-                assist_session_id="assist-1",
-                invite_code="INVITE1",
-            ),
-        )
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
+
+        cases = [
+            ("order_create", {"product_id": "prod-1"}),
+            ("payment_poll", {"order_id": "ord-1"}),
+            ("entitlement_query", {}),
+        ]
+
+        for action, kwargs in cases:
+            with self.subTest(action=action):
+                request = commercial_api_request_with_auth(
+                    action,
+                    contexts,
+                    deployer_auth={"token": "buyer-token"},
+                    **kwargs,
+                )
 
         cases = [
             ("order_create", {"product_id": "prod-1"}),
@@ -528,9 +500,9 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                     self.assertEqual(request.body["buyer_user_id"], "buyer-1")
 
     def test_commercial_api_request_rejects_legacy_buyer_bind_action(self) -> None:
-        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"}, AgentAssistDraft())
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
 
-        with self.assertRaisesRegex(ValueError, "内置浏览器"):
+        with self.assertRaisesRegex(ValueError, "Unknown commercial api action"):
             commercial_api_request_with_auth(
                 "buyer_bind",
                 contexts,
@@ -538,40 +510,12 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 invite_code="INVITE1",
             )
 
-    def test_commercial_api_request_rejects_direct_agent_assist_contexts(self) -> None:
-        contexts = create_agent_assist_contexts(
-            UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-            UserContext(user_id="buyer-1", display_name="买家", role="buyer"),
-            assist_session_id="assist-1",
-        )
-
-        with self.assertRaisesRegex(ValueError, "当前登录买家"):
-            commercial_api_request_with_auth(
-                "order_create",
-                contexts,
-                deployer_auth={"token": "buyer-token"},
-                product_id="prod-1",
-            )
-
-    def test_operator_auth_token_rejects_direct_agent_assist_contexts(self) -> None:
-        contexts = create_agent_assist_contexts(
-            UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-            UserContext(user_id="buyer-1", display_name="买家", role="buyer"),
-            assist_session_id="assist-1",
-        )
-
-        with self.assertRaisesRegex(ValueError, "当前登录买家"):
-            operator_auth_token(contexts, deployer_auth={"token": "buyer-token"})
+    def test_legacy_agent_assist_context_factory_is_not_available(self) -> None:
+        self.assertFalse(hasattr(installer_module, "create_agent_assist_contexts"))
+        self.assertFalse(hasattr(installer_module, "AgentAssistDraft"))
 
     def test_order_create_idempotency_key_is_stable_for_same_assist_context(self) -> None:
-        contexts = deployment_commercial_contexts(
-            {"id": "buyer-1", "username": "本人"},
-            AgentAssistDraft(
-                agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-                target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-                assist_session_id="assist-1",
-            ),
-        )
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
 
         first = commercial_api_request_with_auth(
             "order_create",
@@ -698,14 +642,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(summaries, ["codex/direct_api：失败兜底提交异常：cleanup network failed"])
 
     def test_execute_api_key_owner_verify_requires_target_buyer_owner(self) -> None:
-        contexts = deployment_commercial_contexts(
-            {"id": "buyer-1", "username": "本人"},
-            AgentAssistDraft(
-                agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-                target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-                assist_session_id="assist-1",
-            ),
-        )
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
         responses = [
             {"success": True, "data": {"owner_user_id": "buyer-1"}},
             {"success": True, "data": {"owner_user_id": "agent-1"}},
@@ -741,11 +678,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         app = InstallerApp.__new__(InstallerApp)
         app.logged_in_user = {"id": "login-buyer", "username": "登录用户"}
         app.deployer_auth = {"token": "buyer-token"}
-        app.agent_assist_draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-            assist_session_id="assist-1",
-        )
         app.saved_key_ok = False
         app.saved_key_signature = None
         app.log_from_worker = lambda _message: None
@@ -777,40 +709,13 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(captured["contexts"].target_buyer.user_id, "login-buyer")
         self.assertEqual(captured["data"]["api_key"], "sk-live-secret")
 
-    def test_legacy_agent_assist_login_worker_is_disabled(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.agent_assist_draft = AgentAssistDraft(
-            agent_username="agent@example.com",
-            agent_password="agent-password",
-            verification_code="123456",
-            invite_code="INVITE-KEEP",
-            assist_session_id="assist-1",
-        )
-        app.agent_assist_statuses = {}
-        logs = []
-        app.log_from_worker = logs.append
-        app.set_status_from_worker = lambda _message: None
-        app.run_on_ui = lambda callback: callback()
-        app.refresh_agent_assist_status = lambda: None
-        app.show_info_from_worker = lambda _title, _message: None
-        app.show_error_from_worker = lambda _title, _message: None
-        app.set_busy = lambda _busy: None
-        class FakeVar:
-            def __init__(self, value: str) -> None:
-                self.value = value
+    def test_legacy_agent_assist_workers_are_removed(self) -> None:
+        source = (SRC / "panghu_codex_installer.py").read_text(encoding="utf-8")
 
-            def set(self, value: str) -> None:
-                self.value = value
-
-        app.agent_assist_password = FakeVar("agent-password")
-        app.agent_assist_code = FakeVar("123456")
-        app.agent_assist_username = FakeVar("agent@example.com")
-        app._agent_assist_login_worker(object())
-
-        self.assertIsNone(app.agent_assist_draft.agent_user)
-        self.assertEqual(app.agent_assist_draft.assist_session_id, "assist-1")
-        self.assertEqual(app.agent_assist_draft.invite_code, "INVITE-KEEP")
-        self.assertIn("旧本地协助入口已停用", logs[0])
+        self.assertNotIn("def _agent_assist_login_worker", source)
+        self.assertNotIn("def _agent_create_order_worker", source)
+        self.assertNotIn("def _agent_poll_payment_worker", source)
+        self.assertNotIn("def clear_agent_assist_session", source)
 
     def test_load_profile_into_ui_hides_legacy_agentish_username_without_restoring_session(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
@@ -939,106 +844,12 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertTrue(saved["skip_test"])
         self.assertFalse(saved["open_app"])
 
-    def test_clear_agent_assist_session_clears_target_buyer_entitlement_snapshot(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.agent_assist_draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent", token="agent-token"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-            assist_session_id="assist-1",
-        )
-        app.commercial_entitlements = [
-            EntitlementContract(
-                entitlement_id="ent-buyer-1",
-                buyer_user_id="buyer-1",
-                agent_id="codex",
-                mode_key="direct_api",
-                remaining_uses=1,
-                valid_until="2026-12-31",
-                delivery_scope=DeliveryScope.FULL_CONFIG,
-                includes_dual_state=False,
-                device_limit=1,
-                status="active",
-            )
-        ]
-        app.agent_assist_statuses = {AgentAssistNode.ENTITLEMENT_REFRESH: NodeStatus.PASS}
-        refreshed = []
+    def test_legacy_agent_assist_fields_are_not_initialized_on_app(self) -> None:
+        source = (SRC / "panghu_codex_installer.py").read_text(encoding="utf-8")
 
-        class FakeVar:
-            def __init__(self, value: str) -> None:
-                self.value = value
-
-            def set(self, value: str) -> None:
-                self.value = value
-
-        class FakePanel:
-            def pack_forget(self) -> None:
-                refreshed.append("panel-hidden")
-
-        app.agent_assist_username = FakeVar("agent@example.com")
-        app.agent_assist_password = FakeVar("agent-password")
-        app.agent_assist_code = FakeVar("123456")
-        app.agent_assist_invite = FakeVar("INVITE")
-        app.agent_assist_buyer_id = FakeVar("buyer-1")
-        app.agent_assist_product_id = FakeVar("prod-codex")
-        app.agent_assist_order_id = FakeVar("ord-1")
-        app.status = FakeVar("")
-        app.agent_assist_panel = FakePanel()
-        app.refresh_agent_assist_status = lambda: refreshed.append("assist-status")
-        app.refresh_steps = lambda: refreshed.append("steps")
-        app.log = lambda _message: None
-
-        original_cleanup = installer_module.cleanup_agent_assist_web_profiles
-        try:
-            installer_module.cleanup_agent_assist_web_profiles = lambda _draft: refreshed.append("web-profile-cleaned")
-
-            app.clear_agent_assist_session()
-        finally:
-            installer_module.cleanup_agent_assist_web_profiles = original_cleanup
-
-        self.assertEqual(app.commercial_entitlements, [])
-        self.assertIn("steps", refreshed)
-        self.assertIn("web-profile-cleaned", refreshed)
-        self.assertEqual(app.agent_assist_username.value, "")
-        self.assertEqual(app.agent_assist_draft.agent_user, None)
-
-    def test_legacy_agent_create_order_entry_is_disabled(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.worker_running = False
-        app.agent_assist_draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-1", display_name="代理", role="agent"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-            assist_session_id="assist-1",
-        )
-        app.commercial_products = [
-            CommercialProduct(
-                product_id="dual-only",
-                title="双态商品",
-                agent_id="codex",
-                mode_key="dual_state",
-                delivery_scope=DeliveryScope.FULL_CONFIG,
-                price_cents=9900,
-                currency="CNY",
-                remaining_uses=1,
-                valid_until="2026-12-31",
-                includes_dual_state=True,
-                device_limit=1,
-                is_listed=True,
-            )
-        ]
-        app.agent_assist_product_id = type("Var", (), {"get": lambda _self: "dual-only"})()
-        called = []
-        original_request = installer_module.commercial_api_request_with_auth
-        try:
-            app.show_agent_assist_panel = lambda: called.append("disabled")
-            installer_module.commercial_api_request_with_auth = lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                AssertionError("不应为不匹配商品创建订单请求")
-            )
-
-            app.start_agent_create_order()
-        finally:
-            installer_module.commercial_api_request_with_auth = original_request
-
-        self.assertEqual(called, ["disabled"])
+        self.assertNotIn("self.agent_assist_draft", source)
+        self.assertNotIn("self.agent_assist_statuses", source)
+        self.assertNotIn("self.agent_assist_product_id", source)
 
     def test_customer_purchase_product_lines_show_price_uses_device_and_expiry(self) -> None:
         products = [
@@ -1080,64 +891,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("10次", lines[0])
         self.assertIn("2台设备", lines[0])
         self.assertIn("2026-12-31", lines[0])
-
-    def test_legacy_agent_create_order_worker_is_disabled(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.agent_assist_statuses = {}
-        app.agent_assist_order_id = type("Var", (), {"set": lambda _self, value: setattr(app, "order_id_value", value)})()
-        logs = []
-        app.log_from_worker = logs.append
-        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
-        app.run_on_ui = lambda callback: callback()
-        app.refresh_agent_assist_status = lambda: None
-        app.show_error_from_worker = lambda _title, _message: None
-        app.set_busy = lambda _busy: None
-        infos = []
-        app.show_info_from_worker = lambda title, message: infos.append((title, message))
-        original_execute = installer_module.execute_commercial_api_with_trusted_certs
-        try:
-            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
-                {
-                    "order_id": "ord-real",
-                    "payment_url": "https://aitokenapi.cc/pay/ord-real",
-                    "payment_qr_url": "https://aitokenapi.cc/pay/ord-real.png",
-                    "expires_at": "2026-12-31T23:59:59+08:00",
-                },
-                "订单已创建",
-            )
-
-            app._agent_create_order_worker(object())
-        finally:
-            installer_module.execute_commercial_api_with_trusted_certs = original_execute
-
-        self.assertFalse(hasattr(app, "order_id_value"))
-        self.assertEqual(app.agent_assist_statuses, {})
-        self.assertIn("旧协助下单入口已停用", logs[0])
-        self.assertEqual(infos, [])
-
-    def test_legacy_agent_payment_poll_worker_is_disabled(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.agent_assist_statuses = {}
-        logs = []
-        app.log_from_worker = logs.append
-        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
-        app.run_on_ui = lambda callback: callback()
-        app.refresh_agent_assist_status = lambda: None
-        app.show_error_from_worker = lambda _title, _message: None
-        app.set_busy = lambda _busy: None
-        original_execute = installer_module.execute_commercial_api_with_trusted_certs
-        try:
-            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
-                {"order_id": "ord-real", "payment_status": "paid"},
-                "支付已返回",
-            )
-
-            app._agent_poll_payment_worker(object())
-        finally:
-            installer_module.execute_commercial_api_with_trusted_certs = original_execute
-
-        self.assertEqual(app.agent_assist_statuses, {})
-        self.assertIn("旧协助支付查询入口已停用", logs[0])
 
     def test_buyer_self_service_order_uses_logged_in_buyer_context_and_surfaces_payment(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
@@ -1244,12 +997,10 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 self.value = value
 
         app.buyer_product_id = FakeVar("")
-        app.agent_assist_product_id = FakeVar("")
 
         app.refresh_recommended_agent_product()
 
         self.assertEqual(app.buyer_product_id.value, "prod-codex")
-        self.assertEqual(app.agent_assist_product_id.value, "")
 
     def test_buyer_purchase_status_shows_key_creation_gap_and_balance_hint_when_no_products(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
@@ -1337,15 +1088,9 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertNotIn(term, source)
 
-        draft = AgentAssistDraft(
-            agent_user=UserContext(user_id="agent-1", display_name="客服", role="agent"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="客户", role="buyer"),
-            assist_session_id="assist-1",
-        )
-        contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"}, draft)
+        contexts = deployment_commercial_contexts({"id": "buyer-self", "username": "本人"})
         self.assertEqual(contexts.operator.user_id, "buyer-self")
         self.assertEqual(contexts.target_buyer.user_id, "buyer-self")
-        self.assertFalse(contexts.is_agent_assist)
 
     def test_top_modules_and_side_nav_contract(self) -> None:
         self.assertEqual(
@@ -1543,7 +1288,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         app.set_busy = lambda _busy: None
         captured_errors = []
         app.show_error_from_worker = lambda title, message: captured_errors.append((title, message))
-        contexts = deployment_commercial_contexts({"id": "buyer-1"}, AgentAssistDraft())
+        contexts = deployment_commercial_contexts({"id": "buyer-1"})
         original_fetch = installer_module.fetch_deployer_manifest
         original_fail_cleanup = installer_module.fail_unfinished_config_sessions
         try:
@@ -1590,7 +1335,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         app.commercial_products = []
         app.commercial_entitlements = []
         app.refresh_commercial_summary = lambda: None
-        contexts = deployment_commercial_contexts({"id": "buyer-1"}, AgentAssistDraft())
+        contexts = deployment_commercial_contexts({"id": "buyer-1"})
         openclaw = next(agent for agent in installer_module.AGENTS if agent.id == "openclaw")
 
         original_fetch = installer_module.fetch_deployer_manifest
@@ -1670,7 +1415,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         app.commercial_products = []
         app.commercial_entitlements = []
         app.refresh_commercial_summary = lambda: None
-        contexts = deployment_commercial_contexts({"id": "buyer-1"}, AgentAssistDraft())
+        contexts = deployment_commercial_contexts({"id": "buyer-1"})
         hermes = next(agent for agent in installer_module.AGENTS if agent.id == "hermes")
         completed = []
         failed = []

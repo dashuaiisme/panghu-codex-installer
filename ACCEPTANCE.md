@@ -105,8 +105,8 @@ Codex 模式切换必须验收：
 必须满足：
 
 - API Key 不输出到日志
-- 不保存代理登录态
-- 代理登录态不写入 `profile.json`
+- 不保存可恢复登录 token
+- 服务端授权 token 不写入 `profile.json`
 - 不保存可恢复买家登录 token，重启后必须重新登录胖虎AI账号
 - 所有客户默认请求走 `https://aitokenapi.cc`
 - 不硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态

@@ -23,7 +23,6 @@ SENSITIVE_FIELDS = {
     "buyer_user_id",
     "operator_user_id",
     "target_buyer_user_id",
-    "assist_session_id",
     "order_id",
     "config_session_id",
 }
@@ -33,8 +32,8 @@ SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"\b1[3-9]\d{9}\b"),
     re.compile(r"\bsk-[A-Za-z0-9._-]+\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+\b"),
-    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id|assist_session_id)\s*[:=]\s*[A-Za-z0-9._~:/+-]+\b"),
-    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id|assist_session_id)\s+[A-Za-z0-9._~:/+-]+\b"),
+    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id)\s*[:=]\s*[A-Za-z0-9._~:/+-]+\b"),
+    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id)\s+[A-Za-z0-9._~:/+-]+\b"),
     re.compile(r"\b(?:ord|order|ent|cfg|assist|invite)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
 )
 
@@ -45,17 +44,6 @@ class CommercialApiContract:
 
     def _url(self, path: str) -> str:
         return self.base_url.rstrip("/") + path
-
-    # Legacy proxy/agent-assist contract endpoints retained only for
-    # compatibility review and cleanup. Current buyer flow should not depend on
-    # them as primary product APIs.
-    @property
-    def agent_assist_login_url(self) -> str:
-        return self._url("/api/deployer/agent-assist/login")
-
-    @property
-    def buyer_bind_url(self) -> str:
-        return self._url("/api/deployer/agent-assist/bind-buyer")
 
     @property
     def api_key_owner_verify_url(self) -> str:
@@ -152,11 +140,8 @@ def stable_order_idempotency_key(
     product_id: str,
     buyer_user_id: str,
     operator_user_id: str,
-    assist_session_id: str,
 ) -> str:
-    # Keep assist_session_id in the hash for legacy compatibility, but current
-    # buyer self-service flow should pass an empty value here.
-    seed = f"order:{product_id}:{buyer_user_id}:{operator_user_id}:{assist_session_id}".encode("utf-8")
+    seed = f"order:{product_id}:{buyer_user_id}:{operator_user_id}".encode("utf-8")
     digest = hashlib.sha256(seed).hexdigest()[:24]
     return f"order-{digest}"
 
@@ -203,70 +188,20 @@ def execute_commercial_api_request(
     return data, summary
 
 
-def build_agent_assist_login_request(
-    contract: CommercialApiContract,
-    agent_username: str,
-    agent_password: str,
-    verification_code: str,
-    invite_code: str,
-    device_id: str,
-    app_version: str,
-) -> CommercialApiRequest:
-    # Legacy proxy/agent-assist login request. Current product flow should not
-    # call this in customer-facing deployment paths.
-    return CommercialApiRequest(
-        method="POST",
-        url=contract.agent_assist_login_url,
-        body={
-            "role": "agent",
-            "username": agent_username,
-            "password": agent_password,
-            "verification_code": verification_code,
-            "invite_code": invite_code,
-            "device_id": device_id,
-            "app_version": app_version,
-        },
-    )
-
-
-def build_buyer_bind_request(
-    contract: CommercialApiContract,
-    operator_user_id: str,
-    target_buyer_user_id: str,
-    assist_session_id: str,
-    invite_code: str,
-) -> CommercialApiRequest:
-    # Legacy proxy/agent-assist buyer binding request.
-    return CommercialApiRequest(
-        method="POST",
-        url=contract.buyer_bind_url,
-        body={
-            "operator_user_id": operator_user_id,
-            "target_buyer_user_id": target_buyer_user_id,
-            "assist_session_id": assist_session_id,
-            "invite_code": invite_code,
-        },
-    )
-
-
 def build_api_key_owner_verify_request(
     contract: CommercialApiContract,
     api_key: str,
     target_buyer_user_id: str,
     operator_user_id: str,
-    assist_session_id: str = "",
 ) -> CommercialApiRequest:
-    body = {
-        "api_key": api_key,
-        "target_buyer_user_id": target_buyer_user_id,
-        "operator_user_id": operator_user_id,
-    }
-    if str(assist_session_id or "").strip():
-        body["assist_session_id"] = assist_session_id
     return CommercialApiRequest(
         method="POST",
         url=contract.api_key_owner_verify_url,
-        body=body,
+        body={
+            "api_key": api_key,
+            "target_buyer_user_id": target_buyer_user_id,
+            "operator_user_id": operator_user_id,
+        },
     )
 
 
@@ -287,21 +222,17 @@ def build_order_create_request(
     product_id: str,
     buyer_user_id: str,
     operator_user_id: str,
-    assist_session_id: str,
     idempotency_key: str,
 ) -> CommercialApiRequest:
-    body = {
-        "product_id": product_id,
-        "target_buyer_user_id": buyer_user_id,
-        "operator_user_id": operator_user_id,
-    }
-    if str(assist_session_id or "").strip():
-        body["assist_session_id"] = assist_session_id
     return CommercialApiRequest(
         method="POST",
         url=contract.order_create_url,
         headers={"Idempotency-Key": idempotency_key},
-        body=body,
+        body={
+            "product_id": product_id,
+            "target_buyer_user_id": buyer_user_id,
+            "operator_user_id": operator_user_id,
+        },
     )
 
 

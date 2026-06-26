@@ -43,8 +43,6 @@ from commercial_api import (
     with_operator_auth,
 )
 from commercial_core import (
-    AgentAssistDraft,
-    AgentAssistNode,
     BuyerSelfServiceNode,
     DeliveryScope,
     DeploymentNode,
@@ -53,7 +51,6 @@ from commercial_core import (
     NodeStatus,
     RealTaskVerificationResult,
     UserContext,
-    build_agent_assist_status_rows,
     build_agent_center_summary_lines,
     build_agent_customer_state,
     build_buyer_self_service_status_rows,
@@ -71,7 +68,6 @@ from commercial_core import (
     commercial_config_gate,
     commercial_deployment_blockers,
     config_session_terminal_action,
-    create_agent_assist_contexts,
     create_buyer_contexts,
     create_commercial_web_profile,
     find_listed_product,
@@ -282,7 +278,7 @@ MODULE_ACTION_CARDS = {
             ("现在要做什么", "打开推广返佣页，查看邀请码、推广链接和返佣记录。"),
             ("做完看哪里", "需要注册新买家时，也从这里继续进入返佣或邀请相关入口。"),
             ("客服确认点", "代理身份、邀请码绑定和返佣结算全部以网站服务端为准。"),
-            ("注意事项", "桌面端不再执行本地 buyer_bind 或本地代理临时登录链路。"),
+            ("注意事项", "邀请码、返佣和代理身份均由胖虎AI网站服务端处理。"),
         ),
     },
     MODULE_VALUE_ADDED: {
@@ -319,7 +315,7 @@ MODULE_ACTION_CARDS = {
             ("注意事项", "代理规则与代理结算来自网站服务端，不在本地写死。"),
         ),
         "agent_proxy": (
-            ("后端入口", "工具代理相关后端统一从这里进入，不再散落在旧的本地代理协助入口里。"),
+            ("后端入口", "工具代理相关后端统一从胖虎AI网站和服务端代理中心进入。"),
             ("服务开关", "哪些代理能力已开放，由服务端和代理后端决定。"),
             ("接入计划", "后续代理工具诊断、回调和售后入口也统一归到这里。"),
             ("注意事项", "当前版本优先完成入口与状态衔接，不在本地重做代理业务规则。"),
@@ -1022,27 +1018,23 @@ def cleanup_ephemeral_web_profile(profile) -> None:
         shutil.rmtree(path)
 
 
-def cleanup_agent_assist_web_profiles(agent_assist_draft: AgentAssistDraft, root_dir: str | None = None) -> None:
-    assist_session_id = str(agent_assist_draft.assist_session_id or "").strip()
-    if not assist_session_id:
+def cleanup_legacy_ephemeral_web_profiles(root_dir: str | None = None) -> None:
+    root = Path(root_dir or web_profile_root())
+    if not root.exists():
         return
-    root = str(root_dir or web_profile_root())
-    profiles = []
-    if agent_assist_draft.agent_user is not None and agent_assist_draft.target_buyer is not None:
-        profiles.append(create_commercial_web_profile(agent_assist_draft.to_contexts(), root))
-    placeholder_contexts = create_agent_assist_contexts(
-        UserContext(user_id="agent-pending", display_name="代理待校验", role="agent"),
-        UserContext(user_id="buyer-pending", display_name="买家待绑定", role="buyer"),
-        assist_session_id,
-    )
-    profiles.append(create_commercial_web_profile(placeholder_contexts, root))
-    seen: set[str] = set()
-    for profile in profiles:
-        path = str(profile.path)
-        if path in seen:
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return
+    for path in root.glob("agent-assist-*"):
+        try:
+            resolved_path = path.resolve()
+        except OSError:
             continue
-        seen.add(path)
-        cleanup_ephemeral_web_profile(profile)
+        if resolved_path == resolved_root or resolved_root not in resolved_path.parents:
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
 
 
 def backup_file(path: Path) -> Path | None:
@@ -1711,10 +1703,7 @@ def codex_config_mode_requires_panghu_key(mode: CodexConfigMode) -> bool:
     return mode in (CodexConfigMode.DIRECT_API, CodexConfigMode.DUAL_STATE)
 
 
-def deployment_commercial_contexts(user: dict, agent_assist_draft: AgentAssistDraft | None = None) -> "CommercialSessionContexts":
-    # Current product model is a single buyer-account login. Legacy agent-assist
-    # draft data may exist only for cleanup compatibility and must never decide
-    # delivery ownership.
+def deployment_commercial_contexts(user: dict) -> "CommercialSessionContexts":
     buyer = UserContext(
         user_id=str(user.get("id") or ""),
         display_name=str(user.get("username") or user.get("display_name") or "当前买家"),
@@ -1760,9 +1749,6 @@ def build_commercial_config_session_reserve_preview(
 
 
 def operator_auth_token(contexts, deployer_auth: dict | None = None) -> str:
-    # Mainline product flow uses the logged-in buyer token from deployer_auth.
-    if getattr(contexts, "is_agent_assist", False):
-        raise ValueError("商业接口只允许当前登录买家上下文；代理中心、邀请码和注册请通过胖虎AI网站内置浏览器完成。")
     return str((deployer_auth or {}).get("token") or contexts.operator.token or "").strip()
 
 
@@ -1772,11 +1758,6 @@ def commercial_api_request_with_auth(
     deployer_auth: dict | None = None,
     **kwargs,
 ):
-    # Buyer self-service is the only supported delivery path. Legacy
-    # proxy/agent-assist fields may still appear on contexts for cleanup or old
-    # test fixtures, but they must not control real delivery ownership.
-    if getattr(contexts, "is_agent_assist", False):
-        raise ValueError("商业接口只允许当前登录买家上下文；代理中心、邀请码和注册请通过胖虎AI网站内置浏览器完成。")
     token = operator_auth_token(contexts, deployer_auth)
     if action == "api_key_owner_verify":
         request = build_api_key_owner_verify_request(
@@ -1784,22 +1765,17 @@ def commercial_api_request_with_auth(
             api_key=str(kwargs["api_key"]),
             target_buyer_user_id=contexts.target_buyer.user_id,
             operator_user_id=contexts.operator.user_id,
-            assist_session_id=contexts.assist_session_id,
         )
-    elif action == "buyer_bind":
-        raise ValueError("邀请码绑定和注册必须通过胖虎AI网站内置浏览器完成，桌面端不再执行本地 buyer_bind 接口。")
     elif action == "order_create":
         request = build_order_create_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             product_id=str(kwargs["product_id"]),
             buyer_user_id=contexts.target_buyer.user_id,
             operator_user_id=contexts.operator.user_id,
-            assist_session_id=contexts.assist_session_id,
             idempotency_key=stable_order_idempotency_key(
                 product_id=str(kwargs["product_id"]),
                 buyer_user_id=contexts.target_buyer.user_id,
                 operator_user_id=contexts.operator.user_id,
-                assist_session_id=contexts.assist_session_id,
             ),
         )
     elif action == "payment_poll":
@@ -1844,7 +1820,7 @@ def commercial_api_request_with_auth(
             idempotency_key=stable_config_session_idempotency_key("fail", config_session_id, diagnostic_code),
         )
     else:
-        raise ValueError("未知商业接口动作。")
+        raise ValueError(f"Unknown commercial api action: {action}")
     return with_operator_auth(request, token)
 
 
@@ -3814,7 +3790,7 @@ class WebviewApi:
                 return {"success": False, "message": "请先填写胖虎AI API Key。"}
 
             self.app.status.set("状态：正在测试 API Key...")
-            contexts = deployment_commercial_contexts(self.app.logged_in_user or {}, self.app.agent_assist_draft)
+            contexts = deployment_commercial_contexts(self.app.logged_in_user or {})
             verify_msg = execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.app.deployer_auth)
             self.app.log(verify_msg)
 
@@ -4030,8 +4006,6 @@ class InstallerApp:
         self.commercial_capabilities = {}
         self.commercial_products = []
         self.commercial_entitlements: list[EntitlementContract] = []
-        self.agent_assist_draft = AgentAssistDraft()
-        self.agent_assist_statuses: dict[AgentAssistNode, NodeStatus] = {}
         self.commercial_api = CommercialApiContract(DEFAULT_BASE_URL)
         self.last_diagnostic_code = ""
         self.saved_key_ok = False
@@ -4047,15 +4021,6 @@ class InstallerApp:
 
         self.login_username = tk.StringVar()
         self.login_password = tk.StringVar()
-        self.agent_assist_username = tk.StringVar()
-        self.agent_assist_password = tk.StringVar()
-        self.agent_assist_code = tk.StringVar()
-        self.agent_assist_invite = tk.StringVar()
-        self.agent_assist_buyer_id = tk.StringVar()
-        # Legacy compatibility alias kept only so old cleanup/tests can still
-        # instantiate the deprecated agent-assist shell safely.
-        self.agent_assist_product_id = tk.StringVar()
-        self.agent_assist_order_id = tk.StringVar()
         self.buyer_product_id = tk.StringVar()
         self.buyer_order_id = tk.StringVar()
         self.login_entry_mode = tk.StringVar(value="buyer")
@@ -5362,17 +5327,11 @@ class InstallerApp:
             )
         if hasattr(self, "buyer_login_panel"):
             self.buyer_login_panel.pack(fill="x")
-        if hasattr(self, "agent_assist_panel"):
-            self.agent_assist_panel.pack_forget()
-        if hasattr(self, "agent_assist_detail_panel"):
-            self.agent_assist_detail_panel.pack_forget()
 
     def focus_buyer_login(self) -> None:
         if hasattr(self, "login_entry_mode"):
             self.login_entry_mode.set("buyer")
         self.refresh_login_entry_mode()
-        if hasattr(self, "agent_assist_panel"):
-            self.agent_assist_panel.pack_forget()
         if hasattr(self, "base_url"):
             self.base_url.set(DEFAULT_BASE_URL)
         if hasattr(self, "status"):
@@ -5384,40 +5343,6 @@ class InstallerApp:
             "代理中心",
             agent_center_summary_text(self.deployer_manifest),
         )
-
-    def show_agent_assist_panel(self) -> None:
-        messagebox.showinfo(
-            "代理中心",
-            "旧版本地代理协助流程已取消。请先登录胖虎AI账号，再到“胖虎AI网站 / 代理中心”查看代理身份、邀请码和返佣信息。",
-        )
-
-    def start_agent_assist_session(self) -> None:
-        self.show_agent_assist_panel()
-
-    def _agent_assist_login_worker(self, request) -> None:
-        self.log_from_worker("旧本地协助入口已停用，未执行任何本地代理协助流程。")
-        self.run_on_ui(lambda: self.set_busy(False))
-
-    def start_agent_bind_buyer(self) -> None:
-        self.show_agent_assist_panel()
-
-    def _agent_bind_buyer_worker(self, request, buyer_id: str) -> None:
-        self.log_from_worker("旧协助绑定入口已停用，未执行任何本地绑定。")
-        self.run_on_ui(lambda: self.set_busy(False))
-
-    def start_agent_create_order(self) -> None:
-        self.show_agent_assist_panel()
-
-    def _agent_create_order_worker(self, request) -> None:
-        self.log_from_worker("旧协助下单入口已停用，未执行任何本地下单。")
-        self.run_on_ui(lambda: self.set_busy(False))
-
-    def start_agent_poll_payment(self) -> None:
-        self.show_agent_assist_panel()
-
-    def _agent_poll_payment_worker(self, request) -> None:
-        self.log_from_worker("旧协助支付查询入口已停用，未执行任何本地支付查询。")
-        self.run_on_ui(lambda: self.set_busy(False))
 
     def start_buyer_create_order(self) -> None:
         if self.worker_running:
@@ -5541,49 +5466,6 @@ class InstallerApp:
             self.show_error_from_worker("刷新权益失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
-
-    def start_agent_refresh_entitlements(self) -> None:
-        self.show_agent_assist_panel()
-
-    def _agent_refresh_entitlements_worker(self, request) -> None:
-        self.log_from_worker("旧协助权益刷新入口已停用，未执行任何本地权益刷新。")
-        self.run_on_ui(lambda: self.set_busy(False))
-
-    def clear_agent_assist_session(self) -> None:
-        had_agent_assist_context = bool(
-            self.agent_assist_draft.assist_session_id
-            or self.agent_assist_draft.agent_user is not None
-            or self.agent_assist_draft.target_buyer is not None
-        )
-        cleanup_agent_assist_web_profiles(self.agent_assist_draft)
-        self.agent_assist_draft.clear_sensitive_fields()
-        self.agent_assist_statuses.clear()
-        if had_agent_assist_context:
-            self.commercial_entitlements = []
-        self.agent_assist_username.set("")
-        self.agent_assist_password.set("")
-        self.agent_assist_code.set("")
-        self.agent_assist_invite.set("")
-        self.agent_assist_buyer_id.set("")
-        self.agent_assist_product_id.set("")
-        self.agent_assist_order_id.set("")
-        self.refresh_agent_assist_status()
-        if had_agent_assist_context:
-            self.refresh_steps()
-        self.status.set("状态：旧协助资料已清空")
-        self.log("旧协助资料：已清空历史账号、密码、验证码、邀请码和临时会话。")
-        self.agent_assist_panel.pack_forget()
-
-    def refresh_agent_assist_status(self) -> None:
-        if getattr(self, 'webview_mode', False):
-            self.sync_webview_state()
-            return
-        label = getattr(self, "agent_assist_status_label", None)
-        if not label:
-            return
-        lines = [row.customer_message for row in build_agent_assist_status_rows(self.agent_assist_statuses)]
-        label.configure(text="\n".join(lines))
-        self.refresh_customer_purchase_products()
 
     def refresh_customer_purchase_products(self) -> None:
         if getattr(self, 'webview_mode', False):
@@ -5799,11 +5681,6 @@ class InstallerApp:
             font=("Microsoft YaHei UI", 9),
         )
         self.buyer_purchase_status_label.pack(fill="x", pady=(6, 0))
-
-    def _build_agent_assist_panel(self, parent: tk.Frame) -> None:
-        self.agent_assist_panel = tk.Frame(parent, bg=CARD_BG)
-        self.agent_assist_detail_panel = tk.Frame(self.agent_assist_panel, bg=CARD_BG)
-        self.agent_assist_username_entry = ttk.Entry(self.agent_assist_panel, textvariable=self.agent_assist_username)
 
     def _build_wizard_frame(self, parent: tk.Frame) -> None:
         # Legacy hook kept for old call sites. The current UI is built by _build_ui.
@@ -6650,9 +6527,7 @@ class InstallerApp:
 
     def close_app(self) -> None:
         self.app_closed = True
-        cleanup_agent_assist_web_profiles(self.agent_assist_draft)
-        self.agent_assist_draft.clear_sensitive_fields()
-        self.agent_assist_statuses.clear()
+        cleanup_legacy_ephemeral_web_profiles()
         for handle in list(getattr(self, "after_handles", set())):
             try:
                 self.root.after_cancel(handle)
@@ -6893,7 +6768,7 @@ class InstallerApp:
             base_url = DEFAULT_BASE_URL
             if not api_key.strip():
                 raise ValueError("请先填写胖虎AI API Key。")
-            contexts = deployment_commercial_contexts(self.logged_in_user or {}, self.agent_assist_draft)
+            contexts = deployment_commercial_contexts(self.logged_in_user or {})
             self.log_from_worker(execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.deployer_auth))
             if skip_test:
                 ok, msg = True, "已保存 Key，接口测试被跳过。"
@@ -7018,7 +6893,7 @@ class InstallerApp:
         if not self.validate_system_and_risk_plugins():
             return
         user = dict(self.logged_in_user or {})
-        contexts = deployment_commercial_contexts(user, self.agent_assist_draft)
+        contexts = deployment_commercial_contexts(user)
         self.commercial_contexts = contexts
         deployer_auth = dict(self.deployer_auth or {})
         api_key = self.api_key.get()
@@ -7059,7 +6934,7 @@ class InstallerApp:
         if not self.validate_system_and_risk_plugins():
             return
         user = dict(self.logged_in_user or {})
-        contexts = deployment_commercial_contexts(user, self.agent_assist_draft)
+        contexts = deployment_commercial_contexts(user)
         self.commercial_contexts = contexts
         deployer_auth = dict(self.deployer_auth or {})
         api_key = self.api_key.get()
@@ -7719,11 +7594,6 @@ def self_test() -> None:
     assert commercial_deployment_blockers(["openclaw"], hidden_capabilities)
     buyer_contexts = create_buyer_contexts(UserContext(user_id="buyer-1", display_name="买家", role="buyer"))
     assert buyer_contexts.effective_buyer_user_id == "buyer-1"
-    assist_draft = AgentAssistDraft(agent_username="agent", agent_password="pwd", verification_code="123")
-    assist_draft.clear_sensitive_fields()
-    assert assist_draft.agent_username == ""
-    assert assist_draft.agent_password == ""
-    assert assist_draft.verification_code == ""
     progress = DeploymentProgress()
     progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS)
     assert not progress.can_commit_success()

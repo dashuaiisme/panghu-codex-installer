@@ -7,7 +7,7 @@ import hashlib
 @dataclass
 class ContractOrder:
     # Service-side commercial model. The current desktop client should not
-    # interpret agent_chain as a local proxy/agent-assist workflow contract.
+    # interpret agent_chain as a local proxy workflow contract.
     order_id: str
     idempotency_key: str
     product_id: str

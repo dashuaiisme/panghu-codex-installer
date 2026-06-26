@@ -12,8 +12,6 @@ from typing import Any
 
 class WebProfileScope(str, Enum):
     BUYER = "buyer"
-    # Legacy cleanup-only scope for historical proxy/agent-assist artifacts.
-    AGENT_ASSIST_EPHEMERAL = "agent_assist_ephemeral"
 
 
 class DeliveryScope(str, Enum):
@@ -55,18 +53,7 @@ class DeploymentNode(str, Enum):
 
 class CommercialEntryId(str, Enum):
     BUYER_SELF_SERVICE = "buyer_self_service"
-    # Legacy customer entry id kept only for compatibility with old state/tests.
-    AGENT_ASSIST = "agent_assist"
     AGENT_CENTER = "agent_center"
-
-
-class AgentAssistNode(str, Enum):
-    AGENT_LOGIN = "agent_login"
-    BUYER_BIND = "buyer_bind"
-    ORDER_PAYMENT = "order_payment"
-    ENTITLEMENT_REFRESH = "entitlement_refresh"
-    CONFIG_SESSION = "config_session"
-    SUPPORT_HANDOFF = "support_handoff"
 
 
 class BuyerSelfServiceNode(str, Enum):
@@ -79,7 +66,7 @@ SENSITIVE_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\b1[3-9]\d{9}\b"),
     re.compile(r"\bsk[-_][A-Za-z0-9][A-Za-z0-9._-]{8,}\b"),
-    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|order_id|invite_code|config_session_id|entitlement_id|assist_session_id)\s*[:= ]\s*[A-Za-z0-9._@%+-]{3,}"),
+    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|order_id|invite_code|config_session_id|entitlement_id)\s*[:= ]\s*[A-Za-z0-9._@%+-]{3,}"),
     re.compile(r"\bINVITE-[A-Za-z0-9._-]+\b", re.IGNORECASE),
 )
 
@@ -107,37 +94,6 @@ class UserContext:
     display_name: str
     role: str
     token: str = ""
-
-
-@dataclass
-class AgentAssistDraft:
-    # Legacy compatibility structure. Current product flow does not use local
-    # proxy/agent-assist sessions to decide delivery ownership.
-    agent_username: str = ""
-    agent_password: str = ""
-    verification_code: str = ""
-    invite_code: str = ""
-    agent_user: UserContext | None = None
-    target_buyer: UserContext | None = None
-    assist_session_id: str = ""
-
-    def to_contexts(self) -> CommercialSessionContexts:
-        if self.agent_user is None:
-            raise ValueError("代理协助会话缺少代理身份。")
-        if self.target_buyer is None:
-            raise ValueError("代理协助会话缺少买家身份。")
-        if not self.assist_session_id:
-            raise ValueError("代理协助会话缺少会话 ID。")
-        return create_agent_assist_contexts(self.agent_user, self.target_buyer, self.assist_session_id)
-
-    def clear_sensitive_fields(self) -> None:
-        self.agent_username = ""
-        self.agent_password = ""
-        self.verification_code = ""
-        self.invite_code = ""
-        self.agent_user = None
-        self.target_buyer = None
-        self.assist_session_id = ""
 
 
 @dataclass(frozen=True)
@@ -175,8 +131,8 @@ class CustomerDeliveryReport:
 
 
 @dataclass(frozen=True)
-class AgentAssistStatusRow:
-    node: AgentAssistNode | BuyerSelfServiceNode
+class CustomerServiceStatusRow:
+    node: BuyerSelfServiceNode
     title: str
     status: NodeStatus
     customer_message: str
@@ -270,15 +226,10 @@ class CommercialSessionContexts:
     operator: UserContext
     target_buyer: UserContext
     web_profile_scope: WebProfileScope
-    assist_session_id: str = ""
 
     @property
     def effective_buyer_user_id(self) -> str:
         return self.target_buyer.user_id
-
-    @property
-    def is_agent_assist(self) -> bool:
-        return self.web_profile_scope == WebProfileScope.AGENT_ASSIST_EPHEMERAL
 
 
 @dataclass(frozen=True)
@@ -414,20 +365,13 @@ def build_customer_delivery_report(
 
 
 def create_commercial_web_profile(contexts: CommercialSessionContexts, root_dir: str) -> CommercialWebProfile:
-    if contexts.is_agent_assist:
-        seed = f"agent-assist:{contexts.assist_session_id}:{contexts.operator.user_id}:{contexts.target_buyer.user_id}"
-        prefix = "agent-assist"
-        ephemeral = True
-    else:
-        seed = f"buyer:{contexts.target_buyer.user_id}"
-        prefix = "buyer"
-        ephemeral = False
+    seed = f"buyer:{contexts.target_buyer.user_id}"
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
     return CommercialWebProfile(
-        profile_key=f"{prefix}-{digest}",
+        profile_key=f"buyer-{digest}",
         scope=contexts.web_profile_scope,
         root_dir=root_dir,
-        ephemeral=ephemeral,
+        ephemeral=False,
     )
 
 
@@ -498,25 +442,6 @@ ENTITLEMENT_SOURCE_LABELS: dict[str, str] = {
     "trial": "试用权益",
 }
 
-AGENT_ASSIST_NODE_TITLES: dict[AgentAssistNode, str] = {
-    AgentAssistNode.AGENT_LOGIN: "代理身份",
-    AgentAssistNode.BUYER_BIND: "绑定买家",
-    AgentAssistNode.ORDER_PAYMENT: "订单支付",
-    AgentAssistNode.ENTITLEMENT_REFRESH: "刷新权益",
-    AgentAssistNode.CONFIG_SESSION: "配置会话",
-    AgentAssistNode.SUPPORT_HANDOFF: "客服交接",
-}
-
-AGENT_ASSIST_NODE_ORDER: tuple[AgentAssistNode, ...] = (
-    AgentAssistNode.AGENT_LOGIN,
-    AgentAssistNode.BUYER_BIND,
-    AgentAssistNode.ORDER_PAYMENT,
-    AgentAssistNode.ENTITLEMENT_REFRESH,
-    AgentAssistNode.CONFIG_SESSION,
-    AgentAssistNode.SUPPORT_HANDOFF,
-)
-
-
 def build_commercial_entry_cards() -> list[CommercialEntry]:
     return [
         CommercialEntry(
@@ -534,24 +459,6 @@ def build_commercial_entry_cards() -> list[CommercialEntry]:
     ]
 
 
-def build_agent_assist_status_rows(
-    statuses: dict[AgentAssistNode, NodeStatus],
-) -> list[AgentAssistStatusRow]:
-    rows: list[AgentAssistStatusRow] = []
-    for node in AGENT_ASSIST_NODE_ORDER:
-        title = AGENT_ASSIST_NODE_TITLES[node]
-        status = statuses.get(node, NodeStatus.NOT_STARTED)
-        rows.append(
-            AgentAssistStatusRow(
-                node=node,
-                title=title,
-                status=status,
-                customer_message=f"{title}：{STATUS_MESSAGES[status]}",
-            )
-        )
-    return rows
-
-
 BUYER_SELF_SERVICE_NODE_TITLES: dict[BuyerSelfServiceNode, str] = {
     BuyerSelfServiceNode.ORDER_PAYMENT: "订单支付",
     BuyerSelfServiceNode.ENTITLEMENT_REFRESH: "刷新权益",
@@ -565,13 +472,13 @@ BUYER_SELF_SERVICE_NODE_ORDER: tuple[BuyerSelfServiceNode, ...] = (
 
 def build_buyer_self_service_status_rows(
     statuses: dict[BuyerSelfServiceNode, NodeStatus],
-) -> list[AgentAssistStatusRow]:
-    rows: list[AgentAssistStatusRow] = []
+) -> list[CustomerServiceStatusRow]:
+    rows: list[CustomerServiceStatusRow] = []
     for node in BUYER_SELF_SERVICE_NODE_ORDER:
         title = BUYER_SELF_SERVICE_NODE_TITLES[node]
         status = statuses.get(node, NodeStatus.NOT_STARTED)
         rows.append(
-            AgentAssistStatusRow(
+            CustomerServiceStatusRow(
                 node=node,
                 title=title,
                 status=status,
@@ -1090,20 +997,6 @@ def create_buyer_contexts(buyer: UserContext) -> CommercialSessionContexts:
     )
 
 
-def create_agent_assist_contexts(
-    operator_agent: UserContext,
-    target_buyer: UserContext,
-    assist_session_id: str,
-) -> CommercialSessionContexts:
-    # Legacy compatibility factory for cleaning historical local state.
-    return CommercialSessionContexts(
-        operator=operator_agent,
-        target_buyer=target_buyer,
-        web_profile_scope=WebProfileScope.AGENT_ASSIST_EPHEMERAL,
-        assist_session_id=assist_session_id,
-    )
-
-
 def _parse_delivery_scope(value: Any) -> DeliveryScope:
     try:
         return DeliveryScope(str(value or DeliveryScope.INSTALL_GUIDED.value))
@@ -1200,31 +1093,13 @@ def build_persistent_profile_payload(
     default_model: str,
 ) -> dict[str, Any]:
     current = dict(current_profile)
-    if contexts is None or not contexts.is_agent_assist:
-        current.update(updates)
-    else:
-        user = current.get("user")
-        username = str(current.get("username") or "").strip()
-        operator_ids = {
-            str(contexts.operator.user_id or "").strip(),
-            str(contexts.operator.display_name or "").strip(),
-        }
-        if isinstance(user, dict):
-            role = str(user.get("role") or "").lower()
-            user_id = str(user.get("id") or user.get("user_id") or "").strip()
-            if role == "agent" or user_id in operator_ids:
-                current["username"] = ""
-        deployer_auth = current.get("deployer_auth")
-        if isinstance(deployer_auth, dict):
-            auth_role = str(deployer_auth.get("role") or "").lower()
-            auth_token = str(deployer_auth.get("token") or "")
-            if auth_role == "agent" or auth_token == contexts.operator.token:
-                current["username"] = ""
-        if username and username in operator_ids:
-            current["username"] = ""
-        for key in ("api_key", "model", "skip_test", "open_app"):
-            if key in updates:
-                current[key] = updates[key]
+    current.update(updates)
+    user = current.get("user")
+    deployer_auth = current.get("deployer_auth")
+    if isinstance(user, dict) and str(user.get("role") or "").lower() == "agent":
+        current["username"] = ""
+    if isinstance(deployer_auth, dict) and str(deployer_auth.get("role") or "").lower() == "agent":
+        current["username"] = ""
 
     return {
         "username": str(current.get("username") or ""),

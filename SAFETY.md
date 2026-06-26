@@ -1,6 +1,6 @@
 # 安全与边界
 
-最后更新：2026-06-25
+最后更新：2026-06-26
 
 ## 0. 本文件职责
 
@@ -18,8 +18,8 @@
 - 不删除 `release/`、Windows/Mac 客户 zip、exe/app 软件本体
 - 不运行 `python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`
 - 不硬编码价格、次数、有效期、设备数、返佣比例、上架状态
-- 不把代理登录态写入 `profile.json`
 - 不把可恢复买家登录 token 写入 `profile.json`
+- 不把部署授权 token 写入 `profile.json`
 - 不把 ClaudeCode、OpenClaw、Hermes 未打通项包装成完整付费交付
 
 ## 2. 敏感信息边界

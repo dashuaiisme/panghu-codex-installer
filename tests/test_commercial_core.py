@@ -11,8 +11,6 @@ sys.path.insert(0, str(SRC))
 from commercial_core import (  # noqa: E402
     CommercialEntry,
     CommercialEntryId,
-    AgentAssistDraft,
-    AgentAssistNode,
     BuyerSelfServiceNode,
     CommercialProduct,
     CommercialWebProfile,
@@ -26,7 +24,6 @@ from commercial_core import (  # noqa: E402
     UserContext,
     WebProfileScope,
     build_commercial_agent_capabilities,
-    build_agent_assist_status_rows,
     build_buyer_self_service_status_rows,
     build_agent_customer_state,
     build_commercial_entry_cards,
@@ -45,7 +42,6 @@ from commercial_core import (  # noqa: E402
     build_agent_center_summary_lines,
     build_real_task_diagnostic_summary,
     build_persistent_profile_payload,
-    create_agent_assist_contexts,
     create_buyer_contexts,
     create_commercial_web_profile,
     find_orderable_product,
@@ -141,33 +137,6 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertEqual(contexts.effective_buyer_user_id, "buyer-1")
         self.assertEqual(contexts.web_profile_scope, WebProfileScope.BUYER)
 
-    def test_agent_assist_context_keeps_operator_and_buyer_separate(self) -> None:
-        agent = UserContext(user_id="agent-1", display_name="代理A", role="agent")
-        buyer = UserContext(user_id="buyer-2", display_name="买家B", role="buyer")
-
-        contexts = create_agent_assist_contexts(agent, buyer, assist_session_id="assist-1")
-
-        self.assertEqual(contexts.operator.user_id, "agent-1")
-        self.assertEqual(contexts.target_buyer.user_id, "buyer-2")
-        self.assertEqual(contexts.effective_buyer_user_id, "buyer-2")
-        self.assertEqual(contexts.web_profile_scope, WebProfileScope.AGENT_ASSIST_EPHEMERAL)
-
-    def test_api_key_owner_gate_allows_only_target_buyer_key_in_agent_assist(self) -> None:
-        contexts = create_agent_assist_contexts(
-            UserContext(user_id="agent-1", display_name="代理A", role="agent"),
-            UserContext(user_id="buyer-2", display_name="买家B", role="buyer"),
-            assist_session_id="assist-1",
-        )
-
-        allowed = api_key_owner_gate(contexts, verified_owner_user_id="buyer-2")
-        blocked = api_key_owner_gate(contexts, verified_owner_user_id="agent-1")
-
-        self.assertTrue(allowed.allowed)
-        self.assertFalse(blocked.allowed)
-        self.assertIn("目标买家", blocked.message)
-        self.assertNotIn("agent-1", blocked.message)
-        self.assertNotIn("buyer-2", blocked.message)
-
     def test_api_key_owner_gate_blocks_unknown_owner_for_commercial_delivery(self) -> None:
         contexts = create_buyer_contexts(UserContext(user_id="buyer-1", display_name="买家A", role="buyer"))
 
@@ -175,47 +144,6 @@ class CommercialCoreTests(unittest.TestCase):
 
         self.assertFalse(decision.allowed)
         self.assertIn("归属", decision.message)
-
-    def test_agent_assist_draft_creates_contexts_and_clears_sensitive_fields(self) -> None:
-        draft = AgentAssistDraft(
-            agent_username="agent@example.com",
-            agent_password="agent-password",
-            verification_code="123456",
-            invite_code="INVITE-001",
-            agent_user=UserContext(user_id="agent-1", display_name="代理A", role="agent", token="agent-token"),
-            target_buyer=UserContext(user_id="buyer-1", display_name="买家A", role="buyer"),
-            assist_session_id="assist-1",
-        )
-
-        contexts = draft.to_contexts()
-
-        self.assertEqual(contexts.operator.user_id, "agent-1")
-        self.assertEqual(contexts.target_buyer.user_id, "buyer-1")
-        self.assertEqual(contexts.assist_session_id, "assist-1")
-        draft.clear_sensitive_fields()
-        self.assertEqual(draft.agent_username, "")
-        self.assertEqual(draft.agent_password, "")
-        self.assertEqual(draft.verification_code, "")
-        self.assertEqual(draft.agent_user, None)
-
-    def test_agent_assist_status_rows_are_ordered_and_customer_safe(self) -> None:
-        rows = build_agent_assist_status_rows(
-            {
-                AgentAssistNode.AGENT_LOGIN: NodeStatus.PASS,
-                AgentAssistNode.BUYER_BIND: NodeStatus.RUNNING,
-            }
-        )
-
-        self.assertEqual([row.node for row in rows[:3]], [
-            AgentAssistNode.AGENT_LOGIN,
-            AgentAssistNode.BUYER_BIND,
-            AgentAssistNode.ORDER_PAYMENT,
-        ])
-        row_text = " ".join(row.customer_message for row in rows)
-        self.assertIn("代理身份", row_text)
-        self.assertIn("绑定买家", row_text)
-        self.assertNotIn("password", row_text.lower())
-        self.assertNotIn("token", row_text.lower())
 
     def test_buyer_self_service_status_rows_hide_agent_only_nodes(self) -> None:
         rows = build_buyer_self_service_status_rows(
@@ -235,22 +163,15 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertNotIn("代理身份", row_text)
         self.assertNotIn("绑定买家", row_text)
 
-    def test_agent_assist_profile_payload_persists_buyer_config_without_agent_identity(self) -> None:
-        agent = UserContext(
-            user_id="agent-1",
-            display_name="agent@example.com",
-            role="agent",
-            token="secret-token",
-        )
-        buyer = UserContext(user_id="buyer-2", display_name="买家B", role="buyer")
-        contexts = create_agent_assist_contexts(agent, buyer, assist_session_id="assist-1")
+    def test_profile_payload_drops_agent_identity_from_legacy_profile(self) -> None:
+        contexts = create_buyer_contexts(UserContext(user_id="buyer-2", display_name="买家B", role="buyer"))
 
         payload = build_persistent_profile_payload(
             current_profile={"username": "old", "api_key": "sk-test"},
             updates={
-                "username": "agent@example.com",
-                "user": {"id": "agent-1"},
-                "deployer_auth": {"token": "secret-token"},
+                "username": "buyer@example.com",
+                "user": {"id": "agent-1", "role": "agent"},
+                "deployer_auth": {"token": "secret-token", "role": "agent"},
                 "api_key": "sk-buyer-live",
                 "model": "gpt-5.4",
                 "skip_test": True,
@@ -261,23 +182,15 @@ class CommercialCoreTests(unittest.TestCase):
             default_model="gpt-5.4",
         )
 
-        self.assertNotIn("agent@example.com", str(payload))
         self.assertNotIn("secret-token", str(payload))
-        self.assertEqual(payload["username"], "old")
+        self.assertEqual(payload["username"], "")
         self.assertEqual(payload["api_key"], "sk-buyer-live")
         self.assertEqual(payload["model"], "gpt-5.4")
         self.assertTrue(payload["skip_test"])
         self.assertFalse(payload["open_app"])
 
-    def test_agent_assist_profile_payload_drops_existing_agent_assist_pollution(self) -> None:
-        agent = UserContext(
-            user_id="agent-1",
-            display_name="agent@example.com",
-            role="agent",
-            token="agent-secret-token",
-        )
-        buyer = UserContext(user_id="buyer-2", display_name="买家B", role="buyer")
-        contexts = create_agent_assist_contexts(agent, buyer, assist_session_id="assist-secret")
+    def test_profile_payload_drops_existing_agent_assist_pollution(self) -> None:
+        contexts = create_buyer_contexts(UserContext(user_id="buyer-2", display_name="买家B", role="buyer"))
 
         payload = build_persistent_profile_payload(
             current_profile={
@@ -312,15 +225,8 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertEqual(payload["api_key"], "sk-buyer-live")
         self.assertEqual(payload["deployer_auth"], {})
 
-    def test_agent_assist_profile_payload_drops_existing_agent_login_state(self) -> None:
-        agent = UserContext(
-            user_id="agent-1",
-            display_name="agent@example.com",
-            role="agent",
-            token="agent-secret-token",
-        )
-        buyer = UserContext(user_id="buyer-2", display_name="买家B", role="buyer")
-        contexts = create_agent_assist_contexts(agent, buyer, assist_session_id="assist-secret")
+    def test_profile_payload_drops_existing_agent_login_state(self) -> None:
+        contexts = create_buyer_contexts(UserContext(user_id="buyer-2", display_name="买家B", role="buyer"))
 
         payload = build_persistent_profile_payload(
             current_profile={
@@ -381,22 +287,14 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertTrue(payload["skip_test"])
         self.assertFalse(payload["open_app"])
 
-    def test_web_profile_contract_separates_buyer_and_ephemeral_agent_assist(self) -> None:
+    def test_web_profile_contract_uses_only_persistent_buyer_profile(self) -> None:
         buyer_contexts = create_buyer_contexts(UserContext(user_id="buyer-1", display_name="买家", role="buyer"))
         buyer_profile = create_commercial_web_profile(buyer_contexts, "root")
-        assist_contexts = create_agent_assist_contexts(
-            UserContext(user_id="agent-1", display_name="代理", role="agent"),
-            UserContext(user_id="buyer-1", display_name="买家", role="buyer"),
-            assist_session_id="assist-1",
-        )
-        assist_profile = create_commercial_web_profile(assist_contexts, "root")
 
         self.assertIsInstance(buyer_profile, CommercialWebProfile)
         self.assertFalse(buyer_profile.ephemeral)
-        self.assertTrue(assist_profile.ephemeral)
-        self.assertNotEqual(buyer_profile.profile_key, assist_profile.profile_key)
-        self.assertNotIn("agent-1", assist_profile.profile_key)
-        self.assertNotIn("buyer-1", assist_profile.profile_key)
+        self.assertTrue(buyer_profile.profile_key.startswith("buyer-"))
+        self.assertNotIn("buyer-1", buyer_profile.profile_key)
 
     def test_manifest_capabilities_pause_non_full_config_agents(self) -> None:
         manifest = {
@@ -514,14 +412,14 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertTrue(all(isinstance(entry, CommercialEntry) for entry in entries))
         self.assertIn("账号", entries[0].title)
         self.assertIn("代理中心", entries[1].title)
-        self.assertNotIn(CommercialEntryId.AGENT_ASSIST, [entry.entry_id for entry in entries])
+        self.assertNotIn("agent_assist", [entry.entry_id.value for entry in entries])
 
-    def test_legacy_agent_assist_structures_are_marked_for_compatibility_only(self) -> None:
+    def test_legacy_agent_assist_structures_are_removed_from_core(self) -> None:
         source = (ROOT / "src" / "commercial_core.py").read_text(encoding="utf-8")
 
-        self.assertIn("Legacy compatibility structure", source)
-        self.assertIn("Legacy compatibility factory", source)
-        self.assertIn("Legacy customer entry id kept only for compatibility", source)
+        self.assertNotIn("class AgentAssistDraft", source)
+        self.assertNotIn("class AgentAssistNode", source)
+        self.assertNotIn("create_agent_assist_contexts", source)
 
     def test_agent_center_summary_requires_server_snapshot(self) -> None:
         lines = build_agent_center_summary_lines({})
@@ -1030,15 +928,15 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertNotIn("bearer-secret-token", packet)
         self.assertIn("***", packet)
 
-    def test_customer_diagnostic_sanitizer_masks_assist_and_auth_token_fields(self) -> None:
+    def test_customer_diagnostic_sanitizer_masks_auth_and_config_token_fields(self) -> None:
         message = (
-            "assist_session_id assist-real-001 access_token=access-secret "
+            "config_session_id cfg-real-001 access_token=access-secret "
             "refresh_token:refresh-secret"
         )
 
         safe = sanitize_customer_diagnostic_text(message)
 
-        self.assertNotIn("assist-real-001", safe)
+        self.assertNotIn("cfg-real-001", safe)
         self.assertNotIn("access-secret", safe)
         self.assertNotIn("refresh-secret", safe)
         self.assertIn("***", safe)
