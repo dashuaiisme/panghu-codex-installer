@@ -129,24 +129,29 @@ LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
 DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
 REGISTER_URL = f"{DEFAULT_BASE_URL}/register"
-KEY_CREATE_URL = f"{DEFAULT_BASE_URL}/login?next=/console/token"
+PANGHU_HOME_URL = DEFAULT_BASE_URL
+KEY_CREATE_URL = f"{DEFAULT_BASE_URL}/console/token"
 CONSOLE_URL = f"{DEFAULT_BASE_URL}/console"
 BUY_URL = f"{DEFAULT_BASE_URL}/buy"
 AFFILIATE_URL = f"{DEFAULT_BASE_URL}/affiliate"
 AGENT_CENTER_URL = f"{DEFAULT_BASE_URL}/agent"
+AGENT_CUSTOMERS_URL = f"{DEFAULT_BASE_URL}/agent/customers"
+AGENT_TOKEN_COMM_URL = f"{DEFAULT_BASE_URL}/agent/token-commission"
+AGENT_ACTIVATION_COMM_URL = f"{DEFAULT_BASE_URL}/agent/activation-commission"
+AGENT_INSTALL_COMM_URL = f"{DEFAULT_BASE_URL}/agent/install-commission"
 AGENT_PROXY_URL = f"{DEFAULT_BASE_URL}/agent/proxy"
 AGENT_RULES_URL = f"{DEFAULT_BASE_URL}/agent/rules"
 VALUE_ADDED_URLS = {
     "gpt_plus": f"{DEFAULT_BASE_URL}/services?entry=gpt-plus",
     "phone_card": f"{DEFAULT_BASE_URL}/services?entry=phone-card",
     "sms_code": f"{DEFAULT_BASE_URL}/services?entry=sms-code",
-    "delivery": f"{DEFAULT_BASE_URL}/services?entry=delivery",
 }
 CODEX_WINDOWS_STORE_URL = "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
 CODEX_DOWNLOAD_URL = "https://developers.openai.com/codex/"
 CLAUDE_CODE_DOCS_URL = "https://code.claude.com/docs/en/quickstart"
 OPENCLAW_DOCS_URL = "https://docs.openclaw.ai/start/getting-started"
 HERMES_DOCS_URL = "https://hermes-agent.nousresearch.com/docs/zh-Hans/getting-started/installation"
+GEMINI_AGY_DOCS_URL = "https://antigravity.google/"
 OFFICIAL_PACKAGE_SUFFIXES = (".msixbundle", ".msix", ".appx", ".appxbundle", ".appinstaller")
 PANGHU_AGENTS_START = "<!-- PANGHUAI_CODEX_RULES_START -->"
 PANGHU_AGENTS_END = "<!-- PANGHUAI_CODEX_RULES_END -->"
@@ -227,12 +232,15 @@ MODULE_SIDE_NAV_ITEMS = {
         ("gpt_plus", "GPT 账号会员", "Plus、Team、Pro 服务入口"),
         ("phone_card", "国外手机卡", "海外号码与通信服务"),
         ("sms_code", "接码服务", "验证码接收与临时号服务"),
-        ("delivery", "代配置服务", "客服协助与交付支持"),
     ),
     MODULE_COURSES: (
-        ("agent_home", "代理总览", "代理等级、返佣与邀请码"),
-        ("agent_proxy", "工具代理后端", "连接工具代理相关后端"),
-        ("agent_rules", "代理规则", "查看结算规则与升级条件"),
+        ("agent_home", "代理总览", "代理等级、邀请入口与结算摘要"),
+        ("agent_customers", "下游客户", "查看服务端下游客户归因"),
+        ("agent_token_comm", "token 返佣", "下游 token 消费返佣摘要"),
+        ("agent_activation_comm", "激活返佣", "下游付费激活返佣摘要"),
+        ("agent_install_comm", "安装返佣", "下游客户付费安装 Agent 返佣"),
+        ("agent_proxy", "工具代理后端", "进入工具代理业务后台"),
+        ("agent_rules", "代理规则", "查看结算、升级与风控规则"),
     ),
 }
 MODULE_PAGE_META = {
@@ -246,12 +254,15 @@ MODULE_PAGE_META = {
         "gpt_plus": ("GPT 账号会员", VALUE_ADDED_URLS["gpt_plus"], "进入增值业务页的 GPT 账号会员分区，具体上架状态和价格以服务端为准。"),
         "phone_card": ("国外手机卡", VALUE_ADDED_URLS["phone_card"], "进入增值业务页的海外号码与通信服务分区，所有商品信息由网站服务端控制。"),
         "sms_code": ("接码服务", VALUE_ADDED_URLS["sms_code"], "进入增值业务页的接码服务分区，购买规则与时长不在本地硬编码。"),
-        "delivery": ("代配置服务", VALUE_ADDED_URLS["delivery"], "进入增值业务页的代配置服务分区，由客服或网站服务端继续跟进。"),
     },
     MODULE_COURSES: {
-        "agent_home": ("代理中心", AGENT_CENTER_URL, "查看当前代理等级、邀请码、返佣和代理身份说明。"),
-        "agent_proxy": ("工具代理后端", AGENT_PROXY_URL, "连接工具代理相关后端，后续代理工具能力统一从这里进入。"),
-        "agent_rules": ("代理规则", AGENT_RULES_URL, "查看代理结算、升级、提现和返佣规则说明。"),
+        "agent_home": ("代理总览", AGENT_CENTER_URL, "查看当前代理状态、等级、邀请入口和结算摘要。"),
+        "agent_customers": ("下游客户", AGENT_CUSTOMERS_URL, "查看下游客户归因、绑定时间和服务端客户摘要。"),
+        "agent_token_comm": ("token 返佣", AGENT_TOKEN_COMM_URL, "查看下游 token/API 消费产生的返佣摘要。"),
+        "agent_activation_comm": ("激活返佣", AGENT_ACTIVATION_COMM_URL, "查看下游付费激活、充值或购买产生的返佣摘要。"),
+        "agent_install_comm": ("安装返佣", AGENT_INSTALL_COMM_URL, "查看下游客户付费安装 Agent 服务产生的返佣摘要。"),
+        "agent_proxy": ("工具代理后端", AGENT_PROXY_URL, "进入工具代理业务后台，管理代理业务入口和服务端状态。"),
+        "agent_rules": ("代理规则", AGENT_RULES_URL, "查看代理费用、升级、返佣、提现、冻结和冲正规则。"),
     },
 }
 MODULE_ACTION_CARDS = {
@@ -300,31 +311,49 @@ MODULE_ACTION_CARDS = {
             ("客服协同", "服务状态和购买逻辑依旧由网站服务端控制。"),
             ("交付边界", "客户端不本地计算接码时长、价格或退款规则。"),
         ),
-        "delivery": (
-            ("服务入口", "展示客服代配置、远程协助和交付支持入口。"),
-            ("适用场景", "适合客户自己不熟悉技术，需要客服协助完成整套部署。"),
-            ("客服协同", "客户可复制底部日志，交给客服继续排查和跟进。"),
-            ("交付边界", "客户最终是否算完整交付，仍以功能验收矩阵为准。"),
-        ),
     },
     MODULE_COURSES: {
         "agent_home": (
-            ("先看哪里", "优先查看当前代理等级、邀请码、返佣余额和推广入口。"),
-            ("适合做什么", "用同一个胖虎AI账号登录后，直接在这里确认代理身份。"),
-            ("客服怎么指引", "客服只需要确认代理身份是否已在服务端开通。"),
-            ("注意事项", "代理规则与代理结算来自网站服务端，不在本地写死。"),
+            ("先看哪里", "优先查看当前代理等级、邀请入口、下游数量和结算摘要。"),
+            ("收益来源", "服务端区分 token 返佣、激活返佣和安装返佣三类收入。"),
+            ("如何邀请", "通过专属邀请链接或注册邀请码绑定下游客户，已有上级不覆盖。"),
+            ("结算边界", "所有收益、冻结、冲正和提现状态以服务端账本为准。"),
+        ),
+        "agent_customers": (
+            ("数据来源", "下游客户归因只来自胖虎AI服务端，不从本地邀请码记录推算。"),
+            ("客户分类", "可按注册、付费激活、已安装 Agent 服务等状态查看。"),
+            ("跟进策略", "客服可结合后端诊断码和客户状态辅助交付。"),
+            ("绑定边界", "已有上级代理的客户不能被新邀请码覆盖。"),
+        ),
+        "agent_token_comm": (
+            ("收益类型", "展示下游 token/API 真实消费产生的返佣摘要。"),
+            ("事件来源", "以服务端结算后的真实消费事件为准，重复事件不重复入账。"),
+            ("结算周期", "默认 T+7 从待结算转为可结算，具体以后台设置为准。"),
+            ("状态说明", "退款、异常消费或风控命中后可冻结或冲正。"),
+        ),
+        "agent_activation_comm": (
+            ("收益类型", "展示下游付费激活、购买或充值产生的返佣摘要。"),
+            ("订单快照", "佣金按订单发生时的代理链路和返佣规则快照计算。"),
+            ("结算周期", "默认 T+7 进入可结算，后台可按业务策略调整。"),
+            ("异常处理", "订单撤销或退款后必须写入冲正记录。"),
+        ),
+        "agent_install_comm": (
+            ("安装返佣", "每当下游客户成功安装并激活一个 Agent，您可获得专属返佣。"),
+            ("结算比例", "服务端按实际安装的 Agent 类型和授权节点数量动态计算。"),
+            ("状态说明", "需要客户完成“功能验收矩阵”并在本地成功跑通中文对话。"),
+            ("注意事项", "已退款或非正常部署的节点不会计入有效安装返佣。"),
         ),
         "agent_proxy": (
             ("后端入口", "工具代理相关后端统一从胖虎AI网站和服务端代理中心进入。"),
             ("服务开关", "哪些代理能力已开放，由服务端和代理后端决定。"),
             ("接入计划", "后续代理工具诊断、回调和售后入口也统一归到这里。"),
-            ("注意事项", "当前版本优先完成入口与状态衔接，不在本地重做代理业务规则。"),
+            ("注意事项", "客户端只提供入口和状态衔接，不在本地重做代理业务规则。"),
         ),
         "agent_rules": (
-            ("规则说明", "查看代理升级、返佣、提现和结算规则。"),
-            ("身份边界", "代理身份属于登录后权益，不再作为登录前独立模式。"),
-            ("邀请机制", "邀请码、绑定结果与代理收益统一由服务端裁定。"),
-            ("异常处理", "未通过功能验收矩阵时，不得包装成完整付费交付。"),
+            ("费用规则", "代理费用、免费开通、付费升级、押金或年费都由管理员后台配置。"),
+            ("等级规则", "代理采用 L1-L5 纯五级模型，等级越高可覆盖的下游层级越深。"),
+            ("风控说明", "禁止自行邀请自己或利用多账号刷取安装返佣，异常收益可冻结。"),
+            ("服务端为准", "所有比例、费率、提现、冲正和待接入状态以胖虎AI服务端实时规则为准。"),
         ),
     },
 }
@@ -444,6 +473,17 @@ AGENTS = (
         ),
         config_note="默认跳过 QQ/微信/TG 等第三方通道，只配置最短可用对话链路。",
     ),
+    AgentSpec(
+        id="gemini_agy",
+        name="Gemini / agy",
+        description="Google Gemini / Antigravity Agent，本版只保留官方 CLI 与客户端入口。",
+        verify_command=("agy", "--version"),
+        modes=(
+            AgentMode("cli", "CLI", "安装 Google Antigravity CLI；默认通过 Google 账号自行登录。", supports_config=False),
+            AgentMode("client", "客户端", "打开 Google Antigravity 官方入口；配置功能待开发。", supports_auto_install=False, supports_config=False),
+        ),
+        config_note="配置待开发：暂不写入胖虎AI API Key 或网关配置，客户通过 Google 账号自行登录。",
+    ),
 )
 
 AGENT_DELIVERY_PLAYBOOKS = {
@@ -498,6 +538,18 @@ AGENT_DELIVERY_PLAYBOOKS = {
         ),
         minimal_dialogue_check="运行 Hermes 官方 oneshot 命令，确认能通过胖虎AI网关返回。",
     ),
+    "gemini_agy": AgentDeliveryPlaybook(
+        agent_id="gemini_agy",
+        cli_supported=True,
+        client_supported=True,
+        skip_third_party_channels=True,
+        customer_goal="本版只保留 Gemini / agy 官方安装入口；客户通过 Google 账号自行登录。",
+        config_commands=(
+            "配置待开发：不写入胖虎AI API Key。",
+            "配置待开发：不写入胖虎AI网关或模型。",
+        ),
+        minimal_dialogue_check="配置待开发：暂不执行胖虎AI网关最小中文对话，不计为完整交付。",
+    ),
 }
 
 
@@ -509,6 +561,13 @@ def agent_delivery_playbook(agent_id: str) -> AgentDeliveryPlaybook:
 
 
 def build_agent_config_plan(agent_id: str, mode_id: str, api_key: str, model: str) -> list[str]:
+    if agent_id == "gemini_agy":
+        return [
+            f"gemini_agy/{mode_id}：使用 Google Antigravity 官方入口安装或检测。",
+            f"gemini_agy/{mode_id}：配置待开发，本版不写入胖虎AI网关、模型或 API Key。",
+            f"gemini_agy/{mode_id}：客户通过 Google 账号自行登录。",
+            f"gemini_agy/{mode_id}：未接入胖虎AI网关最小中文对话验收，不计为完整交付。",
+        ]
     playbook = agent_delivery_playbook(agent_id)
     masked_key = mask_key(api_key)
     return [
@@ -952,6 +1011,8 @@ def agent_client_status(agent: AgentSpec) -> tuple[bool, str]:
         return False, "OpenClaw 当前按官方 CLI/Hub 入口检测，未发现可稳定识别的独立客户端包。"
     if agent.id == "hermes":
         return False, "Hermes 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
+    if agent.id == "gemini_agy":
+        return False, "Gemini / agy 当前按 Google Antigravity 官方入口检测，未发现可稳定识别的独立客户端包。"
     return False, "未配置客户端检测规则。"
 
 
@@ -1680,7 +1741,7 @@ def manifest_commercial_entitlements(manifest: dict) -> list[EntitlementContract
 
 
 def manifest_has_commercial_controls(manifest: dict) -> bool:
-    return any(key in manifest for key in ("products", "entitlements", "commercial", "commercial_enabled"))
+    return any(key in manifest for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center"))
 
 
 def ensure_commercial_manifest_trusted(manifest: dict, public_key_pem: str = COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM) -> None:
@@ -2383,28 +2444,61 @@ def open_path(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
-def open_url(url: str) -> CustomerPageOpenResult:
-    return open_customer_page(url)
+def open_url(url: str, cookie_jar: http.cookiejar.CookieJar | None = None, log=None) -> CustomerPageOpenResult:
+    return open_customer_page(url, cookie_jar=cookie_jar, log=log)
 
 
-def open_customer_page(url: str) -> CustomerPageOpenResult:
+def build_webview_cookie_bridge_script(cookie_jar: http.cookiejar.CookieJar | None) -> str:
+    if cookie_jar is None:
+        return ""
+    statements: list[str] = []
+    for cookie in cookie_jar:
+        domain = (cookie.domain or "").lstrip(".").lower()
+        if domain and not DEFAULT_BASE_URL.lower().endswith(domain):
+            continue
+        if not cookie.name or cookie.value is None:
+            continue
+        rest = getattr(cookie, "_rest", {}) or {}
+        if any(str(key).lower() == "httponly" for key in rest):
+            continue
+        parts = [f"{cookie.name}={cookie.value}", "path=/", "SameSite=Lax"]
+        if cookie.secure:
+            parts.append("Secure")
+        statements.append(f"document.cookie = {json.dumps('; '.join(parts))};")
+    return "\n".join(statements)
+
+
+def open_customer_page(
+    url: str,
+    cookie_jar: http.cookiejar.CookieJar | None = None,
+    log=None,
+) -> CustomerPageOpenResult:
     title = embedded_customer_page_title(url)
     page_url = str(url or "").strip()
     if not page_url:
         return CustomerPageOpenResult("", title, "none", False, "页面地址为空，未打开。")
-    if title and try_open_embedded_webview(url, title=title):
+    bridge_script = build_webview_cookie_bridge_script(cookie_jar)
+    if title:
+        if cookie_jar is None and log is None:
+            embedded_ok = try_open_embedded_webview(page_url, title=title)
+        else:
+            embedded_ok = try_open_embedded_webview(page_url, title=title, cookie_jar=cookie_jar, log=log)
+    else:
+        embedded_ok = False
+    if title and embedded_ok:
+        bridge_note = "并已尝试桥接本次胖虎AI登录态" if bridge_script else "；当前会话没有可通过 JS 桥接的登录 cookie"
         return CustomerPageOpenResult(
             page_url,
             title,
             "embedded_webview",
             True,
-            f"已在软件内 WebView 窗口打开：{title}。",
+            f"已在软件内 WebView 窗口打开：{title}{bridge_note}。",
         )
     browser_ok = bool(webbrowser.open(page_url))
     if title and webview is None:
-        reason = "当前运行环境未加载 pywebview，已回退到系统浏览器。"
+        reason = "当前运行环境未加载 pywebview，已回退到系统浏览器；不能算完成内嵌网页闭环。"
     elif title:
-        reason = "内置 WebView 未能启动，已回退到系统浏览器。"
+        reason = "内置 WebView 未能启动，已回退到系统浏览器；不能算完成内嵌网页闭环。"
     else:
         reason = "该链接不属于客户内置网站白名单，已使用系统浏览器打开。"
     return CustomerPageOpenResult(
@@ -2439,17 +2533,37 @@ def embedded_customer_page_title(url: str) -> str:
     return ""
 
 
-def try_open_embedded_webview(url: str, title: str = "") -> bool:
+def try_open_embedded_webview(
+    url: str,
+    title: str = "",
+    cookie_jar: http.cookiejar.CookieJar | None = None,
+    log=None,
+) -> bool:
     if webview is None:
         return False
     page_url = str(url or "").strip()
     if not page_url:
         return False
     window_title = title or "胖虎AI"
+    bridge_script = build_webview_cookie_bridge_script(cookie_jar)
 
     def launch() -> None:
-        webview.create_window(window_title, page_url, width=1180, height=860, resizable=True)
-        webview.start()
+        start_url = PANGHU_HOME_URL if bridge_script else page_url
+        window = webview.create_window(window_title, start_url, width=1180, height=860, resizable=True)
+        if bridge_script:
+            state = {"bridged": False}
+
+            def on_loaded() -> None:
+                if state["bridged"]:
+                    return
+                state["bridged"] = True
+                window.evaluate_js(bridge_script)
+                window.load_url(page_url)
+                if log:
+                    log(f"已向内置 WebView 桥接本次胖虎AI登录态：{window_title}")
+
+            window.events.loaded += on_loaded
+        webview.start(private_mode=True)
 
     threading.Thread(target=launch, daemon=True).start()
     return True
@@ -2947,6 +3061,28 @@ def install_hermes_cli(log) -> bool:
     return ok
 
 
+def install_gemini_agy_cli(log) -> bool:
+    if platform.system() == "Windows":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "iwr -useb https://antigravity.google/cli/install.ps1 | iex",
+        ]
+    else:
+        command = ["/bin/bash", "-lc", "curl -fsSL https://antigravity.google/cli/install.sh | bash"]
+    ok, output = run_command(command, timeout=900)
+    log(output)
+    if ok:
+        log("Gemini / agy CLI 安装入口已执行；首次使用请按 Google 官方流程登录账号。")
+    else:
+        open_url(GEMINI_AGY_DOCS_URL)
+        log("Gemini / agy CLI 自动安装未确认，已打开 Google Antigravity 官方入口。")
+    return ok
+
+
 def codex_thread_url(workdir: Path) -> str:
     return "codex://threads/new?path=" + quote(str(workdir), safe="")
 
@@ -3331,6 +3467,8 @@ def recent_hermes_error_summary(home: Path | None = None) -> str:
 
 
 def run_agent_dialogue_probe(agent: AgentSpec, mode_id: str, model: str) -> tuple[bool, str]:
+    if agent.id == "gemini_agy":
+        return False, "配置待开发，暂不支持自动复验命令"
     if agent.id == "codex":
         return False, "Codex 使用胖虎AI网关真实任务验证，不走外部 CLI 对话命令。"
     try:
@@ -3351,6 +3489,8 @@ def run_agent_dialogue_probe(agent: AgentSpec, mode_id: str, model: str) -> tupl
 
 
 def agent_dialogue_probe_command_text(agent: AgentSpec, model: str) -> str:
+    if agent.id == "gemini_agy":
+        return "配置待开发，请用 Google 账号自行登录进行中文对话"
     if agent.id == "codex":
         return "胖虎AI /v1/chat/completions 最小中文真实任务验证"
     try:
@@ -3437,6 +3577,9 @@ def apply_agent_config(agent: AgentSpec, mode_id: str, api_key: str, model: str,
         return install_openclaw_config(api_key, model, log)
     if agent.id == "hermes":
         return install_hermes_config(api_key, model, log)
+    if agent.id == "gemini_agy":
+        log("Gemini / agy 配置待开发：本版不写入胖虎AI API Key、网关或模型，客户通过 Google 账号自行登录。")
+        return False
     raise ValueError(f"未知 Agent：{agent.id}/{mode_id}")
 
 
@@ -3463,9 +3606,10 @@ def build_agent_setup_guide_content(selected: list[tuple[AgentSpec, str]], api_k
 4. 只有点击“双态配置”时，才需要用户重新打开 Codex 后自行登录自己的 ChatGPT 账号。
 5. 双态模式下，Codex 会保持用户自己的账号登录态，同时模型调用消耗胖虎AI API Key。本工具不代替登录、不保存 ChatGPT 账号密码。
 6. ClaudeCode/CC、OpenClaw、Hermes 都按官方 CLI 与客户端入口做安装和配置；IDE 插件形态不处理。
-7. OpenClaw、Hermes 等复杂第三方通道默认跳过，只走能让买家直接对话的最短可用链路。
-8. 每个 Agent 都必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付。
-9. 本工具不会把 API Key 明文写入日志。
+7. Gemini / agy 本版只保留官方安装入口；配置待开发，默认通过 Google 账号自行登录，不计为完整交付。
+8. OpenClaw、Hermes 等复杂第三方通道默认跳过，只走能让买家直接对话的最短可用链路。
+9. 已接入配置链路的 Agent 必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付。
+10. 本工具不会把 API Key 明文写入日志。
 
 当前 Agent Playbook：
 {chr(10).join(playbook_lines)}
@@ -3524,7 +3668,7 @@ def environment_help_text() -> str:
 def agent_choice_help_text() -> str:
     return "\n".join(
         [
-            "本工具固定交付四个 Agent：Codex、Claude Code/CC、Hermes、OpenClaw。",
+            "本工具固定覆盖五个 Agent：Codex、Claude Code/CC、Hermes、OpenClaw、Gemini / agy。",
             "",
             "Agent 差异：",
             "- Codex：写入胖虎AI API Key、接口、模型和中文规则。",
@@ -3595,6 +3739,12 @@ def install_agent(agent: AgentSpec, mode_id: str, log) -> bool:
         open_url(HERMES_DOCS_URL)
         log("已打开 Hermes 官方客户端入口；安装后继续按胖虎AI网关配置计划验收。")
         ok = True
+    elif agent.id == "gemini_agy" and mode_id == "cli":
+        ok = install_gemini_agy_cli(log)
+    elif agent.id == "gemini_agy" and mode_id == "client":
+        open_url(GEMINI_AGY_DOCS_URL)
+        log("已打开 Google Antigravity 官方入口；Gemini / agy 配置功能待开发。")
+        ok = True
     else:
         log("未知 Agent 或安装方式。")
         return False
@@ -3610,10 +3760,10 @@ def install_agent(agent: AgentSpec, mode_id: str, log) -> bool:
 
 
 def apply_agent_config_plan(agent: AgentSpec, mode_id: str, api_key: str, model: str, log) -> bool:
-    apply_agent_config(agent, mode_id, api_key, model, log)
+    configured = apply_agent_config(agent, mode_id, api_key, model, log)
     for line in build_agent_config_plan(agent.id, mode_id, api_key, model):
         log(line)
-    return True
+    return configured
 
 
 def detect_environment() -> list[str]:
@@ -3917,7 +4067,7 @@ class WebviewApi:
 
     def open_url(self, url):
         try:
-            open_url(url)
+            open_url(url, cookie_jar=self.app.cookie_jar, log=self.app.log)
             return {"success": True}
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -4329,7 +4479,7 @@ class InstallerApp:
         self._build_status_step(
             10,
             "第十步：完成交付",
-            "当四个 Agent 的目标链路全部达标后，才进入客户交付收口。",
+            "当选定 Agent 的目标链路全部达标后，才进入客户交付收口；Gemini / agy 本版只算安装入口，不算完整交付。",
             "正式发客户前还要重新打包并完成三端包、公钥、Release、下载页授权流程。",
         )
         for canvas in self.step_canvases.values():
@@ -4774,7 +4924,7 @@ class InstallerApp:
 
     def open_current_module_url(self) -> None:
         _title, url, _note = self.current_module_page_meta()
-        result = open_customer_page(url)
+        result = open_customer_page(url, cookie_jar=self.cookie_jar, log=self.log)
         self.status.set(f"状态：{result.message}")
         self.log(f"网站页面打开结果：{result.message} URL={result.url}")
 
@@ -5668,7 +5818,7 @@ class InstallerApp:
         self._button(actions, "创建订单", self.start_buyer_create_order, "primary").pack(side="left")
         self._button(actions, "查询支付", self.start_buyer_poll_payment, "secondary").pack(side="left", padx=(10, 0))
         self._button(actions, "刷新权益", self.start_buyer_refresh_entitlements, "secondary").pack(side="left", padx=(10, 0))
-        self._button(actions, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL), "secondary").pack(side="left", padx=(10, 0))
+        self._button(actions, "打开 API Key 创建页面", lambda: open_url(KEY_CREATE_URL, cookie_jar=self.cookie_jar, log=self.log), "secondary").pack(side="left", padx=(10, 0))
         self._button(actions, "查看创建说明", lambda: self._show_help("API Key 创建说明", key_creation_help_text()), "secondary").pack(side="left", padx=(10, 0))
         self.buyer_purchase_status_label = tk.Label(
             panel,
@@ -5956,7 +6106,7 @@ class InstallerApp:
         self._step_title(
             frame,
             "第四步：选择 Agent 和安装方式",
-            "按客户实际需要选择要交付的 Agent。四个 Agent 都按官方 CLI 与客户端入口覆盖，IDE 插件形态不处理。",
+            "按客户实际需要选择要交付的 Agent。五个 Agent 都按官方 CLI 与客户端入口覆盖，IDE 插件形态不处理。",
             "Agent 选择说明",
             agent_choice_help_text(),
         )
@@ -5964,7 +6114,7 @@ class InstallerApp:
         self._notice_strip(
             frame,
             "配置范围",
-            "四个 Agent 都必须按五维状态验收；复杂第三方通道默认跳过，目标是买家能直接对话。",
+            "五个 Agent 都必须按五维状态验收；Gemini / agy 配置待开发，只保留安装入口。",
             "info",
             compact=True,
         ).pack_configure(pady=(0, 10))
@@ -7207,8 +7357,8 @@ class InstallerApp:
                 if install_agent(agent, mode, self.log_from_worker):
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS)
                     try:
-                        apply_agent_config_plan(agent, mode, api_key, model, self.log_from_worker)
-                        progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS)
+                        configured = apply_agent_config_plan(agent, mode, api_key, model, self.log_from_worker)
+                        progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS if configured else NodeStatus.NEEDS_MANUAL)
                     except Exception as exc:
                         progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
                         self.log_from_worker(f"{agent.name}/{mode} 配置写入失败：{exc}")
@@ -7492,6 +7642,10 @@ def self_test() -> None:
     assert APP_VERSION == "1.0.15"
     assert any(agent.id == "codex" for agent in AGENTS)
     assert any(agent.id == "claude_code" for agent in AGENTS)
+    assert [agent.id for agent in AGENTS] == ["codex", "claude_code", "openclaw", "hermes", "gemini_agy"]
+    gemini = next(agent for agent in AGENTS if agent.id == "gemini_agy")
+    assert not any(mode.supports_config for mode in gemini.modes)
+    assert "配置待开发" in agent_dialogue_probe_command_text(gemini, DEFAULT_MODEL)
     assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)
     assert any(spec.id == "codex_plus_plus" for spec in RISK_PLUGIN_SPECS)
     assert LOGIN_URL.endswith("/api/user/login?turnstile=")
@@ -7622,7 +7776,7 @@ def self_test() -> None:
     assert process_text_contains_alias("node ccr start", "ccr")
     assert not process_text_contains_alias("screenrecorder.exe", "ccr")
     assert "sk-test-secret-123456" not in sanitize_log_text("Key sk-test-secret-123456", "sk-test-secret-123456")
-    assert "每个 Agent 都必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付" in build_agent_setup_guide_content([], "sk-test-secret-123456")
+    assert "已接入配置链路的 Agent 必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付" in build_agent_setup_guide_content([], "sk-test-secret-123456")
     assert "无需登录 ChatGPT 账号" in login_help_text()
     assert "新账号先充值或确认账户里有余额" in key_creation_help_text()
     action_help = codex_action_help_text()
@@ -7697,6 +7851,8 @@ requires_openai_auth = true
     assert 'experimental_bearer_token = "sk-new"' in refreshed_dual_config
     assert "sk-old" not in refreshed_dual_config
     assert [title for _module_id, title, _subtitle in TOP_MODULES] == ["配置Agent", "胖虎AI网站", "增值业务", "代理中心"]
+    assert "delivery" not in VALUE_ADDED_URLS
+    assert not any(item_id == "delivery" for item_id, _title, _subtitle in MODULE_SIDE_NAV_ITEMS[MODULE_VALUE_ADDED])
     assert [title for _item_id, title, _subtitle in MODULE_SIDE_NAV_ITEMS[MODULE_AGENT]] == [
         title for _idx, title, _subtitle in FLOW_STEPS
     ]

@@ -54,6 +54,51 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, text)
 
+    def test_backend_contract_doc_covers_agent_business_admin_and_t7_contract(self) -> None:
+        path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
+        text = path.read_text(encoding="utf-8")
+
+        required_terms = [
+            "`agent_products`",
+            "`agent_profiles`",
+            "`referral_bindings`",
+            "`agent_chain_snapshots`",
+            "`commission_policies`",
+            "`commission_policy_rules`",
+            "`commission_events`",
+            "`commission_ledger`",
+            "`settlement_requests`",
+            "`agent_marketing_content`",
+            "`source_event_id`",
+            "代理业务管理",
+            "GET `/api/agent/public/offering`",
+            "POST `/api/agent/apply`",
+            "GET `/api/agent/center`",
+            "GET `/api/agent/downstreams`",
+            "GET `/api/agent/commissions`",
+            "POST `/api/agent/settlements`",
+            "POST `/api/referrals/bind`",
+            "GET/PUT `/api/admin/agent/products`",
+            "GET/PUT `/api/admin/agent/policies`",
+            "GET/PUT `/api/admin/agent/marketing-content`",
+            "GET/POST `/api/admin/agent/applications`",
+            "GET/POST `/api/admin/agent/settlements`",
+            "POST `/api/admin/agent/ledger/:id/freeze|release|reverse`",
+            "`/agent/join`",
+            "T+7",
+            "纯五级",
+            "L1 可配置为 0 元",
+            "代理产品介绍",
+            "五级费用设置",
+            "推广素材",
+            "风控冻结",
+            "卖什么、怎么赚钱、费用多少、适合谁、如何结算、风险边界、立即申请",
+            "`pending`、`frozen`、`available`、`settled`、`reversed`、`manual_review`",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, text)
+
     def test_backend_contract_doc_covers_legacy_profile_pollution_cleanup(self) -> None:
         path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
         text = path.read_text(encoding="utf-8")

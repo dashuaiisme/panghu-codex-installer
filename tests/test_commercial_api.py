@@ -10,6 +10,18 @@ sys.path.insert(0, str(SRC))
 
 from commercial_api import (  # noqa: E402
     CommercialApiContract,
+    build_admin_agent_application_review_request,
+    build_admin_agent_ledger_action_request,
+    build_admin_agent_marketing_content_update_request,
+    build_admin_agent_policy_update_request,
+    build_admin_agent_product_update_request,
+    build_admin_agent_settlement_action_request,
+    build_agent_apply_request,
+    build_agent_center_request,
+    build_agent_commissions_request,
+    build_agent_downstreams_request,
+    build_agent_public_offering_request,
+    build_agent_settlement_request,
     build_api_key_owner_verify_request,
     build_config_session_complete_request,
     build_config_session_fail_request,
@@ -17,6 +29,7 @@ from commercial_api import (  # noqa: E402
     build_entitlement_query_request,
     build_order_create_request,
     build_payment_poll_request,
+    build_referral_bind_request,
     build_urllib_request_parts,
     execute_commercial_api_request,
     with_operator_auth,
@@ -39,6 +52,107 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(self.contract.api_key_owner_verify_url, "https://aitokenapi.cc/api/deployer/api-keys/verify-owner")
         self.assertNotIn("api.aitokenapi.cc", self.contract.entitlements_url)
         self.assertNotIn("api.aitokenapi.cc", self.contract.api_key_owner_verify_url)
+
+    def test_agent_business_endpoints_are_service_side_contracts(self) -> None:
+        self.assertEqual(self.contract.agent_public_offering_url, "https://aitokenapi.cc/api/agent/public/offering")
+        self.assertEqual(self.contract.agent_apply_url, "https://aitokenapi.cc/api/agent/apply")
+        self.assertEqual(self.contract.agent_center_url, "https://aitokenapi.cc/api/agent/center")
+        self.assertEqual(self.contract.agent_downstreams_url, "https://aitokenapi.cc/api/agent/downstreams")
+        self.assertEqual(self.contract.agent_commissions_url, "https://aitokenapi.cc/api/agent/commissions")
+        self.assertEqual(self.contract.agent_settlements_url, "https://aitokenapi.cc/api/agent/settlements")
+        self.assertEqual(self.contract.referral_bind_url, "https://aitokenapi.cc/api/referrals/bind")
+        self.assertEqual(self.contract.admin_agent_products_url, "https://aitokenapi.cc/api/admin/agent/products")
+        self.assertEqual(self.contract.admin_agent_policies_url, "https://aitokenapi.cc/api/admin/agent/policies")
+        self.assertEqual(
+            self.contract.admin_agent_marketing_content_url,
+            "https://aitokenapi.cc/api/admin/agent/marketing-content",
+        )
+        self.assertEqual(self.contract.admin_agent_applications_url, "https://aitokenapi.cc/api/admin/agent/applications")
+        self.assertEqual(self.contract.admin_agent_settlements_url, "https://aitokenapi.cc/api/admin/agent/settlements")
+        self.assertEqual(
+            self.contract.admin_agent_ledger_action_url("ledger-1", "freeze"),
+            "https://aitokenapi.cc/api/admin/agent/ledger/ledger-1/freeze",
+        )
+
+    def test_agent_business_requests_carry_idempotency_and_mask_sensitive_invites(self) -> None:
+        offering = build_agent_public_offering_request(self.contract)
+        apply = build_agent_apply_request(
+            self.contract,
+            product_id="agent-l1-free",
+            idempotency_key="agent-apply-1",
+        )
+        center = build_agent_center_request(self.contract)
+        bind = build_referral_bind_request(
+            self.contract,
+            invite_code="INVITE-SECRET",
+            idempotency_key="bind-1",
+        )
+        downstreams = build_agent_downstreams_request(self.contract, cursor="page-1")
+        commissions = build_agent_commissions_request(self.contract, status="available", event_type="token_usage_settled")
+        settlement = build_agent_settlement_request(
+            self.contract,
+            requested_cents=1000,
+            idempotency_key="settlement-1",
+        )
+        admin_product = build_admin_agent_product_update_request(
+            self.contract,
+            product={
+                "id": "agent-l1-free",
+                "level": "L1",
+                "price_cents": 0,
+                "status": "listed",
+            },
+        )
+        admin_policy = build_admin_agent_policy_update_request(
+            self.contract,
+            policy={"event_type": "token_usage_settled", "receiver_level": "L1", "depth": 1, "rate_bps": 1000},
+        )
+        admin_marketing = build_admin_agent_marketing_content_update_request(
+            self.contract,
+            content={"page_title": "胖虎AI代理招募", "faq": []},
+        )
+        admin_review = build_admin_agent_application_review_request(
+            self.contract,
+            application_id="app-1",
+            decision="approve",
+            reason="资料通过",
+        )
+        admin_settlement = build_admin_agent_settlement_action_request(
+            self.contract,
+            settlement_id="stl-1",
+            action="pay",
+            reason="T+7 结算",
+        )
+        ledger_action = build_admin_agent_ledger_action_request(
+            self.contract,
+            ledger_id="ledger-1",
+            action="reverse",
+            reason="客户退款",
+        )
+
+        self.assertEqual(offering.method, "GET")
+        self.assertEqual(apply.method, "POST")
+        self.assertEqual(apply.headers["Idempotency-Key"], "agent-apply-1")
+        self.assertEqual(apply.body["product_id"], "agent-l1-free")
+        self.assertEqual(center.method, "GET")
+        self.assertEqual(bind.url, self.contract.referral_bind_url)
+        self.assertEqual(bind.headers["Idempotency-Key"], "bind-1")
+        self.assertNotIn("INVITE-SECRET", str(sanitize_commercial_api_payload(bind.body)))
+        self.assertEqual(downstreams.query["cursor"], "page-1")
+        self.assertEqual(commissions.query["event_type"], "token_usage_settled")
+        self.assertEqual(settlement.url, self.contract.agent_settlements_url)
+        self.assertEqual(settlement.headers["Idempotency-Key"], "settlement-1")
+        self.assertEqual(settlement.body["requested_cents"], 1000)
+        self.assertEqual(admin_product.method, "PUT")
+        self.assertEqual(admin_policy.url, self.contract.admin_agent_policies_url)
+        self.assertEqual(admin_policy.body["policy"]["rate_bps"], 1000)
+        self.assertEqual(admin_marketing.body["content"]["page_title"], "胖虎AI代理招募")
+        self.assertEqual(admin_review.url, self.contract.admin_agent_applications_url)
+        self.assertEqual(admin_review.body["decision"], "approve")
+        self.assertEqual(admin_settlement.url, self.contract.admin_agent_settlements_url)
+        self.assertEqual(admin_settlement.body["action"], "pay")
+        self.assertEqual(ledger_action.url, "https://aitokenapi.cc/api/admin/agent/ledger/ledger-1/reverse")
+        self.assertEqual(ledger_action.body["reason"], "客户退款")
 
     def test_legacy_buyer_bind_endpoint_is_not_exposed_on_client_contract(self) -> None:
         self.assertFalse(hasattr(self.contract, "buyer_bind_url"))

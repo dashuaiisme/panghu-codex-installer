@@ -49,12 +49,87 @@ class ContractConfigSession:
 
 
 @dataclass
+class ContractAgentProduct:
+    product_id: str
+    level: str
+    name: str
+    price_cents: int = 0
+    currency: str = "CNY"
+    validity_days: int = 365
+    requires_review: bool = False
+    status: str = "listed"
+    intro_page_enabled: bool = True
+
+
+@dataclass
+class ContractAgentProfile:
+    user_id: str
+    level: str
+    status: str
+    product_id: str
+    invite_code: str
+    activated_at: str = ""
+    expires_at: str = ""
+
+
+@dataclass
+class ContractReferralBinding:
+    buyer_user_id: str
+    direct_agent_user_id: str
+    bound_at: str
+    source_invite_code: str
+
+
+@dataclass
+class ContractAgentChainSnapshot:
+    buyer_user_id: str
+    source_event_id: str
+    chain: list[str]
+
+
+@dataclass
+class ContractAgentApplication:
+    application_id: str
+    user_id: str
+    product_id: str
+    status: str
+    reviewer_user_id: str = ""
+    review_reason: str = ""
+
+
+@dataclass
+class ContractCommissionPolicyRule:
+    event_type: str
+    receiver_level: str
+    depth: int
+    rate_bps: int
+    status: str = "active"
+
+
+@dataclass
+class ContractCommissionEvent:
+    event_id: str
+    source_event_id: str
+    event_type: str
+    buyer_user_id: str
+    amount_cents: int
+    status: str = "recorded"
+
+
+@dataclass
 class ContractCommissionEntry:
     # Service-side commission bookkeeping, not a desktop-side product flow.
     commission_id: str
     order_id: str
     agent_user_id: str
     status: str = "pending"
+    source_event_id: str = ""
+    event_type: str = ""
+    depth: int = 0
+    rate_bps: int = 0
+    commission_cents: int = 0
+    available_after_days: int = 7
+    settlement_id: str = ""
 
 
 @dataclass
@@ -63,6 +138,16 @@ class ContractCommissionReversal:
     reversal_id: str
     order_id: str
     reason: str
+
+
+@dataclass
+class ContractSettlementRequest:
+    settlement_id: str
+    agent_user_id: str
+    requested_cents: int
+    commission_ids: list[str]
+    status: str = "pending"
+    admin_user_id: str = ""
 
 
 class CommercialLedgerContract:
@@ -83,8 +168,26 @@ class CommercialLedgerContract:
         # Agent center is a service-side snapshot shown in the embedded site
         # flow. It must not be treated as a local proxy-mode state machine.
         self.agent_center: dict[str, object] = {"enabled": False}
+        self.agent_products: dict[str, ContractAgentProduct] = {}
+        self.agent_profiles: dict[str, ContractAgentProfile] = {}
+        self.agent_applications: list[ContractAgentApplication] = []
+        self.invite_codes: dict[str, str] = {}
+        self.referral_bindings: dict[str, ContractReferralBinding] = {}
+        self.agent_chain_snapshots: list[ContractAgentChainSnapshot] = []
+        self.agent_marketing_content: dict[str, object] = {
+            "page_title": "胖虎AI代理招募",
+            "hero_title": "成为胖虎AI代理",
+            "selling_points": [],
+            "faq": [],
+            "materials": [],
+        }
+        self.commission_policy_rules: list[ContractCommissionPolicyRule] = []
+        self.commission_events: list[ContractCommissionEvent] = []
+        self.commission_event_idempotency: dict[str, str] = {}
+        self.commission_event_payloads: dict[str, tuple[object, ...]] = {}
         self.commission_entries: list[ContractCommissionEntry] = []
         self.commission_reversals: list[ContractCommissionReversal] = []
+        self.settlement_requests: dict[str, ContractSettlementRequest] = {}
 
     def _api_key_fingerprint(self, api_key: str) -> str:
         return hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()
@@ -117,6 +220,11 @@ class CommercialLedgerContract:
         current_level: str = "",
         upgrade_label: str = "",
         invite_url: str = "",
+        join_page_url: str = "",
+        backend_url: str = "",
+        rules_url: str = "",
+        status: str = "",
+        summary: dict[str, int] | None = None,
         benefits: list[str] | None = None,
         boundaries: list[str] | None = None,
         commission_ratio: str = "",
@@ -126,6 +234,11 @@ class CommercialLedgerContract:
             "current_level": current_level,
             "upgrade_label": upgrade_label,
             "invite_url": invite_url,
+            "join_page_url": join_page_url,
+            "backend_url": backend_url,
+            "rules_url": rules_url,
+            "status": status,
+            "summary": dict(summary or {}),
             "benefits": list(benefits or []),
             "boundaries": list(boundaries or []),
             "commission_ratio": commission_ratio,
@@ -134,12 +247,373 @@ class CommercialLedgerContract:
     def agent_center_snapshot(self) -> dict[str, object]:
         return {
             "enabled": bool(self.agent_center.get("enabled")),
+            "status": str(self.agent_center.get("status") or ""),
             "current_level": str(self.agent_center.get("current_level") or ""),
             "upgrade_label": str(self.agent_center.get("upgrade_label") or ""),
             "invite_url": str(self.agent_center.get("invite_url") or ""),
+            "join_page_url": str(self.agent_center.get("join_page_url") or ""),
+            "backend_url": str(self.agent_center.get("backend_url") or ""),
+            "rules_url": str(self.agent_center.get("rules_url") or ""),
+            "summary": dict(self.agent_center.get("summary") or {}),
             "benefits": list(self.agent_center.get("benefits") or []),
             "boundaries": list(self.agent_center.get("boundaries") or []),
         }
+
+    def configure_agent_product(
+        self,
+        product_id: str,
+        level: str,
+        name: str,
+        price_cents: int = 0,
+        currency: str = "CNY",
+        validity_days: int = 365,
+        requires_review: bool = False,
+        status: str = "listed",
+        intro_page_enabled: bool = True,
+    ) -> ContractAgentProduct:
+        if level not in {"L1", "L2", "L3", "L4", "L5"}:
+            raise ValueError("代理等级必须是 L1-L5。")
+        if price_cents < 0:
+            raise ValueError("代理费用不能为负数。")
+        product = ContractAgentProduct(
+            product_id=product_id,
+            level=level,
+            name=name,
+            price_cents=price_cents,
+            currency=currency,
+            validity_days=validity_days,
+            requires_review=requires_review,
+            status=status,
+            intro_page_enabled=intro_page_enabled,
+        )
+        self.agent_products[product_id] = product
+        return product
+
+    def configure_agent_marketing_content(
+        self,
+        page_title: str,
+        hero_title: str,
+        selling_points: list[str] | None = None,
+        faq: list[dict[str, str]] | None = None,
+        materials: list[dict[str, str]] | None = None,
+        level_descriptions: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        self.agent_marketing_content = {
+            "page_title": page_title,
+            "hero_title": hero_title,
+            "selling_points": list(selling_points or []),
+            "faq": [dict(item) for item in (faq or [])],
+            "materials": [dict(item) for item in (materials or [])],
+            "level_descriptions": dict(level_descriptions or {}),
+        }
+        return dict(self.agent_marketing_content)
+
+    def public_agent_offering(self) -> dict[str, object]:
+        products: list[dict[str, object]] = []
+        for product in self.agent_products.values():
+            if product.status != "listed" or not product.intro_page_enabled:
+                continue
+            products.append(
+                {
+                    "id": product.product_id,
+                    "level": product.level,
+                    "name": product.name,
+                    "price_cents": product.price_cents,
+                    "currency": product.currency,
+                    "validity_days": product.validity_days,
+                    "requires_review": product.requires_review,
+                    "status": product.status,
+                    "intro_page_enabled": product.intro_page_enabled,
+                }
+            )
+        products.sort(key=lambda item: str(item["level"]))
+        available_levels = sorted({str(product["level"]) for product in products})
+        return {
+            "marketing_content": dict(self.agent_marketing_content),
+            "products": products,
+            "available_levels": available_levels,
+        }
+
+    def apply_agent(self, user_id: str, product_id: str) -> ContractAgentProfile:
+        product = self.agent_products[product_id]
+        if product.status != "listed":
+            raise ValueError("代理产品未上架。")
+        status = "pending_review" if product.requires_review or product.price_cents > 0 else "active"
+        invite_code = f"invite-{user_id}".replace("_", "-")
+        profile = ContractAgentProfile(
+            user_id=user_id,
+            level=product.level,
+            status=status,
+            product_id=product.product_id,
+            invite_code=invite_code,
+            activated_at="day-0" if status == "active" else "",
+            expires_at=f"day-{max(0, product.validity_days)}" if status == "active" else "",
+        )
+        self.agent_profiles[user_id] = profile
+        self.invite_codes[invite_code] = user_id
+        self.agent_applications.append(
+            ContractAgentApplication(
+                application_id=f"app-{len(self.agent_applications) + 1}",
+                user_id=user_id,
+                product_id=product.product_id,
+                status=status if status == "pending_review" else "approved",
+            )
+        )
+        return profile
+
+    def review_agent_application(
+        self,
+        application_id: str,
+        decision: str,
+        reviewer_user_id: str,
+        reason: str,
+    ) -> ContractAgentApplication:
+        application = next(
+            (item for item in self.agent_applications if item.application_id == application_id),
+            None,
+        )
+        if application is None:
+            raise ValueError("代理申请不存在。")
+        if decision not in {"approve", "reject"}:
+            raise ValueError("未知代理审核动作。")
+        profile = self.agent_profiles[application.user_id]
+        product = self.agent_products[application.product_id]
+        application.reviewer_user_id = reviewer_user_id
+        application.review_reason = reason
+        if decision == "approve":
+            application.status = "approved"
+            profile.status = "active"
+            profile.activated_at = "day-0"
+            profile.expires_at = f"day-{max(0, product.validity_days)}"
+        else:
+            application.status = "rejected"
+            profile.status = "rejected"
+        return application
+
+    def bind_referral(self, buyer_user_id: str, invite_code: str) -> ContractReferralBinding:
+        if buyer_user_id in self.referral_bindings:
+            return self.referral_bindings[buyer_user_id]
+        agent_user_id = self.invite_codes.get(invite_code)
+        if not agent_user_id:
+            raise ValueError("邀请码无效。")
+        binding = ContractReferralBinding(
+            buyer_user_id=buyer_user_id,
+            direct_agent_user_id=agent_user_id,
+            bound_at="day-0",
+            source_invite_code=invite_code,
+        )
+        self.referral_bindings[buyer_user_id] = binding
+        return binding
+
+    def build_agent_chain_snapshot(self, buyer_user_id: str, source_event_id: str) -> ContractAgentChainSnapshot:
+        chain: list[str] = []
+        current_user_id = buyer_user_id
+        seen: set[str] = set()
+        while len(chain) < 5:
+            binding = self.referral_bindings.get(current_user_id)
+            if binding is None or binding.direct_agent_user_id in seen:
+                break
+            agent_user_id = binding.direct_agent_user_id
+            profile = self.agent_profiles.get(agent_user_id)
+            if profile is None or profile.status != "active":
+                break
+            chain.append(agent_user_id)
+            seen.add(agent_user_id)
+            current_user_id = agent_user_id
+        snapshot = ContractAgentChainSnapshot(
+            buyer_user_id=buyer_user_id,
+            source_event_id=source_event_id,
+            chain=chain,
+        )
+        self.agent_chain_snapshots.append(snapshot)
+        return snapshot
+
+    def configure_commission_policy_rule(
+        self,
+        event_type: str,
+        receiver_level: str,
+        depth: int,
+        rate_bps: int,
+        status: str = "active",
+    ) -> ContractCommissionPolicyRule:
+        if event_type not in {"token_usage_settled", "activation_paid", "agent_install_delivered"}:
+            raise ValueError("未知代理返佣事件类型。")
+        if receiver_level not in {"L1", "L2", "L3", "L4", "L5"}:
+            raise ValueError("代理等级必须是 L1-L5。")
+        if depth < 1 or depth > 5:
+            raise ValueError("代理返佣层级必须在 1-5 层。")
+        if rate_bps < 0:
+            raise ValueError("返佣比例不能为负数。")
+        rule = ContractCommissionPolicyRule(
+            event_type=event_type,
+            receiver_level=receiver_level,
+            depth=depth,
+            rate_bps=rate_bps,
+            status=status,
+        )
+        self.commission_policy_rules.append(rule)
+        return rule
+
+    def record_commission_event(
+        self,
+        source_event_id: str,
+        event_type: str,
+        buyer_user_id: str,
+        amount_cents: int,
+    ) -> ContractCommissionEvent:
+        payload = (event_type, buyer_user_id, amount_cents)
+        if source_event_id in self.commission_event_idempotency:
+            if self.commission_event_payloads[source_event_id] != payload:
+                raise ValueError("事件幂等键请求参数不一致。")
+            event_id = self.commission_event_idempotency[source_event_id]
+            return next(event for event in self.commission_events if event.event_id == event_id)
+        if amount_cents < 0:
+            raise ValueError("返佣来源金额不能为负数。")
+        event = ContractCommissionEvent(
+            event_id=f"evt-{len(self.commission_events) + 1}",
+            source_event_id=source_event_id,
+            event_type=event_type,
+            buyer_user_id=buyer_user_id,
+            amount_cents=amount_cents,
+        )
+        self.commission_events.append(event)
+        self.commission_event_idempotency[source_event_id] = event.event_id
+        self.commission_event_payloads[source_event_id] = payload
+        snapshot = self.build_agent_chain_snapshot(buyer_user_id, source_event_id)
+        for depth, agent_user_id in enumerate(snapshot.chain, start=1):
+            profile = self.agent_profiles[agent_user_id]
+            level_number = self._level_number(profile.level)
+            if level_number < depth:
+                continue
+            rule = self._commission_rule_for(event_type, profile.level, depth)
+            if rule is None or rule.status != "active" or rule.rate_bps <= 0:
+                continue
+            self.commission_entries.append(
+                ContractCommissionEntry(
+                    commission_id=f"com-{len(self.commission_entries) + 1}",
+                    order_id="",
+                    agent_user_id=agent_user_id,
+                    source_event_id=source_event_id,
+                    event_type=event_type,
+                    depth=depth,
+                    rate_bps=rule.rate_bps,
+                    commission_cents=amount_cents * rule.rate_bps // 10000,
+                    available_after_days=7,
+                )
+            )
+        return event
+
+    def release_commissions_after_days(self, elapsed_days: int) -> None:
+        for entry in self.commission_entries:
+            if entry.status == "pending" and elapsed_days >= entry.available_after_days:
+                entry.status = "available"
+
+    def create_settlement_request(self, agent_user_id: str, requested_cents: int) -> ContractSettlementRequest:
+        if requested_cents <= 0:
+            raise ValueError("结算金额必须大于 0。")
+        available_entries = [
+            entry
+            for entry in self.commission_entries
+            if entry.agent_user_id == agent_user_id and entry.status == "available"
+        ]
+        available_cents = sum(entry.commission_cents for entry in available_entries)
+        if available_cents < requested_cents:
+            raise ValueError("可结算金额不足。")
+        selected: list[ContractCommissionEntry] = []
+        selected_cents = 0
+        for entry in available_entries:
+            selected.append(entry)
+            selected_cents += entry.commission_cents
+            if selected_cents >= requested_cents:
+                break
+        settlement = ContractSettlementRequest(
+            settlement_id=f"stl-{len(self.settlement_requests) + 1}",
+            agent_user_id=agent_user_id,
+            requested_cents=requested_cents,
+            commission_ids=[entry.commission_id for entry in selected],
+        )
+        self.settlement_requests[settlement.settlement_id] = settlement
+        for entry in selected:
+            entry.status = "settlement_requested"
+            entry.settlement_id = settlement.settlement_id
+        return settlement
+
+    def mark_settlement_paid(self, settlement_id: str, admin_user_id: str) -> ContractSettlementRequest:
+        settlement = self.settlement_requests.get(settlement_id)
+        if settlement is None:
+            raise ValueError("结算申请不存在。")
+        if settlement.status == "settled":
+            return settlement
+        settlement.status = "settled"
+        settlement.admin_user_id = admin_user_id
+        commission_ids = set(settlement.commission_ids)
+        for entry in self.commission_entries:
+            if entry.commission_id in commission_ids:
+                entry.status = "settled"
+        return settlement
+
+    def admin_update_commission_entry(
+        self,
+        commission_id: str,
+        action: str,
+        reason: str,
+    ) -> ContractCommissionEntry:
+        if action not in {"freeze", "release", "reverse"}:
+            raise ValueError("未知代理账本动作。")
+        entry = next((item for item in self.commission_entries if item.commission_id == commission_id), None)
+        if entry is None:
+            raise ValueError("代理佣金记录不存在。")
+        if action == "freeze":
+            if entry.status in {"available", "pending", "settlement_requested"}:
+                entry.status = "frozen"
+        elif action == "release":
+            if entry.status == "frozen":
+                entry.status = "available"
+        else:
+            if entry.status in {"settled", "withdrawn"}:
+                entry.status = "manual_review"
+            elif entry.status != "manual_review":
+                entry.status = "reversed"
+            self.commission_reversals.append(
+                ContractCommissionReversal(
+                    reversal_id=f"rev-{len(self.commission_reversals) + 1}",
+                    order_id=entry.source_event_id or entry.order_id or commission_id,
+                    reason=reason,
+                )
+            )
+        return entry
+
+    def reverse_commission_event(self, source_event_id: str, reason: str) -> None:
+        for entry in self.commission_entries:
+            if entry.source_event_id != source_event_id:
+                continue
+            if entry.status in {"settled", "withdrawn"}:
+                entry.status = "manual_review"
+            elif entry.status != "manual_review":
+                entry.status = "reversed"
+        self.commission_reversals.append(
+            ContractCommissionReversal(
+                reversal_id=f"rev-{len(self.commission_reversals) + 1}",
+                order_id=source_event_id,
+                reason=reason,
+            )
+        )
+
+    def _commission_rule_for(
+        self,
+        event_type: str,
+        receiver_level: str,
+        depth: int,
+    ) -> ContractCommissionPolicyRule | None:
+        for rule in reversed(self.commission_policy_rules):
+            if rule.event_type == event_type and rule.receiver_level == receiver_level and rule.depth == depth:
+                return rule
+        return None
+
+    def _level_number(self, level: str) -> int:
+        if level.startswith("L") and level[1:].isdigit():
+            return int(level[1:])
+        return 0
 
     def create_order(
         self,

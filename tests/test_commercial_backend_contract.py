@@ -326,6 +326,155 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertEqual(ledger.commission_entries[1].status, "reversed")
         self.assertEqual(len(ledger.commission_reversals), 1)
 
+    def test_free_l1_agent_product_can_activate_directly_and_paid_levels_are_backend_configured(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product(
+            product_id="agent-l1-free",
+            level="L1",
+            name="L1 免费推广代理",
+            price_cents=0,
+            currency="CNY",
+            validity_days=365,
+            requires_review=False,
+            status="listed",
+            intro_page_enabled=True,
+        )
+        ledger.configure_agent_product(
+            product_id="agent-l2-paid",
+            level="L2",
+            name="L2 付费代理",
+            price_cents=19900,
+            currency="CNY",
+            validity_days=365,
+            requires_review=True,
+            status="listed",
+            intro_page_enabled=True,
+        )
+
+        free_profile = ledger.apply_agent("agent-free", "agent-l1-free")
+        paid_profile = ledger.apply_agent("agent-paid", "agent-l2-paid")
+
+        self.assertEqual(free_profile.level, "L1")
+        self.assertEqual(free_profile.status, "active")
+        self.assertTrue(free_profile.invite_code)
+        self.assertEqual(paid_profile.level, "L2")
+        self.assertEqual(paid_profile.status, "pending_review")
+
+    def test_referral_binding_is_not_overwritten_by_new_invite_code(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        first_agent = ledger.apply_agent("agent-first", "agent-l1-free")
+        second_agent = ledger.apply_agent("agent-second", "agent-l1-free")
+
+        first_binding = ledger.bind_referral("buyer-1", first_agent.invite_code)
+        retry_binding = ledger.bind_referral("buyer-1", second_agent.invite_code)
+
+        self.assertEqual(first_binding.direct_agent_user_id, "agent-first")
+        self.assertEqual(retry_binding.direct_agent_user_id, "agent-first")
+        self.assertEqual(len(ledger.referral_bindings), 1)
+
+    def test_agent_chain_snapshot_uses_pure_five_level_relation(self) -> None:
+        ledger = CommercialLedgerContract()
+        for level in range(1, 6):
+            product_id = f"agent-l{level}-free"
+            ledger.configure_agent_product(product_id, f"L{level}", f"L{level} 免费代理", 0)
+            ledger.apply_agent(f"agent-l{level}", product_id)
+
+        ledger.bind_referral("agent-l2", ledger.agent_profiles["agent-l1"].invite_code)
+        ledger.bind_referral("agent-l3", ledger.agent_profiles["agent-l2"].invite_code)
+        ledger.bind_referral("agent-l4", ledger.agent_profiles["agent-l3"].invite_code)
+        ledger.bind_referral("agent-l5", ledger.agent_profiles["agent-l4"].invite_code)
+        ledger.bind_referral("buyer-1", ledger.agent_profiles["agent-l5"].invite_code)
+
+        snapshot = ledger.build_agent_chain_snapshot("buyer-1", "usage-1")
+
+        self.assertEqual(
+            snapshot.chain,
+            ["agent-l5", "agent-l4", "agent-l3", "agent-l2", "agent-l1"],
+        )
+
+    def test_commission_event_uses_level_depth_rules_and_source_idempotency(self) -> None:
+        ledger = CommercialLedgerContract()
+        for level in range(1, 6):
+            product_id = f"agent-l{level}-free"
+            ledger.configure_agent_product(product_id, f"L{level}", f"L{level} 免费代理", 0)
+            ledger.apply_agent(f"agent-l{level}", product_id)
+        ledger.bind_referral("agent-l2", ledger.agent_profiles["agent-l1"].invite_code)
+        ledger.bind_referral("agent-l3", ledger.agent_profiles["agent-l2"].invite_code)
+        ledger.bind_referral("agent-l4", ledger.agent_profiles["agent-l3"].invite_code)
+        ledger.bind_referral("agent-l5", ledger.agent_profiles["agent-l4"].invite_code)
+        ledger.bind_referral("buyer-1", ledger.agent_profiles["agent-l5"].invite_code)
+        ledger.configure_commission_policy_rule("token_usage_settled", "L5", depth=1, rate_bps=1000)
+        ledger.configure_commission_policy_rule("token_usage_settled", "L4", depth=2, rate_bps=800)
+        ledger.configure_commission_policy_rule("token_usage_settled", "L1", depth=5, rate_bps=5000)
+
+        event = ledger.record_commission_event(
+            source_event_id="usage-1",
+            event_type="token_usage_settled",
+            buyer_user_id="buyer-1",
+            amount_cents=10000,
+        )
+        retry = ledger.record_commission_event(
+            source_event_id="usage-1",
+            event_type="token_usage_settled",
+            buyer_user_id="buyer-1",
+            amount_cents=10000,
+        )
+
+        self.assertEqual(event.event_id, retry.event_id)
+        self.assertEqual(len(ledger.commission_entries), 2)
+        self.assertEqual(
+            [(entry.agent_user_id, entry.depth, entry.commission_cents) for entry in ledger.commission_entries],
+            [("agent-l5", 1, 1000), ("agent-l4", 2, 800)],
+        )
+        with self.assertRaisesRegex(ValueError, "事件幂等"):
+            ledger.record_commission_event("usage-1", "token_usage_settled", "buyer-1", 20000)
+
+    def test_commission_event_without_active_policy_records_event_without_ledger_entries(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        profile = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", profile.invite_code)
+
+        event = ledger.record_commission_event(
+            source_event_id="usage-no-policy-1",
+            event_type="token_usage_settled",
+            buyer_user_id="buyer-1",
+            amount_cents=5000,
+        )
+
+        self.assertEqual(event.status, "recorded")
+        self.assertEqual(len(ledger.commission_events), 1)
+        self.assertEqual(len(ledger.commission_entries), 0)
+
+    def test_three_commission_event_types_release_after_t7_and_reverse_with_manual_review(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        profile = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", profile.invite_code)
+        ledger.configure_commission_policy_rule("token_usage_settled", "L1", depth=1, rate_bps=1000)
+        ledger.configure_commission_policy_rule("activation_paid", "L1", depth=1, rate_bps=2000)
+        ledger.configure_commission_policy_rule("agent_install_delivered", "L1", depth=1, rate_bps=3000)
+
+        ledger.record_commission_event("usage-1", "token_usage_settled", "buyer-1", 10000)
+        ledger.record_commission_event("activation-1", "activation_paid", "buyer-1", 10000)
+        ledger.record_commission_event("install-1", "agent_install_delivered", "buyer-1", 10000)
+        ledger.release_commissions_after_days(6)
+
+        self.assertEqual([entry.status for entry in ledger.commission_entries], ["pending", "pending", "pending"])
+
+        ledger.release_commissions_after_days(7)
+        self.assertEqual([entry.status for entry in ledger.commission_entries], ["available", "available", "available"])
+        self.assertEqual(sum(entry.commission_cents for entry in ledger.commission_entries), 6000)
+
+        ledger.commission_entries[0].status = "settled"
+        ledger.reverse_commission_event("usage-1", "客户退款")
+        ledger.reverse_commission_event("activation-1", "客户退款")
+
+        self.assertEqual(ledger.commission_entries[0].status, "manual_review")
+        self.assertEqual(ledger.commission_entries[1].status, "reversed")
+        self.assertEqual(ledger.commission_entries[2].status, "available")
+
     def test_api_key_owner_verification_blocks_agent_owned_key_for_buyer_delivery(self) -> None:
         ledger = CommercialLedgerContract()
         ledger.register_api_key_owner("sk-buyer", "buyer-1")
@@ -348,6 +497,18 @@ class CommercialBackendContractTests(unittest.TestCase):
             current_level="L2",
             upgrade_label="申请升级 L3",
             invite_url="https://aitokenapi.cc/invite/abc",
+            join_page_url="https://aitokenapi.cc/agent/join",
+            backend_url="https://aitokenapi.cc/agent/center",
+            rules_url="https://aitokenapi.cc/agent/rules",
+            summary={
+                "downstream_count": 12,
+                "token_commission_cents": 1234,
+                "activation_commission_cents": 2000,
+                "agent_install_commission_cents": 3000,
+                "available_settlement_cents": 4000,
+                "pending_settlement_cents": 5000,
+                "frozen_cents": 600,
+            },
             benefits=["可绑定买家"],
             boundaries=["收益以后台结算为准"],
             commission_ratio="50%",
@@ -357,7 +518,111 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertFalse(closed["enabled"])
         self.assertTrue(opened["enabled"])
         self.assertEqual(opened["current_level"], "L2")
+        self.assertEqual(opened["join_page_url"], "https://aitokenapi.cc/agent/join")
+        self.assertEqual(opened["backend_url"], "https://aitokenapi.cc/agent/center")
+        self.assertEqual(opened["rules_url"], "https://aitokenapi.cc/agent/rules")
+        self.assertEqual(opened["summary"]["downstream_count"], 12)
         self.assertNotIn("commission_ratio", opened)
+
+    def test_public_agent_offering_uses_marketing_content_and_only_exposes_open_products(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费推广代理", 0)
+        ledger.configure_agent_product("agent-l2-hidden", "L2", "L2 内测代理", 19900, status="hidden")
+        ledger.configure_agent_product(
+            "agent-l3-no-intro",
+            "L3",
+            "L3 暂不招商",
+            39900,
+            intro_page_enabled=False,
+        )
+        ledger.configure_agent_marketing_content(
+            page_title="胖虎AI代理招募",
+            hero_title="把 Agent 安装和 token 消费变成长期生意",
+            selling_points=["卖工具部署服务", "赚 token、激活和安装三类佣金"],
+            faq=[{"question": "多久结算？", "answer": "默认 T+7 后可申请结算。"}],
+            materials=[{"title": "朋友圈话术", "url": "https://aitokenapi.cc/agent/materials/moments"}],
+        )
+
+        offering = ledger.public_agent_offering()
+
+        self.assertEqual(offering["marketing_content"]["page_title"], "胖虎AI代理招募")
+        self.assertEqual([product["id"] for product in offering["products"]], ["agent-l1-free"])
+        self.assertEqual(offering["products"][0]["price_cents"], 0)
+        self.assertEqual(offering["available_levels"], ["L1"])
+        self.assertIn("T+7", offering["marketing_content"]["faq"][0]["answer"])
+
+    def test_agent_application_review_activates_paid_or_review_required_profile(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product(
+            product_id="agent-l2-review",
+            level="L2",
+            name="L2 审核代理",
+            price_cents=19900,
+            requires_review=True,
+        )
+
+        profile = ledger.apply_agent("agent-review", "agent-l2-review")
+        application = ledger.agent_applications[-1]
+
+        self.assertEqual(profile.status, "pending_review")
+        self.assertEqual(application.status, "pending_review")
+
+        approved = ledger.review_agent_application(
+            application_id=application.application_id,
+            decision="approve",
+            reviewer_user_id="admin-1",
+            reason="已确认代理费用和资料",
+        )
+
+        self.assertEqual(approved.status, "approved")
+        self.assertEqual(ledger.agent_profiles["agent-review"].status, "active")
+        self.assertTrue(ledger.agent_profiles["agent-review"].activated_at)
+
+    def test_settlement_request_only_uses_t7_available_commissions_and_admin_marks_settled(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        profile = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", profile.invite_code)
+        ledger.configure_commission_policy_rule("token_usage_settled", "L1", depth=1, rate_bps=1000)
+        ledger.record_commission_event("usage-1", "token_usage_settled", "buyer-1", 10000)
+
+        with self.assertRaisesRegex(ValueError, "可结算"):
+            ledger.create_settlement_request("agent-1", requested_cents=1000)
+
+        ledger.release_commissions_after_days(7)
+        request = ledger.create_settlement_request("agent-1", requested_cents=1000)
+
+        self.assertEqual(request.status, "pending")
+        self.assertEqual(request.requested_cents, 1000)
+        self.assertEqual([entry.status for entry in ledger.commission_entries], ["settlement_requested"])
+
+        settled = ledger.mark_settlement_paid(request.settlement_id, admin_user_id="admin-1")
+
+        self.assertEqual(settled.status, "settled")
+        self.assertEqual([entry.status for entry in ledger.commission_entries], ["settled"])
+
+    def test_admin_ledger_freeze_release_and_reverse_are_state_safe(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        profile = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", profile.invite_code)
+        ledger.configure_commission_policy_rule("agent_install_delivered", "L1", depth=1, rate_bps=3000)
+        ledger.record_commission_event("install-1", "agent_install_delivered", "buyer-1", 10000)
+        ledger.release_commissions_after_days(7)
+
+        commission_id = ledger.commission_entries[0].commission_id
+        ledger.admin_update_commission_entry(commission_id, "freeze", "疑似重复回调")
+        self.assertEqual(ledger.commission_entries[0].status, "frozen")
+        ledger.admin_update_commission_entry(commission_id, "release", "风控解除")
+        self.assertEqual(ledger.commission_entries[0].status, "available")
+        ledger.admin_update_commission_entry(commission_id, "reverse", "安装失败冲正")
+
+        self.assertEqual(ledger.commission_entries[0].status, "reversed")
+
+        ledger.commission_entries[0].status = "settled"
+        ledger.admin_update_commission_entry(commission_id, "reverse", "已结算后退款")
+
+        self.assertEqual(ledger.commission_entries[0].status, "manual_review")
 
 
 if __name__ == "__main__":

@@ -30,28 +30,35 @@
 - 已确认产品权威手册、技术维护手册、蓝图、验收、运行、最终报告的基本结构。
 - 已确认登录门禁曾被本地会话恢复绕过，并已回到“未登录先闸口”的实现。
 - 已收紧 `profile.json` 持久化出口：只保留账号提示、API Key、模型和界面偏好，不保存可恢复登录 token 或部署 token。
-- 已清理桌面端旧代理协助主链路：不再暴露 `buyer_bind`、agent-assist 登录、旧协助 worker 或旧协助上下文工厂。
-- 已把买家自助购买状态节点独立为当前买家链路，避免后续维护把买家购买链路误挂回旧代理模式命名。
-- 已从当前商业 API 请求构造里移除旧协助会话字段，订单、支付、权益和配置会话只围绕当前登录买家上下文。
+- 桌面端商业链路已收束为当前登录买家上下文，不提供本地代操作登录、绑定、下单或支付查询入口。
+- 已把买家自助购买状态节点独立为当前登录买家链路。
+- 当前商业 API 请求构造只围绕当前登录买家上下文；订单、支付、权益和配置会话不得使用本地代操作会话字段。
 - 已同步产品手册、技术维护手册、后端 API 合同、验收和安全文档中的登录态持久化口径。
+- 已按架构评审补充代理中心业务边界：代理中心是登录后的独立代理业务模块；后续需覆盖 token 返佣、下游付费激活返佣、付费安装 Agent 返佣和工具代理后端。
+- 已把代理业务商业化合同落到本仓库可控范围：新增服务端离线合同对象覆盖代理产品、营销内容、代理申请审核、五级链路、三类佣金事件、T+7 结算申请、管理员账本冻结/解冻/冲正；客户端 API 合同增加公开招商、下游、佣金、结算、后台策略、营销内容、审核和结算动作请求构造。
+- 已将 `agent_center` 纳入商业 manifest 签名控制字段，避免代理中心收益/结算快照绕过服务端签名保护。
+- 已同步 `docs/COMMERCIAL_BACKEND_API_CONTRACT.md` 和 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md`：胖虎AI管理员后台需要“代理业务管理”，公开招商页固定为 `/agent/join`，桌面端只展示服务端快照和入口。
 - 已确认当前自动化测试通过不等于客户可交付。
 
 ## 3. 当前正在做
 
 1. 后端与主程序商业边界继续逐项对照。
-2. 确认旧代理协助清理后的服务端合同、测试守卫和客户可见文案保持一致。
-3. 为后续 agent 提供稳定执行依据。
+2. 确认服务端合同、测试守卫和客户可见文案都围绕当前登录买家上下文。
+3. 继续确认代理中心三类返佣和下游客户合同尚未被客户端硬编码，也没有被误写成已完成。
+4. 为后续 agent 提供稳定执行依据。
 
 ## 4. 下一步
 
 1. 继续审计 `src/panghu_codex_installer.py`、`src/commercial_api.py`、`src/commercial_backend_contract.py` 中的商业合同边界。
-2. 输出剩余后端实现偏差清单。
-3. 再决定后端修正任务拆分和并行评审。
+2. 对照代理中心服务端合同，继续检查主程序是否只展示 `agent_center` 服务端快照，是否存在旧代理登录、本地代理模式或本地返佣计算残留。
+3. 输出剩余后端实现偏差清单。
+4. 再决定后端修正任务拆分和并行评审。
 
 ## 5. 明确未完成
 
 - 真实网页登录、注册、充值、支付、创建 API Key 闭环验收。
-- 四 Agent 使用真实客户 API Key 的最小中文对话闭环验收。
+- 代理中心真实服务端实现和真实数据闭环：token 返佣、下游付费激活返佣、付费安装 Agent 返佣、下游客户归因、结算状态和管理员后台配置页。当前仓库只有离线合同、请求构造、文档合同和测试守卫。
+- Codex、ClaudeCode、OpenClaw、Hermes 使用真实客户 API Key 的最小中文对话闭环验收；Gemini / agy 配置链路待开发，当前不计完整交付。
 - 三端客户包打包、Release、下载页和 `latest.json` 更新。
 
 ## 6. 当前验证命令
@@ -62,6 +69,6 @@ python src\panghu_codex_installer.py --self-test
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-最近结果：`python -m unittest discover -s tests -p "test_*.py"` 已通过 209 条测试；`python src\panghu_codex_installer.py --self-test` 已通过；`python -m py_compile src\panghu_codex_installer.py src\commercial_core.py src\commercial_api.py src\commercial_backend_contract.py` 已通过。
+最近结果：`python -m pytest tests/test_commercial_core.py tests/test_panghu_commercial_manifest.py tests/test_commercial_api.py tests/test_commercial_backend_contract.py tests/test_commercial_flow_acceptance.py -q` 已通过 170 条测试；`python -m pytest tests/test_commercial_backend_contract_docs.py -q` 已通过 9 条测试和 111 个 subtests。更大范围的 unittest/self-test 仍需在本轮收尾前复跑。
 
 这些命令只代表代码健康与回归检查通过，不代表产品已可正式交付。

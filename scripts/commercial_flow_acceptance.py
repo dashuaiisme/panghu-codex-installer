@@ -73,6 +73,19 @@ def run_acceptance() -> dict:
         current_level="L1",
         upgrade_label="申请升级",
         invite_url="https://aitokenapi.cc/invite/offline",
+        join_page_url="https://aitokenapi.cc/agent/join",
+        backend_url="https://aitokenapi.cc/agent/center",
+        rules_url="https://aitokenapi.cc/agent/rules",
+        status="active",
+        summary={
+            "downstream_count": 1,
+            "token_commission_cents": 0,
+            "activation_commission_cents": 0,
+            "agent_install_commission_cents": 0,
+            "available_settlement_cents": 0,
+            "pending_settlement_cents": 0,
+            "frozen_cents": 0,
+        },
         benefits=["可绑定买家"],
         boundaries=["收益以后台结算为准"],
         commission_ratio="50%",
@@ -337,6 +350,114 @@ def run_acceptance() -> dict:
     ledger.commission_entries[-2].status = "withdrawn"
     ledger.reverse_order(withdrawn_commission_order.order_id, "离线验收已提现佣金撤销")
 
+    agent_business_ledger = CommercialLedgerContract()
+    agent_business_ledger.configure_agent_product(
+        "agent-l1-free",
+        "L1",
+        "L1 免费推广代理",
+        price_cents=0,
+        requires_review=False,
+    )
+    agent_business_ledger.configure_agent_product(
+        "agent-l2-paid",
+        "L2",
+        "L2 付费代理",
+        price_cents=19900,
+        requires_review=True,
+    )
+    agent_business_ledger.configure_agent_marketing_content(
+        page_title="胖虎AI代理招募",
+        hero_title="把 Agent 安装和 token 消费变成长期生意",
+        selling_points=["卖工具部署服务", "赚 token、激活和安装三类佣金"],
+        faq=[{"question": "多久结算？", "answer": "默认 T+7 后可申请结算。"}],
+        materials=[{"title": "朋友圈话术", "url": "https://aitokenapi.cc/agent/materials/moments"}],
+    )
+    free_profile = agent_business_ledger.apply_agent("agent-l1", "agent-l1-free")
+    paid_profile = agent_business_ledger.apply_agent("agent-paid-l2", "agent-l2-paid")
+    paid_l2_initial_status = paid_profile.status
+    for level in range(2, 6):
+        product_id = f"agent-l{level}-free"
+        agent_business_ledger.configure_agent_product(
+            product_id,
+            f"L{level}",
+            f"L{level} 离线代理",
+            price_cents=0,
+            requires_review=False,
+        )
+        agent_business_ledger.apply_agent(f"agent-l{level}", product_id)
+    offering = agent_business_ledger.public_agent_offering()
+    paid_l2_application = agent_business_ledger.agent_applications[1]
+    paid_l2_review = agent_business_ledger.review_agent_application(
+        application_id=paid_l2_application.application_id,
+        decision="approve",
+        reviewer_user_id="admin-offline",
+        reason="离线验收批准付费代理",
+    )
+    agent_business_ledger.bind_referral("agent-l2", agent_business_ledger.agent_profiles["agent-l1"].invite_code)
+    agent_business_ledger.bind_referral("agent-l3", agent_business_ledger.agent_profiles["agent-l2"].invite_code)
+    agent_business_ledger.bind_referral("agent-l4", agent_business_ledger.agent_profiles["agent-l3"].invite_code)
+    agent_business_ledger.bind_referral("agent-l5", agent_business_ledger.agent_profiles["agent-l4"].invite_code)
+    agent_business_ledger.bind_referral("buyer-commission", agent_business_ledger.agent_profiles["agent-l5"].invite_code)
+    rebound = agent_business_ledger.bind_referral(
+        "buyer-commission",
+        agent_business_ledger.agent_profiles["agent-l1"].invite_code,
+    )
+    snapshot = agent_business_ledger.build_agent_chain_snapshot("buyer-commission", "snapshot-1")
+    no_policy_event = agent_business_ledger.record_commission_event(
+        "no-policy-1",
+        "token_usage_settled",
+        "buyer-commission",
+        10000,
+    )
+    entries_after_no_policy_event = len(agent_business_ledger.commission_entries)
+    agent_business_ledger.configure_commission_policy_rule("token_usage_settled", "L5", 1, 1000)
+    agent_business_ledger.configure_commission_policy_rule("activation_paid", "L5", 1, 2000)
+    agent_business_ledger.configure_commission_policy_rule("agent_install_delivered", "L5", 1, 3000)
+    token_event = agent_business_ledger.record_commission_event(
+        "usage-1",
+        "token_usage_settled",
+        "buyer-commission",
+        10000,
+    )
+    token_event_retry = agent_business_ledger.record_commission_event(
+        "usage-1",
+        "token_usage_settled",
+        "buyer-commission",
+        10000,
+    )
+    agent_business_ledger.record_commission_event("activation-1", "activation_paid", "buyer-commission", 10000)
+    agent_business_ledger.record_commission_event("install-1", "agent_install_delivered", "buyer-commission", 10000)
+    agent_business_ledger.release_commissions_after_days(6)
+    pending_count_after_6_days = len([entry for entry in agent_business_ledger.commission_entries if entry.status == "pending"])
+    agent_business_ledger.release_commissions_after_days(7)
+    available_count_after_7_days = len([entry for entry in agent_business_ledger.commission_entries if entry.status == "available"])
+    settlement = agent_business_ledger.create_settlement_request("agent-l5", requested_cents=1000)
+    settlement_status_after_request = settlement.status
+    paid_settlement = agent_business_ledger.mark_settlement_paid(settlement.settlement_id, admin_user_id="admin-offline")
+    settlement_status_after_admin_pay = paid_settlement.status
+    agent_business_ledger.commission_entries[1].status = "available"
+    agent_business_ledger.admin_update_commission_entry(
+        agent_business_ledger.commission_entries[1].commission_id,
+        "freeze",
+        "离线验收风控冻结",
+    )
+    agent_business_ledger.admin_update_commission_entry(
+        agent_business_ledger.commission_entries[1].commission_id,
+        "release",
+        "离线验收风控解除",
+    )
+    agent_business_ledger.admin_update_commission_entry(
+        agent_business_ledger.commission_entries[1].commission_id,
+        "reverse",
+        "离线验收风控冲正",
+    )
+    ledger_status_after_freeze_release_reverse = agent_business_ledger.commission_entries[1].status
+    agent_business_ledger.commission_entries[0].status = "settled"
+    agent_business_ledger.reverse_commission_event("usage-1", "离线验收退款")
+    agent_business_ledger.reverse_commission_event("activation-1", "离线验收退款")
+    manual_review_after_reverse = len([entry for entry in agent_business_ledger.commission_entries if entry.status == "manual_review"])
+    reversed_after_reverse = len([entry for entry in agent_business_ledger.commission_entries if entry.status == "reversed"])
+
     reversed_commissions = [entry for entry in ledger.commission_entries if entry.status == "reversed"]
     manual_review_commissions = [entry for entry in ledger.commission_entries if entry.status == "manual_review"]
     report = {
@@ -394,6 +515,26 @@ def run_acceptance() -> dict:
             "agent_key_blocked": agent_key_blocked,
         },
         "agent_center": agent_center,
+        "agent_business": {
+            "free_l1_status": free_profile.status,
+            "paid_l2_status": paid_l2_initial_status,
+            "referral_owner_after_rebind": rebound.direct_agent_user_id,
+            "chain_snapshot": snapshot.chain,
+            "no_policy_event_status": no_policy_event.status,
+            "entries_after_no_policy_event": entries_after_no_policy_event,
+            "event_idempotent": token_event.event_id == token_event_retry.event_id,
+            "pending_count_after_6_days": pending_count_after_6_days,
+            "available_count_after_7_days": available_count_after_7_days,
+            "offering_levels": offering["available_levels"],
+            "marketing_has_join_copy": "长期生意" in str(offering["marketing_content"]),
+            "paid_l2_review_after_approve": paid_l2_review.status,
+            "paid_l2_profile_after_approve": agent_business_ledger.agent_profiles["agent-paid-l2"].status,
+            "settlement_status_after_request": settlement_status_after_request,
+            "settlement_status_after_admin_pay": settlement_status_after_admin_pay,
+            "ledger_status_after_freeze_release_reverse": ledger_status_after_freeze_release_reverse,
+            "manual_review_after_reverse": manual_review_after_reverse,
+            "reversed_after_reverse": reversed_after_reverse,
+        },
         "commissions": {
             "created_count": len(ledger.commission_entries),
             "reversed_count": len(reversed_commissions),

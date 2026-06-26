@@ -64,6 +64,26 @@ class CommercialFlowAcceptanceTests(unittest.TestCase):
         self.assertTrue(report["api_key_owner"]["agent_key_blocked"])
         self.assertTrue(report["agent_center"]["enabled"])
         self.assertNotIn("commission_ratio", report["agent_center"])
+        self.assertEqual(report["agent_business"]["free_l1_status"], "active")
+        self.assertEqual(report["agent_business"]["paid_l2_status"], "pending_review")
+        self.assertEqual(report["agent_business"]["referral_owner_after_rebind"], "agent-l5")
+        self.assertEqual(
+            report["agent_business"]["chain_snapshot"],
+            ["agent-l5", "agent-l4", "agent-l3", "agent-l2", "agent-l1"],
+        )
+        self.assertEqual(report["agent_business"]["event_idempotent"], True)
+        self.assertEqual(report["agent_business"]["entries_after_no_policy_event"], 0)
+        self.assertEqual(report["agent_business"]["pending_count_after_6_days"], 3)
+        self.assertEqual(report["agent_business"]["available_count_after_7_days"], 3)
+        self.assertEqual(report["agent_business"]["manual_review_after_reverse"], 1)
+        self.assertEqual(report["agent_business"]["reversed_after_reverse"], 1)
+        self.assertEqual(report["agent_business"]["offering_levels"], ["L1", "L2", "L3", "L4", "L5"])
+        self.assertTrue(report["agent_business"]["marketing_has_join_copy"])
+        self.assertEqual(report["agent_business"]["paid_l2_review_after_approve"], "approved")
+        self.assertEqual(report["agent_business"]["paid_l2_profile_after_approve"], "active")
+        self.assertEqual(report["agent_business"]["settlement_status_after_request"], "pending")
+        self.assertEqual(report["agent_business"]["settlement_status_after_admin_pay"], "settled")
+        self.assertEqual(report["agent_business"]["ledger_status_after_freeze_release_reverse"], "reversed")
 
 
 if __name__ == "__main__":

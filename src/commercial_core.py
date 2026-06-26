@@ -427,6 +427,7 @@ AGENT_LABELS: dict[str, str] = {
     "claude_code": "ClaudeCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "gemini_agy": "Gemini / agy",
 }
 
 ENTITLEMENT_STATUS_LABELS: dict[str, str] = {
@@ -658,6 +659,9 @@ def build_agent_center_summary_lines(manifest: dict[str, Any]) -> list[str]:
         return ["代理中心：服务端暂未开放，请以后台开关为准。"]
 
     lines = ["代理中心：服务端已开放"]
+    status = str(center.get("status") or "").strip()
+    if status:
+        lines.append(f"代理状态：{status}")
     current_level = str(center.get("current_level") or "").strip()
     if current_level:
         lines.append(f"当前等级：{current_level}")
@@ -667,6 +671,32 @@ def build_agent_center_summary_lines(manifest: dict[str, Any]) -> list[str]:
     invite_url = str(center.get("invite_url") or "").strip()
     if invite_url:
         lines.append("邀请入口：已开放")
+    join_page_url = str(center.get("join_page_url") or "").strip()
+    if join_page_url:
+        lines.append("招商介绍：已开放")
+    backend_url = str(center.get("backend_url") or "").strip()
+    if backend_url:
+        lines.append("工具代理后端：已开放")
+    rules_url = str(center.get("rules_url") or "").strip()
+    if rules_url:
+        lines.append("代理规则：已开放")
+
+    summary = center.get("summary")
+    if isinstance(summary, dict):
+        downstream_count = _nonnegative_int(summary.get("downstream_count"))
+        if downstream_count is not None:
+            lines.append(f"下游客户：{downstream_count} 人")
+        for key, label in (
+            ("token_commission_cents", "token 返佣"),
+            ("activation_commission_cents", "激活返佣"),
+            ("agent_install_commission_cents", "安装返佣"),
+            ("available_settlement_cents", "可结算"),
+            ("pending_settlement_cents", "待结算"),
+            ("frozen_cents", "冻结金额"),
+        ):
+            cents = _nonnegative_int(summary.get(key))
+            if cents is not None:
+                lines.append(f"{label}：{format_customer_price(cents, 'CNY')}")
 
     benefits = center.get("benefits")
     if isinstance(benefits, list):
@@ -682,6 +712,14 @@ def build_agent_center_summary_lines(manifest: dict[str, Any]) -> list[str]:
             if text:
                 lines.append(f"收益边界：{text}")
     return lines
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, number)
 
 
 def _valid_until_is_active(valid_until: str) -> bool:
@@ -846,7 +884,7 @@ def validate_commercial_manifest_trust(
 ) -> CommercialManifestTrustDecision:
     has_commercial_controls = any(
         key in manifest
-        for key in ("products", "entitlements", "commercial", "commercial_enabled")
+        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center")
     )
     if not has_commercial_controls:
         return CommercialManifestTrustDecision(

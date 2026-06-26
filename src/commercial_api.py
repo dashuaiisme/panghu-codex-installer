@@ -73,6 +73,62 @@ class CommercialApiContract:
     def config_session_fail_url(self) -> str:
         return self._url("/api/deployer/config-sessions/fail")
 
+    @property
+    def agent_public_offering_url(self) -> str:
+        return self._url("/api/agent/public/offering")
+
+    @property
+    def agent_apply_url(self) -> str:
+        return self._url("/api/agent/apply")
+
+    @property
+    def agent_center_url(self) -> str:
+        return self._url("/api/agent/center")
+
+    @property
+    def agent_downstreams_url(self) -> str:
+        return self._url("/api/agent/downstreams")
+
+    @property
+    def agent_commissions_url(self) -> str:
+        return self._url("/api/agent/commissions")
+
+    @property
+    def agent_settlements_url(self) -> str:
+        return self._url("/api/agent/settlements")
+
+    @property
+    def referral_bind_url(self) -> str:
+        return self._url("/api/referrals/bind")
+
+    @property
+    def admin_agent_products_url(self) -> str:
+        return self._url("/api/admin/agent/products")
+
+    @property
+    def admin_agent_policies_url(self) -> str:
+        return self._url("/api/admin/agent/policies")
+
+    @property
+    def admin_agent_marketing_content_url(self) -> str:
+        return self._url("/api/admin/agent/marketing-content")
+
+    @property
+    def admin_agent_applications_url(self) -> str:
+        return self._url("/api/admin/agent/applications")
+
+    @property
+    def admin_agent_settlements_url(self) -> str:
+        return self._url("/api/admin/agent/settlements")
+
+    def admin_agent_ledger_action_url(self, ledger_id: str, action: str) -> str:
+        if action not in {"freeze", "release", "reverse"}:
+            raise ValueError("未知代理账本动作。")
+        safe_ledger_id = str(ledger_id or "").strip().strip("/")
+        if not safe_ledger_id:
+            raise ValueError("代理账本 ID 为空。")
+        return self._url(f"/api/admin/agent/ledger/{safe_ledger_id}/{action}")
+
 
 @dataclass(frozen=True)
 class CommercialApiRequest:
@@ -233,6 +289,145 @@ def build_order_create_request(
             "target_buyer_user_id": buyer_user_id,
             "operator_user_id": operator_user_id,
         },
+    )
+
+
+def build_agent_apply_request(
+    contract: CommercialApiContract,
+    product_id: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.agent_apply_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={"product_id": product_id},
+    )
+
+
+def build_agent_public_offering_request(contract: CommercialApiContract) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.agent_public_offering_url)
+
+
+def build_agent_center_request(contract: CommercialApiContract) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.agent_center_url)
+
+
+def build_agent_downstreams_request(
+    contract: CommercialApiContract,
+    cursor: str = "",
+    limit: int = 50,
+) -> CommercialApiRequest:
+    query = {"limit": str(max(1, min(int(limit), 100)))}
+    if cursor.strip():
+        query["cursor"] = cursor.strip()
+    return CommercialApiRequest(method="GET", url=contract.agent_downstreams_url, query=query)
+
+
+def build_agent_commissions_request(
+    contract: CommercialApiContract,
+    status: str = "",
+    event_type: str = "",
+    cursor: str = "",
+    limit: int = 50,
+) -> CommercialApiRequest:
+    query = {"limit": str(max(1, min(int(limit), 100)))}
+    if status.strip():
+        query["status"] = status.strip()
+    if event_type.strip():
+        query["event_type"] = event_type.strip()
+    if cursor.strip():
+        query["cursor"] = cursor.strip()
+    return CommercialApiRequest(method="GET", url=contract.agent_commissions_url, query=query)
+
+
+def build_agent_settlement_request(
+    contract: CommercialApiContract,
+    requested_cents: int,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.agent_settlements_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={"requested_cents": requested_cents},
+    )
+
+
+def build_referral_bind_request(
+    contract: CommercialApiContract,
+    invite_code: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.referral_bind_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={"invite_code": invite_code},
+    )
+
+
+def build_admin_agent_product_update_request(
+    contract: CommercialApiContract,
+    product: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="PUT", url=contract.admin_agent_products_url, body={"product": dict(product)})
+
+
+def build_admin_agent_policy_update_request(
+    contract: CommercialApiContract,
+    policy: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="PUT", url=contract.admin_agent_policies_url, body={"policy": dict(policy)})
+
+
+def build_admin_agent_marketing_content_update_request(
+    contract: CommercialApiContract,
+    content: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="PUT",
+        url=contract.admin_agent_marketing_content_url,
+        body={"content": dict(content)},
+    )
+
+
+def build_admin_agent_application_review_request(
+    contract: CommercialApiContract,
+    application_id: str,
+    decision: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_agent_applications_url,
+        body={"application_id": application_id, "decision": decision, "reason": reason},
+    )
+
+
+def build_admin_agent_settlement_action_request(
+    contract: CommercialApiContract,
+    settlement_id: str,
+    action: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_agent_settlements_url,
+        body={"settlement_id": settlement_id, "action": action, "reason": reason},
+    )
+
+
+def build_admin_agent_ledger_action_request(
+    contract: CommercialApiContract,
+    ledger_id: str,
+    action: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_agent_ledger_action_url(ledger_id, action),
+        body={"reason": reason},
     )
 
 

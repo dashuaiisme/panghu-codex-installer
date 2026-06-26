@@ -10,11 +10,11 @@
 - `target_buyer_context`：权益、订单、API Key、配置会话、设备绑定和扣次归属的真实买家；当前客户端侧与 `operator_context` 相同。
 - `diagnostic_code`：客户端每次配置生成的客服诊断码，贯穿订单、权益、配置会话和日志。
 
-代理身份不再是客户端登录前模式，也不再由客户端建立本地协助会话。代理等级、邀请归因、返佣归因、下线和收益等信息只由服务端维护，并通过工具内置浏览器打开 `https://aitokenapi.cc` 的“代理中心”页面展示和办理。
+代理身份只来自登录后的服务端权益，客户端不得建立本地代操作会话。代理中心不是单纯的网站推广返佣页，而是本工具独立代理业务模块。代理等级、邀请归因、返佣归因、下游客户、token 返佣、下游付费激活返佣、付费安装 Agent 返佣、收益和结算状态等信息只由服务端维护，并通过工具内置浏览器、代理后端入口或服务端下发的代理中心快照展示和办理。
 
 所有商业接口必须要求请求头 `Authorization: Bearer <operator_token>`。服务端必须用 token 校验 `operator_context`，不能只信任客户端请求体里的 `operator_user_id`。创建订单、查询支付、刷新权益、API Key 归属校验、配置会话预占、配置成功和配置失败都必须使用当前登录买家 token。日志、摘要和诊断包不得输出完整 token 或授权头。
 
-历史版本残留的本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果旧 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID 或配置会话 ID，下一次保存必须清除，不能继续带入长期登录态。启动恢复时不得把旧商业污染字段或旧买家 token 当成当前账号，只能恢复账号提示、API Key、模型和界面偏好；真正的登录、授权和部署 token 必须来自本次重新登录。
+本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID 或配置会话 ID，下一次保存必须清除，不能继续带入长期登录态。启动恢复时不得把商业污染字段或买家 token 当成当前账号，只能恢复账号提示、API Key、模型和界面偏好；真正的登录、授权和部署 token 必须来自本次重新登录。
 
 ## 2. 商品配置
 
@@ -43,14 +43,14 @@
 
 ## 3. 商业部署清单签名
 
-只要部署清单包含任一商业控制字段，例如 `products`、`entitlements`、`commercial` 或 `commercial_enabled`，服务端必须同时返回：
+只要部署清单包含任一商业控制字段，例如 `products`、`entitlements`、`commercial`、`commercial_enabled` 或 `agent_center`，服务端必须同时返回：
 
 - `manifest_signature`
 - `manifest_issued_at`
 - `manifest_signature_algorithm`
 - `manifest_key_id`
 
-签名算法使用 `ed25519`。签名载荷是去掉 `manifest_signature` 字段后的整份 manifest，按 JSON key 排序、紧凑分隔符和 UTF-8 编码生成。可用 `scripts/commercial_manifest_signer.py` 在离线环境生成密钥并签名 manifest。客户端只内置验签公钥，不保存私钥；私钥不得进入客户端源码、客户包、GitHub Release 或下载页。公钥通过构建环境变量 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM` 写入生成模块 `src/commercial_manifest_public_key.py`，该生成模块不得提交到 git。缺字段、缺公钥、算法不支持或验签失败时，客户端会拒绝使用商业清单，避免用户通过本地修改 manifest 解锁商品、权益或 Agent 交付范围。旧版免费清单如果完全不包含商业控制字段，可以继续兼容。
+签名算法使用 `ed25519`。签名载荷是去掉 `manifest_signature` 字段后的整份 manifest，按 JSON key 排序、紧凑分隔符和 UTF-8 编码生成。可用 `scripts/commercial_manifest_signer.py` 在离线环境生成密钥并签名 manifest。客户端只内置验签公钥，不保存私钥；私钥不得进入客户端源码、客户包、GitHub Release 或下载页。公钥通过构建环境变量 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM` 写入生成模块 `src/commercial_manifest_public_key.py`，该生成模块不得提交到 git。缺字段、缺公钥、算法不支持或验签失败时，客户端会拒绝使用商业清单，避免用户通过本地修改 manifest 解锁商品、权益或 Agent 交付范围。不含商业控制字段的免费清单可以继续兼容。
 
 ## 4. 工具订单
 
@@ -179,23 +179,43 @@
 
 客户端只展示代理介绍、升级入口和必要邀请入口。代理等级、升级价格、收益比例和展示开关全部由服务端控制。
 
-服务端清单可返回 `agent_center` 快照供客户端展示：
+服务端清单可返回 `agent_center` 快照供客户端展示。该快照属于商业控制字段，必须参与 manifest 签名验签：
 
-- `enabled`
-- `current_level`
-- `upgrade_label`
-- `invite_url`
-- `benefits`
-- `boundaries`
+```json
+{
+  "agent_center": {
+    "enabled": true,
+    "status": "active",
+    "current_level": "L1",
+    "invite_url": "https://aitokenapi.cc/register?invite=xxx",
+    "join_page_url": "https://aitokenapi.cc/agent/join",
+    "backend_url": "https://aitokenapi.cc/agent/center",
+    "rules_url": "https://aitokenapi.cc/agent/rules",
+    "summary": {
+      "downstream_count": 0,
+      "token_commission_cents": 0,
+      "activation_commission_cents": 0,
+      "agent_install_commission_cents": 0,
+      "available_settlement_cents": 0,
+      "pending_settlement_cents": 0,
+      "frozen_cents": 0
+    },
+    "benefits": [],
+    "boundaries": ["所有收益以后台结算账本为准"]
+  }
+}
+```
 
-客户端只显示这些客户可读字段。返佣比例、代理升级价格、结算规则和账本明细必须继续由后台控制，不能由客户端写死或本地计算。
+客户端只显示这些客户可读字段。返佣比例、代理升级价格、结算规则、下游客户归因、token 返佣、激活返佣、安装返佣和账本明细必须继续由后台控制，不能由客户端写死或本地计算。
 
 ## 11. 返佣账本
 
 返佣账本必须以订单和真实 token/API 消费为依据：
 
-- 工具商品订单返佣
 - token/API 真实消费返佣
+- 下游客户付费激活返佣
+- 付费安装 Agent 返佣
+- 工具商品订单返佣
 - 每笔订单只能结算一次
 - 佣金比例使用订单快照
 - 佣金状态可追踪
@@ -256,6 +276,8 @@
 
 不能只下载 Agent 本体就作为付费完整配置交付。
 
+`Gemini / agy` 当前只保留官方入口和待接入状态。未完成胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得作为付费完整配置交付。
+
 ## 15. 后端验收清单
 
 - 商品配置由后台控制，客户端不写死价格、次数、有效期、设备数或上架状态。
@@ -268,5 +290,53 @@
 - 订单撤销会回收权益、终止配置会话、释放预占并执行佣金冲正。
 - 后台可通过 `diagnostic_code` 查到完整链路。
 - 代理返佣比例、代理等级升级价格和展示开关全部由后台配置。
+- 代理中心必须区分 token 返佣、下游付费激活返佣和付费安装 Agent 返佣，不能把三者混成一个普通推广返佣字段。
 - 后端或客户端商业合同变更后，必须先运行 `python scripts/commercial_flow_acceptance.py --json`，离线验收订单、支付、权益、配置会话、设备超限不扣次、失败不扣次、成功扣次和佣金冲正主链路。
 - 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作。
+
+## 16. 代理业务管理
+
+胖虎AI管理员账号必须新增一级菜单“代理业务管理”。该菜单是代理业务的唯一运营配置入口，至少包含：代理产品介绍、五级费用设置、返佣规则、代理审核、下游客户、佣金账本、结算提现、推广素材、风控冻结。桌面客户端不得复制这些配置规则，只能展示服务端快照和入口。
+
+公开代理招募页为 `/agent/join`，用于招商而不是客户配置 Agent。页面内容由 `agent_marketing_content` 管理，必须讲清楚：卖什么、怎么赚钱、费用多少、适合谁、如何结算、风险边界、立即申请。该页必须能展示 L1 免费开通、L2-L5 审核或收费开通、三类收益来源、T+7 结算、退款冲正和后台账本为准的边界。
+
+代理业务管理与结算系统在服务端包含以下核心表结构：
+
+- `agent_products`: `id, level, name, price_cents, currency, validity_days, requires_review, status, intro_page_enabled`。`L1 可配置为 0 元`，L2-L5 可由后台隐藏、审核制、收费、年费、升级费或押金策略控制。
+- `agent_profiles`: `user_id, level, status, product_id, activated_at, expires_at, invite_code`。代理身份只来自服务端权益。
+- `referral_bindings`: `buyer_user_id, direct_agent_user_id, bound_at, source_invite_code`。绑定后不可覆盖，重复绑定直接返回原上级。
+- `agent_chain_snapshots`: 每次订单、token 消费、激活或安装交付事件保存当时 1-5 级上级链路。
+- `commission_policies`: 佣金政策主表，只允许后台启用、停用和发布新版本。
+- `commission_policy_rules`: 按 `event_type + receiver_level + depth` 配置 `rate_bps`，只影响新事件，历史订单使用历史快照。
+- `commission_events`: 事件类型限定为 `token_usage_settled`、`activation_paid`、`agent_install_delivered`，每个事件必须有唯一 `source_event_id` 防止重复返佣。
+- `commission_ledger`: 佣金账本状态为 `pending`、`frozen`、`available`、`settled`、`reversed`、`manual_review`，金额字段统一使用 `commission_cents`。
+- `settlement_requests`: 提现和结算申请表，记录申请金额、关联佣金、状态、审核人、放款流水和失败原因。
+- `agent_marketing_content`: 招募页、FAQ、素材、话术、等级说明和风险边界。
+
+代理业务相关接口如下：
+
+- 公开页：`/agent/join`
+- 客户端与内置网站接口：
+  - GET `/api/agent/public/offering`: 返回公开代理产品、介绍页内容、可申请等级。
+  - POST `/api/agent/apply`: 申请成为代理；0 元产品可直接开通或进入审核。
+  - GET `/api/agent/center`: 当前代理总览、邀请链接、下游、三类佣金、结算状态。
+  - GET `/api/agent/downstreams`: 当前代理的下游客户列表和分页游标。
+  - GET `/api/agent/commissions`: 当前代理的佣金账本查询，支持状态、事件类型和分页。
+  - POST `/api/agent/settlements`: 代理发起提现或结算申请，默认只能申请 `available` 金额。
+  - POST `/api/referrals/bind`: 邀请码绑定；已有绑定直接返回原上级，不覆盖。
+- 后台管理端接口：
+  - GET/PUT `/api/admin/agent/products`
+  - GET/PUT `/api/admin/agent/policies`
+  - GET/PUT `/api/admin/agent/marketing-content`
+  - GET/POST `/api/admin/agent/applications`
+  - GET/POST `/api/admin/agent/settlements`
+  - POST `/api/admin/agent/ledger/:id/freeze|release|reverse`
+
+佣金结算与提现规则：
+
+- 遵循纯五级代理模型，L1 只能拿 1 层，L5 最多拿 5 层；`receiver.level >= depth` 时才允许按规则返佣。
+- 没有启用的 `commission_policy` 时，不产生佣金，只记录可诊断事件。
+- 佣金默认 T+7 从 `pending` 转 `available`；退款、撤单、交付失败必须冲正。
+- 未结算佣金可以转为 `reversed`；已经结算、提现或状态不可自动追回的佣金必须进入 `manual_review`。
+- 管理员风控冻结只能把可处理账本项转为 `frozen`；解除冻结只能从 `frozen` 回到 `available`，不能绕过 T+7。
+- 所有金额统一用 `price_cents`、`commission_cents` 和 `requested_cents`，币种默认 `CNY`。

@@ -61,6 +61,13 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertTrue(decision.requires_signature)
         self.assertIn("签名", decision.message)
 
+    def test_agent_center_manifest_snapshot_requires_server_signature(self) -> None:
+        decision = validate_commercial_manifest_trust({"agent_center": {"enabled": True}})
+
+        self.assertFalse(decision.trusted)
+        self.assertTrue(decision.requires_signature)
+        self.assertIn("签名", decision.message)
+
     def test_legacy_manifest_without_commercial_controls_does_not_require_signature(self) -> None:
         decision = validate_commercial_manifest_trust({"agents": [{"id": "codex"}]})
 
@@ -448,6 +455,47 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertIn("可绑定新买家", text)
         self.assertIn("后台结算账本", text)
         self.assertNotIn("30%", text)
+
+    def test_agent_center_summary_displays_backend_urls_and_three_commission_buckets_from_snapshot(self) -> None:
+        lines = build_agent_center_summary_lines(
+            {
+                "agent_center": {
+                    "enabled": True,
+                    "status": "active",
+                    "current_level": "L3",
+                    "invite_url": "https://aitokenapi.cc/register?invite=abc",
+                    "join_page_url": "https://aitokenapi.cc/agent/join",
+                    "backend_url": "https://aitokenapi.cc/agent/center",
+                    "rules_url": "https://aitokenapi.cc/agent/rules",
+                    "summary": {
+                        "downstream_count": 18,
+                        "token_commission_cents": 1234,
+                        "activation_commission_cents": 2500,
+                        "agent_install_commission_cents": 3000,
+                        "available_settlement_cents": 4500,
+                        "pending_settlement_cents": 6200,
+                        "frozen_cents": 700,
+                    },
+                    "commission_ratio": "99%",
+                    "benefits": ["可推广 Agent 安装服务"],
+                    "boundaries": ["所有收益以后台结算账本为准"],
+                }
+            }
+        )
+        text = "\n".join(lines)
+
+        self.assertIn("代理状态：active", text)
+        self.assertIn("招商介绍：已开放", text)
+        self.assertIn("工具代理后端：已开放", text)
+        self.assertIn("代理规则：已开放", text)
+        self.assertIn("下游客户：18 人", text)
+        self.assertIn("token 返佣：¥12.34", text)
+        self.assertIn("激活返佣：¥25.00", text)
+        self.assertIn("安装返佣：¥30.00", text)
+        self.assertIn("可结算：¥45.00", text)
+        self.assertIn("待结算：¥62.00", text)
+        self.assertIn("冻结金额：¥7.00", text)
+        self.assertNotIn("99%", text)
 
     def test_node_status_rows_are_customer_safe_and_ordered(self) -> None:
         progress = DeploymentProgress()
