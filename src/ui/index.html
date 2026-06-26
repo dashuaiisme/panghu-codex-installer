@@ -9,7 +9,11 @@
 <style>
 :root, body.theme-light {
   /* Colors - Premium macOS HIG Titanium Light theme */
-  --bg-page: #e8e8ed;                 /* macOS Desktop background */
+  --bg-page: #e8e8ed;
+  --bg-btn-secondary: #e8e8ed;
+  --bg-btn-secondary-hover: #e1e1e6;
+  --bg-btn-secondary-active: #d5d5db;
+  --bg-btn-ghost-hover: rgba(0, 0, 0, 0.03);                 /* macOS Desktop background */
   --bg-surface: #f5f5f7;              /* macOS Window background */
   --bg-card: #ffffff;                 /* macOS Main Workspace card background */
   --bg-sidebar: #ebebec;              /* macOS Window Left & Right sidebar background */
@@ -120,9 +124,9 @@ body {
 
 /* App Window titlebar (topbar) */
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   height: var(--topbar-h);
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-light);
@@ -134,6 +138,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-self: start;
 }
 
 .brand-mark {
@@ -180,6 +185,7 @@ body {
   width: 100%;
   height: 36px;
   box-sizing: border-box;
+  justify-self: center;
 }
 
 .module-btn-wrap {
@@ -230,6 +236,7 @@ body {
 .top-meta {
   display: flex;
   align-items: center;
+  justify-self: end;
   gap: 12px;
   font-size: 11px;
   color: var(--ink-secondary);
@@ -403,7 +410,6 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-light);
 }
 
 /* Floating step card */
@@ -495,6 +501,7 @@ body {
   flex-direction: column;
   background: var(--bg-sidebar);
   overflow-y: auto;
+  border-left: 1px solid var(--border-light);
 }
 
 .panel {
@@ -575,7 +582,7 @@ body {
   color: var(--ink-primary);
   font-weight: 500;
   text-align: right;
-  padding-right: 4px;
+  padding-right: 0;
 }
 
 /* Table matrix */
@@ -593,6 +600,9 @@ body {
   text-align: center;
   padding: 4px 8px;
   text-transform: uppercase;
+}
+.mini-matrix th:first-child {
+  padding-left: 0;
 }
 
 .mini-matrix td {
@@ -806,7 +816,7 @@ textarea:focus {
 
 /* Purchase panel in Step 2 */
 .purchase-panel {
-  background: #fcfcfd;
+  background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   padding: 16px;
@@ -863,7 +873,7 @@ textarea:focus {
 
 /* Conversation boxes in Step 8 */
 .convo-box {
-  background: #fafafa;
+  background: var(--bg-surface-sub);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
@@ -1092,16 +1102,16 @@ textarea:focus {
 }
 
 .btn-secondary {
-  background: #e8e8ed;
+  background: var(--bg-btn-secondary);
   color: var(--ink-primary);
 }
 
 .btn-secondary:hover {
-  background: #e1e1e6;
+  background: var(--bg-btn-secondary-hover);
 }
 
 .btn-secondary:active {
-  background: #d5d5db;
+  background: var(--bg-btn-secondary-active);
 }
 
 .btn-success {
@@ -1125,7 +1135,7 @@ textarea:focus {
 }
 
 .btn-ghost:hover {
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--bg-btn-ghost-hover);
   color: var(--ink-primary);
   border-color: var(--ink-muted);
 }
@@ -1155,7 +1165,7 @@ textarea:focus {
 .progress-bar {
   width: 100%;
   height: 6px;
-  background: #e5e5e7;
+  background: var(--border-light);
   border-radius: 3px;
   overflow: hidden;
   margin-top: 4px;
@@ -1184,30 +1194,14 @@ textarea:focus {
 .log.is-expanded {
   max-height: 240px;
 }
-/* Ensure trace text contrast and styling inside console */
-.log-lines {
-  background: #1e1e1e !important;
-  color: #f5f5f7 !important;
-  border-top: 1px solid rgba(255,255,255,0.08) !important;
-}
-.log-head {
-  background: #1e1e1e !important;
-  border-bottom: none !important;
-}
-.log-head h3 {
-  color: #ffffff !important;
-}
-
-.log.is-expanded {
-  max-height: 240px;
-}
-
+/* Ensure trace text contrast and styling inside console (Unified Dark Theme for terminal feel) */
 .log-head {
   height: 40px;
   padding: 0 16px;
   display: flex;
   align-items: center;
-  background: #ffffff;
+  background: #1e1e1e;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
   user-select: none;
 }
 
@@ -1215,7 +1209,11 @@ textarea:focus {
   font-family: var(--font-heading);
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-primary);
+  color: #ffffff;
+}
+
+.log.is-expanded {
+  max-height: 240px;
 }
 
 .log-status {
@@ -1251,13 +1249,13 @@ textarea:focus {
 
 .log-lines {
   flex: 1;
-  background: #f5f5f7;
-  border-top: 1px solid var(--border-light);
+  background: #1e1e1e;
+  border-top: 1px solid rgba(255,255,255,0.08);
   padding: 12px;
   overflow-y: auto;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--ink-secondary);
+  color: #f5f5f7;
   line-height: 1.45;
 }
 
@@ -1461,7 +1459,7 @@ textarea:focus {
   align-items: center !important;
 }
 
-.app.is-login-gate .step-card {
+.app.is-login-gate #agent-step-card {
   border: none !important;
   box-shadow: none !important;
   border-radius: 0 !important;
@@ -1469,6 +1467,9 @@ textarea:focus {
   display: block !important;
   height: auto !important;
   width: 100% !important;
+}
+.app.is-login-gate #non-agent-module-card {
+  display: none !important;
 }
 
 .app.is-login-gate .card-head {
@@ -1578,6 +1579,10 @@ textarea {
 
 body.theme-dark {
   --bg-page-rgb: 10, 10, 12;
+  --bg-btn-secondary: rgba(255, 255, 255, 0.08);
+  --bg-btn-secondary-hover: rgba(255, 255, 255, 0.15);
+  --bg-btn-secondary-active: rgba(255, 255, 255, 0.05);
+  --bg-btn-ghost-hover: rgba(255, 255, 255, 0.05);
   --bg-surface-rgb: 18, 18, 20;
   --bg-surface-sub-rgb: 24, 24, 28;
   --border-rgb: 255, 255, 255;
@@ -1615,10 +1620,17 @@ body.theme-dark {
   --bg-sidebar: var(--bg-surface);
   --border-color: var(--border-medium);
 }
+body.theme-dark .btn-primary {
+  color: #121214 !important;
+}
 
 
 body.theme-steel {
   --bg-page-rgb: 15, 19, 25;
+  --bg-btn-secondary: rgba(255, 255, 255, 0.08);
+  --bg-btn-secondary-hover: rgba(255, 255, 255, 0.15);
+  --bg-btn-secondary-active: rgba(255, 255, 255, 0.05);
+  --bg-btn-ghost-hover: rgba(255, 255, 255, 0.05);
   --bg-surface-rgb: 22, 29, 36;
   --bg-surface-sub-rgb: 28, 37, 47;
   --border-rgb: 255, 255, 255;
@@ -1655,6 +1667,9 @@ body.theme-steel {
   --bg-card: var(--bg-surface-sub);
   --bg-sidebar: var(--bg-surface);
   --border-color: var(--border-medium);
+}
+body.theme-dark .btn-primary {
+  color: #121214 !important;
 }
 
 </style>
