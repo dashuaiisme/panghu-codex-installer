@@ -91,6 +91,52 @@ class AgentPlaybookTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("配置待开发", message)
 
+    def test_claude_code_install_prefers_official_native_quickstart_entry(self) -> None:
+        calls = []
+        logs = []
+
+        def fake_run(command, timeout=900):
+            calls.append(command)
+            return True, "installed"
+
+        with patch.object(installer.platform, "system", return_value="Windows"), patch.object(installer, "run_command", side_effect=fake_run):
+            self.assertTrue(installer.install_claude_code_cli(logs.append))
+
+        self.assertEqual(calls[0][0], "powershell")
+        self.assertIn("https://claude.ai/install.ps1", " ".join(calls[0]))
+        self.assertTrue(any("官方 Quickstart 原生安装入口" in line for line in logs))
+
+    def test_claude_code_install_falls_back_to_official_npm_package(self) -> None:
+        calls = []
+        logs = []
+
+        def fake_run(command, timeout=900):
+            calls.append(command)
+            if "claude.ai/install" in " ".join(command):
+                return False, "native failed"
+            return True, "npm installed"
+
+        with patch.object(installer.platform, "system", return_value="Windows"), \
+             patch.object(installer, "run_command", side_effect=fake_run), \
+             patch.object(installer.shutil, "which", return_value="npm.exe"):
+            self.assertTrue(installer.install_claude_code_cli(logs.append))
+
+        self.assertEqual(calls[1], ["npm", "install", "-g", "@anthropic-ai/claude-code"])
+        self.assertTrue(any("官方 npm 包替代入口" in line for line in logs))
+
+    def test_claude_code_install_opens_official_docs_when_auto_install_fails(self) -> None:
+        opened = []
+        logs = []
+
+        with patch.object(installer.platform, "system", return_value="Windows"), \
+             patch.object(installer, "run_command", return_value=(False, "failed")), \
+             patch.object(installer.shutil, "which", return_value=None), \
+             patch.object(installer, "open_url", side_effect=lambda url: opened.append(url)):
+            self.assertFalse(installer.install_claude_code_cli(logs.append))
+
+        self.assertEqual(opened, [installer.CLAUDE_CODE_DOCS_URL])
+        self.assertTrue(any("官方 Quickstart" in line for line in logs))
+
     def test_claude_code_config_writes_official_settings_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
@@ -167,6 +213,22 @@ class AgentPlaybookTests(unittest.TestCase):
             self.assertIn("api_mode: chat_completions", config_text)
             self.assertNotIn("third_party_default", config_text)
             self.assertEqual(env_text, "PANGHUAI_API_KEY=sk-test-secret-123456\n")
+
+    def test_hermes_install_uses_official_native_guide_windows_script(self) -> None:
+        calls = []
+
+        def fake_run(command, timeout=900):
+            calls.append(command)
+            return True, "installed"
+
+        with patch.object(installer.platform, "system", return_value="Windows"), patch.object(installer, "run_command", side_effect=fake_run):
+            self.assertTrue(installer.install_hermes_cli(lambda _line: None))
+
+        self.assertEqual(calls[0][0], "powershell")
+        self.assertIn(
+            "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1",
+            " ".join(calls[0]),
+        )
 
     def test_non_codex_dialogue_probe_commands_are_real_cli_checks(self) -> None:
         self.assertEqual(

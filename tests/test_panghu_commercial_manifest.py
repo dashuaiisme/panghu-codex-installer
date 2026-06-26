@@ -1066,6 +1066,22 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(result.method, "embedded_webview_blocked")
         self.assertIn("未加载 pywebview", result.message)
 
+    def test_customer_instruction_does_not_claim_system_browser_fallback_for_customer_site(self) -> None:
+        source = (ROOT / "docs" / "发送客户说明.txt").read_text(encoding="utf-8")
+
+        self.assertNotIn("回退到系统浏览器", source)
+        self.assertIn("阻断", source)
+        self.assertIn("不能算完成内嵌网页闭环", source)
+
+    def test_ui_does_not_hydrate_backend_api_key_into_dom_value(self) -> None:
+        source = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('apiKeyValue = state.apiKeyValue || "";', source)
+        self.assertNotIn("keyInput.value = apiKeyValue", source)
+        self.assertNotIn('value="${apiKeyValue}"', source)
+        self.assertNotIn('apiKeyValue = params.get("key") || "";', source)
+        self.assertNotIn('params.get("key")', source)
+
     def test_login_entry_is_unified_and_not_buyer_agent_mode_split(self) -> None:
         source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
 

@@ -232,6 +232,40 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertEqual(payload["api_key"], "sk-buyer-live")
         self.assertEqual(payload["deployer_auth"], {})
 
+    def test_profile_payload_drops_new_runtime_business_ids_from_updates(self) -> None:
+        contexts = create_buyer_contexts(UserContext(user_id="buyer-2", display_name="买家B", role="buyer"))
+
+        payload = build_persistent_profile_payload(
+            current_profile={"username": "buyer@example.com", "api_key": "sk-buyer-old"},
+            updates={
+                "api_key": "sk-buyer-live",
+                "order_id": "ord-secret",
+                "entitlement_id": "ent-secret",
+                "config_session_id": "cfg-secret",
+                "service_order_id": "svc-secret",
+                "mobile_session_id": "mca-secret",
+                "deployment_token": "deploy-secret-token",
+                "third_party_password": "third-party-secret",
+            },
+            contexts=contexts,
+            default_base_url="https://aitokenapi.cc",
+            default_model="gpt-5.4",
+        )
+
+        text = str(payload)
+        for secret in (
+            "ord-secret",
+            "ent-secret",
+            "cfg-secret",
+            "svc-secret",
+            "mca-secret",
+            "deploy-secret-token",
+            "third-party-secret",
+        ):
+            self.assertNotIn(secret, text)
+        self.assertEqual(payload["username"], "buyer@example.com")
+        self.assertEqual(payload["api_key"], "sk-buyer-live")
+
     def test_profile_payload_drops_existing_agent_login_state(self) -> None:
         contexts = create_buyer_contexts(UserContext(user_id="buyer-2", display_name="买家B", role="buyer"))
 

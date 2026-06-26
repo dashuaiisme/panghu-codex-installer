@@ -478,7 +478,7 @@ AGENTS = (
         description="Anthropic 官方 Claude Code Agent，按 CC 口径覆盖 CLI 和官方客户端入口。",
         verify_command=("claude", "--version"),
         modes=(
-            AgentMode("cli", "CLI", "使用官方 npm 包安装 Claude Code，并写入胖虎AI网关配置。", supports_config=True),
+            AgentMode("cli", "CLI", "优先使用官方 Quickstart 原生安装入口，并写入胖虎AI网关配置。", supports_config=True),
             AgentMode("client", "客户端", "打开官方客户端入口，并按同一胖虎AI网关配置口径验收。", supports_config=True),
         ),
         config_note="写入胖虎AI网关配置，跳过 IDE 插件和第三方通道，目标是安装后可直接对话。",
@@ -3572,13 +3572,31 @@ def install_codex_cli(log) -> bool:
 
 
 def install_claude_code_cli(log) -> bool:
-    if not shutil.which("npm"):
-        log("未检测到 npm，已打开 ClaudeCode 官方安装文档。")
-        open_url(CLAUDE_CODE_DOCS_URL)
-        return False
-    ok, output = run_command(["npm", "install", "-g", "@anthropic-ai/claude-code"], timeout=900)
+    if platform.system() == "Windows":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "irm https://claude.ai/install.ps1 | iex",
+        ]
+    else:
+        command = ["/bin/bash", "-lc", "curl -fsSL https://claude.ai/install.sh | bash"]
+    log("按 Claude Code 官方 Quickstart 原生安装入口安装 CLI。")
+    ok, output = run_command(command, timeout=900)
     log(output)
-    return ok
+    if ok:
+        return True
+    if shutil.which("npm"):
+        log("Claude Code 原生安装未确认，改用官方 npm 包替代入口：npm install -g @anthropic-ai/claude-code")
+        ok, output = run_command(["npm", "install", "-g", "@anthropic-ai/claude-code"], timeout=900)
+        log(output)
+        if ok:
+            return True
+    log("Claude Code 自动安装未确认，已打开官方 Quickstart。")
+    open_url(CLAUDE_CODE_DOCS_URL)
+    return False
 
 
 def install_openclaw_cli(log) -> bool:
@@ -3613,7 +3631,7 @@ def install_hermes_cli(log) -> bool:
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
+            "iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)",
         ]
     else:
         command = [
