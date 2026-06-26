@@ -150,6 +150,103 @@ class ContractSettlementRequest:
     admin_user_id: str = ""
 
 
+@dataclass
+class ContractServiceProduct:
+    product_id: str
+    service_type: str
+    name: str
+    price_cents: int
+    currency: str = "CNY"
+    status: str = "listed"
+    requires_base_agent_delivery: bool = False
+    agent_runtime_readiness_policy: str = "manual_or_detected"
+    allowed_agent_sources: tuple[str, ...] = ()
+    supported_agent_ids: tuple[str, ...] = ()
+    supported_channels: tuple[str, ...] = ()
+    intro_copy: str = ""
+
+
+@dataclass
+class ContractServiceOrder:
+    order_id: str
+    idempotency_key: str
+    buyer_user_id: str
+    service_product_id: str
+    service_type: str
+    agent_id: str
+    channel: str
+    agent_source: str
+    status: str = "created"
+    charge_status: str = "unpaid"
+    delivered_at: str = ""
+    cancelled_at: str = ""
+
+
+@dataclass
+class ContractMobileControlSession:
+    session_id: str
+    order_id: str
+    buyer_user_id: str
+    agent_id: str
+    channel: str
+    platform_account_id: str
+    platform_chat_id: str
+    gateway_mode: str
+    agent_source: str
+    status: str = "pending_config"
+    last_probe_at: str = ""
+    accepted_at: str = ""
+
+
+@dataclass
+class ContractMobileControlAcceptanceRecord:
+    acceptance_id: str
+    order_id: str
+    session_id: str
+    source_event_id: str
+    inbound_platform_message_id: str
+    outbound_platform_message_id: str
+    test_prompt: str
+    agent_response_digest: str
+    evidence_url: str
+    accepted_by: str
+    accepted_at: str = "day-0"
+
+
+@dataclass
+class ContractServiceLedgerEvent:
+    ledger_event_id: str
+    source_event_id: str
+    service_type: str
+    event_type: str
+    order_id: str
+    buyer_user_id: str
+    amount_cents: int
+    status: str = "recorded"
+
+
+@dataclass(frozen=True)
+class ContractMobileControlCallbackDecision:
+    should_invoke_agent: bool
+    status: str
+    reason: str
+
+
+MOBILE_CONTROL_SERVICE_TYPE = "mobile_control_agent"
+AGENT_INSTALL_SERVICE_TYPE = "agent_install_delivery"
+MOBILE_CONTROL_DELIVERED_EVENT = "mobile_control_agent_delivered"
+AGENT_INSTALL_DELIVERED_EVENT = "agent_install_delivered"
+MOBILE_CONTROL_CHANNELS = {"qq_bot", "weixin", "feishu", "dingtalk", "wecom"}
+MOBILE_CONTROL_AGENT_IDS = {"codex", "claude_code", "openclaw", "hermes", "gemini_agy"}
+MOBILE_CONTROL_AGENT_SOURCES = {
+    "current_delivery",
+    "historical_delivery",
+    "existing_local_agent",
+    "manual_review",
+}
+MOBILE_CONTROL_SESSION_TERMINAL_STATUSES = {"acceptance_passed", "failed", "disabled"}
+
+
 class CommercialLedgerContract:
     def __init__(self) -> None:
         self.orders: dict[str, ContractOrder] = {}
@@ -188,6 +285,19 @@ class CommercialLedgerContract:
         self.commission_entries: list[ContractCommissionEntry] = []
         self.commission_reversals: list[ContractCommissionReversal] = []
         self.settlement_requests: dict[str, ContractSettlementRequest] = {}
+        self.service_products: dict[str, ContractServiceProduct] = {}
+        self.service_orders: dict[str, ContractServiceOrder] = {}
+        self.service_order_idempotency: dict[str, str] = {}
+        self.service_order_idempotency_payloads: dict[str, tuple[object, ...]] = {}
+        self.mobile_control_sessions: dict[str, ContractMobileControlSession] = {}
+        self.mobile_control_session_idempotency: dict[str, str] = {}
+        self.mobile_control_session_idempotency_payloads: dict[str, tuple[object, ...]] = {}
+        self.mobile_control_acceptance_records: dict[str, ContractMobileControlAcceptanceRecord] = {}
+        self.mobile_control_acceptance_payloads: dict[str, tuple[object, ...]] = {}
+        self.mobile_control_acceptance_by_source_event: dict[str, str] = {}
+        self.service_ledger_events: dict[str, ContractServiceLedgerEvent] = {}
+        self.service_ledger_events_by_source_event: dict[str, str] = {}
+        self.service_ledger_event_payloads: dict[str, tuple[object, ...]] = {}
 
     def _api_key_fingerprint(self, api_key: str) -> str:
         return hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()
@@ -436,7 +546,12 @@ class CommercialLedgerContract:
         rate_bps: int,
         status: str = "active",
     ) -> ContractCommissionPolicyRule:
-        if event_type not in {"token_usage_settled", "activation_paid", "agent_install_delivered"}:
+        if event_type not in {
+            "token_usage_settled",
+            "activation_paid",
+            AGENT_INSTALL_DELIVERED_EVENT,
+            MOBILE_CONTROL_DELIVERED_EVENT,
+        }:
             raise ValueError("未知代理返佣事件类型。")
         if receiver_level not in {"L1", "L2", "L3", "L4", "L5"}:
             raise ValueError("代理等级必须是 L1-L5。")
@@ -598,6 +713,358 @@ class CommercialLedgerContract:
                 reason=reason,
             )
         )
+
+    def configure_service_product(
+        self,
+        product_id: str,
+        service_type: str,
+        name: str,
+        price_cents: int,
+        currency: str = "CNY",
+        status: str = "listed",
+        requires_base_agent_delivery: bool = False,
+        agent_runtime_readiness_policy: str = "manual_or_detected",
+        allowed_agent_sources: list[str] | tuple[str, ...] | None = None,
+        supported_agent_ids: list[str] | tuple[str, ...] | None = None,
+        supported_channels: list[str] | tuple[str, ...] | None = None,
+        intro_copy: str = "",
+    ) -> ContractServiceProduct:
+        if service_type not in {AGENT_INSTALL_SERVICE_TYPE, MOBILE_CONTROL_SERVICE_TYPE}:
+            raise ValueError("未知服务类型。")
+        if price_cents < 0:
+            raise ValueError("服务价格不能为负数。")
+        product = ContractServiceProduct(
+            product_id=product_id,
+            service_type=service_type,
+            name=name,
+            price_cents=price_cents,
+            currency=currency,
+            status=status,
+            requires_base_agent_delivery=bool(requires_base_agent_delivery),
+            agent_runtime_readiness_policy=agent_runtime_readiness_policy,
+            allowed_agent_sources=tuple(allowed_agent_sources or sorted(MOBILE_CONTROL_AGENT_SOURCES)),
+            supported_agent_ids=tuple(supported_agent_ids or sorted(MOBILE_CONTROL_AGENT_IDS)),
+            supported_channels=tuple(supported_channels or sorted(MOBILE_CONTROL_CHANNELS)),
+            intro_copy=intro_copy,
+        )
+        self.service_products[product_id] = product
+        return product
+
+    def create_mobile_control_order(
+        self,
+        idempotency_key: str,
+        service_product_id: str,
+        buyer_user_id: str,
+        agent_id: str,
+        channel: str,
+        agent_source: str,
+        allow_admin_presale: bool = False,
+    ) -> ContractServiceOrder:
+        product = self.service_products[service_product_id]
+        payload = (
+            service_product_id,
+            buyer_user_id,
+            agent_id,
+            channel,
+            agent_source,
+            bool(allow_admin_presale),
+        )
+        if idempotency_key in self.service_order_idempotency:
+            if self.service_order_idempotency_payloads[idempotency_key] != payload:
+                raise ValueError("手机控制Agent订单幂等键请求参数不一致。")
+            return self.service_orders[self.service_order_idempotency[idempotency_key]]
+        self._validate_mobile_control_product(product, agent_id, channel, agent_source)
+        if product.status != "listed" and not allow_admin_presale:
+            raise ValueError("手机控制Agent服务未上架。")
+        if (
+            product.requires_base_agent_delivery
+            and agent_source == "current_delivery"
+            and not self._has_completed_base_agent_delivery(buyer_user_id, agent_id)
+            and not allow_admin_presale
+        ):
+            raise ValueError("尚未形成基础 Agent 交付验收，不能按本次交付来源创建手机控制Agent订单。")
+        order_id = f"svc-ord-{len(self.service_orders) + 1}"
+        order = ContractServiceOrder(
+            order_id=order_id,
+            idempotency_key=idempotency_key,
+            buyer_user_id=buyer_user_id,
+            service_product_id=service_product_id,
+            service_type=MOBILE_CONTROL_SERVICE_TYPE,
+            agent_id=agent_id,
+            channel=channel,
+            agent_source=agent_source,
+            charge_status="manual_review" if allow_admin_presale else "unpaid",
+        )
+        self.service_orders[order_id] = order
+        self.service_order_idempotency[idempotency_key] = order_id
+        self.service_order_idempotency_payloads[idempotency_key] = payload
+        return order
+
+    def create_mobile_control_session(
+        self,
+        idempotency_key: str,
+        order_id: str,
+        buyer_user_id: str,
+        agent_id: str,
+        channel: str,
+        platform_account_id: str,
+        platform_chat_id: str,
+        gateway_mode: str,
+        agent_source: str,
+    ) -> ContractMobileControlSession:
+        payload = (
+            order_id,
+            buyer_user_id,
+            agent_id,
+            channel,
+            platform_account_id,
+            platform_chat_id,
+            gateway_mode,
+            agent_source,
+        )
+        if idempotency_key in self.mobile_control_session_idempotency:
+            if self.mobile_control_session_idempotency_payloads[idempotency_key] != payload:
+                raise ValueError("手机控制Agent会话幂等键请求参数不一致。")
+            return self.mobile_control_sessions[self.mobile_control_session_idempotency[idempotency_key]]
+        order = self.service_orders[order_id]
+        if order.service_type != MOBILE_CONTROL_SERVICE_TYPE:
+            raise ValueError("订单不是手机控制Agent服务。")
+        if order.status in {"delivered", "failed", "cancelled"}:
+            raise ValueError("手机控制Agent订单状态不可创建会话。")
+        if order.buyer_user_id != buyer_user_id or order.agent_id != agent_id or order.channel != channel:
+            raise ValueError("手机控制Agent会话与订单不一致。")
+        if order.agent_source != agent_source:
+            raise ValueError("手机控制Agent来源与订单不一致。")
+        session_id = f"mca-{len(self.mobile_control_sessions) + 1}"
+        session = ContractMobileControlSession(
+            session_id=session_id,
+            order_id=order_id,
+            buyer_user_id=buyer_user_id,
+            agent_id=agent_id,
+            channel=channel,
+            platform_account_id=platform_account_id,
+            platform_chat_id=platform_chat_id,
+            gateway_mode=gateway_mode,
+            agent_source=agent_source,
+        )
+        self.mobile_control_sessions[session_id] = session
+        self.mobile_control_session_idempotency[idempotency_key] = session_id
+        self.mobile_control_session_idempotency_payloads[idempotency_key] = payload
+        order.status = "in_progress"
+        return session
+
+    def mark_mobile_control_connected(self, session_id: str) -> ContractMobileControlSession:
+        session = self.mobile_control_sessions[session_id]
+        if session.status in MOBILE_CONTROL_SESSION_TERMINAL_STATUSES:
+            raise ValueError("手机控制Agent会话状态不可连接。")
+        session.status = "connected"
+        session.last_probe_at = "day-0"
+        self.service_orders[session.order_id].status = "acceptance_pending"
+        return session
+
+    def evaluate_mobile_control_callback(
+        self,
+        session_id: str,
+        channel: str,
+        platform_message_id: str,
+        sender_id: str,
+        text: str,
+        mentioned_bot: bool = False,
+        wake_word_matched: bool = False,
+        authorized_sender_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+        require_wake_signal: bool = True,
+    ) -> ContractMobileControlCallbackDecision:
+        session = self.mobile_control_sessions[session_id]
+        if session.channel != channel:
+            return ContractMobileControlCallbackDecision(False, "rejected", "平台通道与会话不一致。")
+        if session.status not in {"connected", "test_pending", "acceptance_passed"}:
+            return ContractMobileControlCallbackDecision(False, "ignored", "手机控制Agent会话尚未连接。")
+        authorized = set(authorized_sender_ids or [])
+        if authorized and sender_id not in authorized:
+            return ContractMobileControlCallbackDecision(False, "rejected", "非授权用户不能触发 Agent。")
+        if require_wake_signal and not mentioned_bot and not wake_word_matched:
+            return ContractMobileControlCallbackDecision(False, "ignored", "未 @ 机器人或未匹配唤醒词。")
+        if not platform_message_id.strip() or not str(text or "").strip():
+            return ContractMobileControlCallbackDecision(False, "ignored", "消息为空或缺少平台消息 ID。")
+        session.status = "test_pending"
+        session.last_probe_at = "day-0"
+        return ContractMobileControlCallbackDecision(True, "accepted", "消息可进入 Agent Runtime Adapter。")
+
+    def record_mobile_control_acceptance(
+        self,
+        session_id: str,
+        source_event_id: str,
+        inbound_platform_message_id: str,
+        outbound_platform_message_id: str,
+        test_prompt: str,
+        agent_response_digest: str,
+        evidence_url: str,
+        accepted_by: str,
+    ) -> ContractMobileControlAcceptanceRecord:
+        session = self.mobile_control_sessions[session_id]
+        order = self.service_orders[session.order_id]
+        payload = (
+            session_id,
+            order.order_id,
+            inbound_platform_message_id,
+            outbound_platform_message_id,
+            test_prompt,
+            agent_response_digest,
+            evidence_url,
+            accepted_by,
+        )
+        if source_event_id in self.mobile_control_acceptance_by_source_event:
+            acceptance_id = self.mobile_control_acceptance_by_source_event[source_event_id]
+            if self.mobile_control_acceptance_payloads[source_event_id] != payload:
+                raise ValueError("手机控制Agent验收 source_event_id 请求参数不一致。")
+            return self.mobile_control_acceptance_records[acceptance_id]
+        if session.status not in {"connected", "test_pending"}:
+            raise ValueError("手机控制Agent未完成平台连接和测试，不能验收。")
+        required_evidence = [
+            source_event_id,
+            inbound_platform_message_id,
+            outbound_platform_message_id,
+            test_prompt,
+            agent_response_digest,
+            accepted_by,
+        ]
+        if any(not str(item or "").strip() for item in required_evidence):
+            raise ValueError("手机控制Agent缺少闭环验收证据。")
+        acceptance_id = f"mca-acc-{len(self.mobile_control_acceptance_records) + 1}"
+        record = ContractMobileControlAcceptanceRecord(
+            acceptance_id=acceptance_id,
+            order_id=order.order_id,
+            session_id=session_id,
+            source_event_id=source_event_id,
+            inbound_platform_message_id=inbound_platform_message_id,
+            outbound_platform_message_id=outbound_platform_message_id,
+            test_prompt=test_prompt,
+            agent_response_digest=agent_response_digest,
+            evidence_url=evidence_url,
+            accepted_by=accepted_by,
+        )
+        self.mobile_control_acceptance_records[acceptance_id] = record
+        self.mobile_control_acceptance_by_source_event[source_event_id] = acceptance_id
+        self.mobile_control_acceptance_payloads[source_event_id] = payload
+        session.status = "acceptance_passed"
+        session.accepted_at = record.accepted_at
+        order.status = "delivered"
+        order.charge_status = "chargeable" if order.charge_status != "paid" else "paid"
+        order.delivered_at = record.accepted_at
+        product = self.service_products[order.service_product_id]
+        self.record_service_ledger_event(
+            source_event_id=source_event_id,
+            service_type=MOBILE_CONTROL_SERVICE_TYPE,
+            event_type=MOBILE_CONTROL_DELIVERED_EVENT,
+            order_id=order.order_id,
+            buyer_user_id=order.buyer_user_id,
+            amount_cents=product.price_cents,
+        )
+        if product.price_cents > 0:
+            self.record_commission_event(
+                source_event_id=source_event_id,
+                event_type=MOBILE_CONTROL_DELIVERED_EVENT,
+                buyer_user_id=order.buyer_user_id,
+                amount_cents=product.price_cents,
+            )
+        return record
+
+    def record_service_ledger_event(
+        self,
+        source_event_id: str,
+        service_type: str,
+        event_type: str,
+        order_id: str,
+        buyer_user_id: str,
+        amount_cents: int,
+    ) -> ContractServiceLedgerEvent:
+        payload = (service_type, event_type, order_id, buyer_user_id, amount_cents)
+        if source_event_id in self.service_ledger_events_by_source_event:
+            if self.service_ledger_event_payloads[source_event_id] != payload:
+                raise ValueError("服务账本 source_event_id 请求参数不一致。")
+            return self.service_ledger_events[self.service_ledger_events_by_source_event[source_event_id]]
+        if event_type == AGENT_INSTALL_DELIVERED_EVENT and service_type != AGENT_INSTALL_SERVICE_TYPE:
+            raise ValueError("基础 Agent 交付事件不能用于其他服务类型。")
+        if event_type == MOBILE_CONTROL_DELIVERED_EVENT and service_type != MOBILE_CONTROL_SERVICE_TYPE:
+            raise ValueError("手机控制Agent交付事件不能用于其他服务类型。")
+        if amount_cents < 0:
+            raise ValueError("服务账本金额不能为负数。")
+        ledger_event = ContractServiceLedgerEvent(
+            ledger_event_id=f"svc-ledger-{len(self.service_ledger_events) + 1}",
+            source_event_id=source_event_id,
+            service_type=service_type,
+            event_type=event_type,
+            order_id=order_id,
+            buyer_user_id=buyer_user_id,
+            amount_cents=amount_cents,
+        )
+        self.service_ledger_events[ledger_event.ledger_event_id] = ledger_event
+        self.service_ledger_events_by_source_event[source_event_id] = ledger_event.ledger_event_id
+        self.service_ledger_event_payloads[source_event_id] = payload
+        return ledger_event
+
+    def fail_mobile_control_session(self, session_id: str, reason: str) -> None:
+        session = self.mobile_control_sessions[session_id]
+        if session.status == "acceptance_passed":
+            raise ValueError("手机控制Agent已形成验收证据，不能自动标记失败或免单。")
+        session.status = "failed"
+        order = self.service_orders[session.order_id]
+        order.status = "failed"
+        if order.charge_status == "chargeable":
+            order.charge_status = "manual_review"
+
+    def pause_mobile_control_session_for_external_dependency(
+        self,
+        session_id: str,
+        reason: str,
+    ) -> ContractMobileControlSession:
+        session = self.mobile_control_sessions[session_id]
+        session.status = "paused_external_dependency"
+        order = self.service_orders[session.order_id]
+        if order.status == "delivered":
+            order.charge_status = "chargeable" if order.charge_status != "paid" else "paid"
+        else:
+            order.status = "acceptance_pending"
+            order.charge_status = "manual_review"
+        return session
+
+    def disable_mobile_control_session(self, session_id: str) -> ContractMobileControlSession:
+        session = self.mobile_control_sessions[session_id]
+        session.status = "disabled"
+        order = self.service_orders[session.order_id]
+        if order.status != "delivered":
+            order.status = "cancelled"
+            order.cancelled_at = "day-0"
+        return session
+
+    def _validate_mobile_control_product(
+        self,
+        product: ContractServiceProduct,
+        agent_id: str,
+        channel: str,
+        agent_source: str,
+    ) -> None:
+        if product.service_type != MOBILE_CONTROL_SERVICE_TYPE:
+            raise ValueError("服务商品不是手机控制Agent。")
+        if agent_id not in product.supported_agent_ids:
+            raise ValueError("服务端未开放该 Agent 的手机控制Agent。")
+        if channel not in product.supported_channels or channel not in MOBILE_CONTROL_CHANNELS:
+            raise ValueError("服务端未开放该手机控制Agent平台通道。")
+        if agent_source not in product.allowed_agent_sources or agent_source not in MOBILE_CONTROL_AGENT_SOURCES:
+            raise ValueError("手机控制Agent来源未被服务端允许。")
+
+    def _has_completed_base_agent_delivery(self, buyer_user_id: str, agent_id: str) -> bool:
+        for session in self.config_sessions.values():
+            if session.buyer_user_id == buyer_user_id and session.agent_id == agent_id and session.status == "completed":
+                return True
+        for event in self.service_ledger_events.values():
+            if (
+                event.service_type == AGENT_INSTALL_SERVICE_TYPE
+                and event.event_type == AGENT_INSTALL_DELIVERED_EVENT
+                and event.buyer_user_id == buyer_user_id
+            ):
+                return True
+        return False
 
     def _commission_rule_for(
         self,

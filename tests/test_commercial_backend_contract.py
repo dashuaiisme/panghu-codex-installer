@@ -11,6 +11,38 @@ from commercial_backend_contract import CommercialLedgerContract  # noqa: E402
 
 
 class CommercialBackendContractTests(unittest.TestCase):
+    def _configure_mobile_control_product(self, ledger: CommercialLedgerContract) -> None:
+        ledger.configure_service_product(
+            product_id="svc-mobile-control",
+            service_type="mobile_control_agent",
+            name="手机控制Agent",
+            price_cents=19900,
+            requires_base_agent_delivery=True,
+            allowed_agent_sources=[
+                "current_delivery",
+                "historical_delivery",
+                "existing_local_agent",
+                "manual_review",
+            ],
+            supported_agent_ids=["hermes", "openclaw"],
+            supported_channels=["feishu", "qq_bot"],
+        )
+
+    def _complete_base_agent_delivery(self, ledger: CommercialLedgerContract, agent_id: str = "hermes") -> str:
+        order = ledger.create_order("base-order-1", "prod-hermes", "buyer-1", "buyer-1", [], "PH-CFG-1")
+        entitlement = ledger.mark_paid_and_create_entitlement(order.order_id, payment_id="base-pay-1")
+        session = ledger.reserve_config_session(
+            "base-session-1",
+            entitlement.entitlement_id,
+            "buyer-1",
+            agent_id,
+            "cli",
+            "device-1",
+            "PH-CFG-1",
+        )
+        ledger.complete_config_session(session.config_session_id, real_task_verified=True)
+        return session.config_session_id
+
     def test_paid_order_creates_buyer_entitlement_and_commission_once(self) -> None:
         ledger = CommercialLedgerContract()
 
@@ -623,6 +655,316 @@ class CommercialBackendContractTests(unittest.TestCase):
         ledger.admin_update_commission_entry(commission_id, "reverse", "已结算后退款")
 
         self.assertEqual(ledger.commission_entries[0].status, "manual_review")
+
+    def test_mobile_control_delivery_uses_independent_order_session_acceptance_and_ledger(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        base_session_id = self._complete_base_agent_delivery(ledger)
+
+        mobile_order = ledger.create_mobile_control_order(
+            "mca-order-1",
+            "svc-mobile-control",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "current_delivery",
+        )
+        mobile_session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            mobile_order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_mobile_control_connected(mobile_session.session_id)
+
+        acceptance = ledger.record_mobile_control_acceptance(
+            mobile_session.session_id,
+            source_event_id="mca-delivered-1",
+            inbound_platform_message_id="in-msg-1",
+            outbound_platform_message_id="out-msg-1",
+            test_prompt="请用中文回复手机控制Agent验收成功",
+            agent_response_digest="sha256:reply",
+            evidence_url="https://aitokenapi.cc/evidence/mca-delivered-1",
+            accepted_by="buyer-1",
+        )
+
+        self.assertNotEqual(mobile_order.order_id, ledger.config_sessions[base_session_id].config_session_id)
+        self.assertEqual(ledger.config_sessions[base_session_id].status, "completed")
+        self.assertEqual(ledger.service_orders[mobile_order.order_id].status, "delivered")
+        self.assertEqual(ledger.service_orders[mobile_order.order_id].charge_status, "chargeable")
+        self.assertEqual(acceptance.order_id, mobile_order.order_id)
+        self.assertEqual(len(ledger.service_ledger_events), 1)
+        ledger_event = next(iter(ledger.service_ledger_events.values()))
+        self.assertEqual(ledger_event.service_type, "mobile_control_agent")
+        self.assertEqual(ledger_event.event_type, "mobile_control_agent_delivered")
+        self.assertEqual(ledger_event.source_event_id, "mca-delivered-1")
+        self.assertEqual(ledger_event.amount_cents, 19900)
+
+    def test_mobile_control_failure_does_not_rollback_base_agent_delivery_or_charge_mobile(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        base_session_id = self._complete_base_agent_delivery(ledger)
+
+        mobile_order = ledger.create_mobile_control_order(
+            "mca-order-1",
+            "svc-mobile-control",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "current_delivery",
+        )
+        mobile_session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            mobile_order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+
+        ledger.fail_mobile_control_session(mobile_session.session_id, "平台授权失败")
+
+        self.assertEqual(ledger.config_sessions[base_session_id].status, "completed")
+        self.assertTrue(ledger.config_sessions[base_session_id].deducted)
+        self.assertEqual(ledger.service_orders[mobile_order.order_id].status, "failed")
+        self.assertEqual(ledger.service_orders[mobile_order.order_id].charge_status, "unpaid")
+        self.assertEqual(len(ledger.mobile_control_acceptance_records), 0)
+        self.assertEqual(len(ledger.service_ledger_events), 0)
+
+    def test_mobile_control_acceptance_requires_full_inbound_agent_outbound_evidence(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "feishu", "current_delivery")
+        session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_mobile_control_connected(session.session_id)
+
+        with self.assertRaisesRegex(ValueError, "闭环验收证据"):
+            ledger.record_mobile_control_acceptance(
+                session.session_id,
+                source_event_id="mca-delivered-1",
+                inbound_platform_message_id="",
+                outbound_platform_message_id="out-msg-1",
+                test_prompt="请回复验收成功",
+                agent_response_digest="sha256:reply",
+                evidence_url="",
+                accepted_by="buyer-1",
+            )
+
+        self.assertEqual(ledger.service_orders[order.order_id].status, "acceptance_pending")
+        self.assertEqual(len(ledger.service_ledger_events), 0)
+
+    def test_mobile_control_source_event_id_is_idempotent_for_charge_and_commission(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        profile = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", profile.invite_code)
+        ledger.configure_commission_policy_rule("mobile_control_agent_delivered", "L1", depth=1, rate_bps=1000)
+        order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "feishu", "current_delivery")
+        session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_mobile_control_connected(session.session_id)
+
+        first = ledger.record_mobile_control_acceptance(
+            session.session_id,
+            "mca-delivered-1",
+            "in-msg-1",
+            "out-msg-1",
+            "请回复验收成功",
+            "sha256:reply",
+            "https://aitokenapi.cc/evidence/mca-delivered-1",
+            "buyer-1",
+        )
+        retry = ledger.record_mobile_control_acceptance(
+            session.session_id,
+            "mca-delivered-1",
+            "in-msg-1",
+            "out-msg-1",
+            "请回复验收成功",
+            "sha256:reply",
+            "https://aitokenapi.cc/evidence/mca-delivered-1",
+            "buyer-1",
+        )
+
+        self.assertEqual(first.acceptance_id, retry.acceptance_id)
+        self.assertEqual(len(ledger.service_ledger_events), 1)
+        self.assertEqual(len(ledger.commission_events), 1)
+        self.assertEqual(len(ledger.commission_entries), 1)
+        with self.assertRaisesRegex(ValueError, "source_event_id"):
+            ledger.record_mobile_control_acceptance(
+                session.session_id,
+                "mca-delivered-1",
+                "in-msg-drift",
+                "out-msg-1",
+                "请回复验收成功",
+                "sha256:reply",
+                "https://aitokenapi.cc/evidence/mca-delivered-1",
+                "buyer-1",
+            )
+
+    def test_mobile_control_order_allows_existing_or_manual_source_without_current_delivery_but_blocks_false_current_source(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+
+        with self.assertRaisesRegex(ValueError, "基础 Agent 交付验收"):
+            ledger.create_mobile_control_order(
+                "mca-order-current",
+                "svc-mobile-control",
+                "buyer-1",
+                "hermes",
+                "feishu",
+                "current_delivery",
+            )
+
+        existing = ledger.create_mobile_control_order(
+            "mca-order-existing",
+            "svc-mobile-control",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "existing_local_agent",
+        )
+        manual = ledger.create_mobile_control_order(
+            "mca-order-manual",
+            "svc-mobile-control",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "manual_review",
+        )
+        presale = ledger.create_mobile_control_order(
+            "mca-order-presale",
+            "svc-mobile-control",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "current_delivery",
+            allow_admin_presale=True,
+        )
+
+        self.assertEqual(existing.agent_source, "existing_local_agent")
+        self.assertEqual(manual.agent_source, "manual_review")
+        self.assertEqual(presale.charge_status, "manual_review")
+
+    def test_mobile_control_callback_rejects_unauthorized_sender_and_ignores_unwoken_group_message(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "qq_bot", "current_delivery")
+        session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "qq_bot",
+            "qq-bot-1",
+            "group-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_mobile_control_connected(session.session_id)
+
+        ignored = ledger.evaluate_mobile_control_callback(
+            session.session_id,
+            "qq_bot",
+            "msg-1",
+            "user-1",
+            "帮我检查项目",
+            authorized_sender_ids={"user-1"},
+            mentioned_bot=False,
+            wake_word_matched=False,
+        )
+        rejected = ledger.evaluate_mobile_control_callback(
+            session.session_id,
+            "qq_bot",
+            "msg-2",
+            "user-2",
+            "@机器人 帮我检查项目",
+            authorized_sender_ids={"user-1"},
+            mentioned_bot=True,
+        )
+        accepted = ledger.evaluate_mobile_control_callback(
+            session.session_id,
+            "qq_bot",
+            "msg-3",
+            "user-1",
+            "@机器人 帮我检查项目",
+            authorized_sender_ids={"user-1"},
+            mentioned_bot=True,
+        )
+
+        self.assertFalse(ignored.should_invoke_agent)
+        self.assertEqual(ignored.status, "ignored")
+        self.assertFalse(rejected.should_invoke_agent)
+        self.assertEqual(rejected.status, "rejected")
+        self.assertTrue(accepted.should_invoke_agent)
+        self.assertEqual(accepted.status, "accepted")
+
+    def test_mobile_control_external_dependency_pause_after_acceptance_is_not_auto_failure(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_mobile_control_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_mobile_control_order("mca-order-1", "svc-mobile-control", "buyer-1", "hermes", "feishu", "current_delivery")
+        session = ledger.create_mobile_control_session(
+            "mca-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_mobile_control_connected(session.session_id)
+        ledger.record_mobile_control_acceptance(
+            session.session_id,
+            "mca-delivered-1",
+            "in-msg-1",
+            "out-msg-1",
+            "请回复验收成功",
+            "sha256:reply",
+            "https://aitokenapi.cc/evidence/mca-delivered-1",
+            "buyer-1",
+        )
+
+        with self.assertRaisesRegex(ValueError, "不能自动标记失败"):
+            ledger.fail_mobile_control_session(session.session_id, "客户取消平台授权")
+
+        paused = ledger.pause_mobile_control_session_for_external_dependency(session.session_id, "客户取消平台授权")
+
+        self.assertEqual(paused.status, "paused_external_dependency")
+        self.assertEqual(ledger.service_orders[order.order_id].status, "delivered")
+        self.assertEqual(ledger.service_orders[order.order_id].charge_status, "chargeable")
 
 
 if __name__ == "__main__":

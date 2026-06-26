@@ -62,6 +62,7 @@ python scripts\commercial_release_acceptance.py --json
 说明：
 
 - `customer_web_entry_acceptance.py` 只验证网站入口、域名和 WebView 前提。
+- 登录态恢复验收必须区分三类数据：`profile.json` 只存账号提示和偏好，买家会话走 cookie/WebView profile，用户显式记住的胖虎AI密码只走本机系统加密 `login_accounts.json`。
 - `agent_delivery_acceptance.py` 默认只读检查，不代表真实客户闭环已完成。
 - `commercial_flow_acceptance.py --json` 是本地离线商业合同验收。
 - `commercial_release_acceptance.py --json` 是本地轻量发布前检查，不等于允许发布。
@@ -83,7 +84,22 @@ python -m pytest tests\test_panghu_commercial_manifest.py tests\test_commercial_
 - 模式切换前会保存 `~\.codex\panghu_modes\` 快照。
 - 任何模式写完后都提示完全退出 Codex 再重新打开。
 
-## 7. 禁止本地命令
+## 7. 手机控制Agent文档/实现回归
+
+修改手机控制Agent产品文档、服务合同、订单/验收状态机或平台通道后，至少检查：
+
+```powershell
+rg -n "手机控制Agent|mobile_control_agent|mobile-control|mobile_control|source_event_id|断网|禁用 API Key|取消平台授权" README.md docs PROJECT_BLUEPRINT.md PLAN.md TASK_GRAPH.md ACCEPTANCE.md SAFETY.md RUNBOOK.md FINAL_REPORT.md
+python -m pytest tests\test_commercial_backend_contract_docs.py -q
+```
+
+如果已进入代码实现阶段，还必须补充对应单元测试，验证：
+
+- 基础 Agent 配置和手机控制Agent订单、配置会话、验收记录、扣费事件互相独立。
+- 已有可用 Agent 或历史交付可以进入手机控制Agent链路，不被本次基础配置会话硬锁死。
+- 已形成验收证据后，断网、禁 Key 或取消平台授权不会自动免单。
+
+## 8. 禁止本地命令
 
 当前阶段不要运行：
 
@@ -91,7 +107,7 @@ python -m pytest tests\test_panghu_commercial_manifest.py tests\test_commercial_
 python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json
 ```
 
-## 8. 发布前顺序
+## 9. 发布前顺序
 
 只有在 `ACCEPTANCE.md` 允许进入发布前阶段后，才按这个顺序继续：
 

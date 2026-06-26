@@ -142,7 +142,7 @@ tests\test_commercial_core.py
 
 - 保留胖虎AI买家会话 cookie 和内置浏览器 profile，重启后优先自动恢复买家登录态。
 - 不保存部署 token。
-- 不保存账号密码或第三方账号密码。
+- 胖虎AI买家密码只有在用户显式勾选“记住密码”时，才允许进入独立 `login_accounts.json` 的本机系统加密 blob；不得保存明文账号密码或第三方账号密码。
 - 不保存订单号、权益 ID、配置会话 ID、邀请码等商业污染字段。
 - 启动恢复时不能把旧部署 token 当成当前授权，必须用保存的买家会话重新向服务端申请。
 
@@ -269,6 +269,30 @@ tests\test_commercial_flow_acceptance.py
 tests\test_commercial_backend_contract_docs.py
 ```
 
+### N-BE-08 手机控制Agent独立增值服务
+
+手机控制Agent是“配置Agent”模块内的独立增值服务，不是基础 Agent 配置的子状态，也不是代理中心能力。
+
+必须保持：
+
+- 独立 `service_type=mobile_control_agent`。
+- 独立商品、订单、配置会话、验收记录、扣费事件和返佣事件。
+- 基础 Agent 配置交付事件与 `mobile_control_agent_delivered` 分开。
+- 入口不能被“本工具本次基础配置会话已完成”硬锁死；已有可用 Agent、历史交付或人工复核都可以进入手机控制Agent链路。
+- 验收必须记录入站平台消息、Agent 调用证据、出站平台回复、响应摘要和唯一 `source_event_id`。
+- 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，不能自动判定为配置失败、退款或不收费，应进入暂停、重试或人工复核。
+
+相关文件：
+
+```text
+docs\PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md
+docs\COMMERCIAL_BACKEND_API_CONTRACT.md
+docs\TECHNICAL_MAINTENANCE_MANUAL.md
+ACCEPTANCE.md
+SAFETY.md
+BACKEND_MOBILE_CONTROL_AGENT_HANDOFF.md
+```
+
 ## 6. 架构优化建议
 
 当前最大结构问题是 `src\panghu_codex_installer.py` 过大，建议分阶段拆分，不要一次大重构。
@@ -353,6 +377,6 @@ python scripts\agent_delivery_acceptance.py
 - 不把代理身份写成本地客户端操作者。
 - 不把胖虎AI账号写成 Codex 登录账号。
 - 不硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态。
-- 保留买家会话，但不保存部署 token、账号密码或第三方账号密码。
+- 保留买家会话；胖虎AI买家密码仅允许用户显式勾选后系统级本机加密保存，不保存部署 token、明文账号密码或第三方账号密码。
 - 不把未完成真实任务验证的配置会话提交成功。
 - 不改生产服务器、数据库、下载页或 GitHub Release。

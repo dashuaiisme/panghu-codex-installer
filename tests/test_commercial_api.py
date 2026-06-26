@@ -16,6 +16,11 @@ from commercial_api import (  # noqa: E402
     build_admin_agent_policy_update_request,
     build_admin_agent_product_update_request,
     build_admin_agent_settlement_action_request,
+    build_admin_mobile_control_channel_policy_update_request,
+    build_admin_mobile_control_order_action_request,
+    build_admin_mobile_control_product_update_request,
+    build_admin_mobile_control_session_action_request,
+    build_admin_mobile_control_sessions_request,
     build_agent_apply_request,
     build_agent_center_request,
     build_agent_commissions_request,
@@ -27,6 +32,15 @@ from commercial_api import (  # noqa: E402
     build_config_session_fail_request,
     build_config_session_reserve_request,
     build_entitlement_query_request,
+    build_mobile_control_callback_request,
+    build_mobile_control_offering_request,
+    build_mobile_control_order_create_request,
+    build_mobile_control_order_get_request,
+    build_mobile_control_session_acceptance_request,
+    build_mobile_control_session_create_request,
+    build_mobile_control_session_disable_request,
+    build_mobile_control_session_get_request,
+    build_mobile_control_session_test_request,
     build_order_create_request,
     build_payment_poll_request,
     build_referral_bind_request,
@@ -40,6 +54,7 @@ from commercial_api import (  # noqa: E402
     sanitize_commercial_text,
     sanitize_commercial_api_payload,
     stable_config_session_idempotency_key,
+    stable_mobile_control_idempotency_key,
 )
 
 
@@ -72,6 +87,38 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(
             self.contract.admin_agent_ledger_action_url("ledger-1", "freeze"),
             "https://aitokenapi.cc/api/admin/agent/ledger/ledger-1/freeze",
+        )
+
+    def test_mobile_control_endpoints_are_independent_service_contracts(self) -> None:
+        self.assertEqual(self.contract.mobile_control_offering_url, "https://aitokenapi.cc/api/mobile-control/offering")
+        self.assertEqual(self.contract.mobile_control_orders_url, "https://aitokenapi.cc/api/mobile-control/orders")
+        self.assertEqual(self.contract.mobile_control_order_url("svc-ord-1"), "https://aitokenapi.cc/api/mobile-control/orders/svc-ord-1")
+        self.assertEqual(self.contract.mobile_control_sessions_url, "https://aitokenapi.cc/api/mobile-control/sessions")
+        self.assertEqual(self.contract.mobile_control_session_url("mca-1"), "https://aitokenapi.cc/api/mobile-control/sessions/mca-1")
+        self.assertEqual(self.contract.mobile_control_session_test_url("mca-1"), "https://aitokenapi.cc/api/mobile-control/sessions/mca-1/test")
+        self.assertEqual(
+            self.contract.mobile_control_session_acceptance_url("mca-1"),
+            "https://aitokenapi.cc/api/mobile-control/sessions/mca-1/acceptance",
+        )
+        self.assertEqual(
+            self.contract.mobile_control_session_disable_url("mca-1"),
+            "https://aitokenapi.cc/api/mobile-control/sessions/mca-1/disable",
+        )
+        self.assertEqual(self.contract.mobile_control_callback_url("qq_bot"), "https://aitokenapi.cc/api/mobile-control/callbacks/qq-bot")
+        self.assertEqual(self.contract.mobile_control_callback_url("feishu"), "https://aitokenapi.cc/api/mobile-control/callbacks/feishu")
+        self.assertEqual(self.contract.admin_mobile_control_products_url, "https://aitokenapi.cc/api/admin/mobile-control/products")
+        self.assertEqual(
+            self.contract.admin_mobile_control_channel_policies_url,
+            "https://aitokenapi.cc/api/admin/mobile-control/channel-policies",
+        )
+        self.assertEqual(self.contract.admin_mobile_control_sessions_url, "https://aitokenapi.cc/api/admin/mobile-control/sessions")
+        self.assertEqual(
+            self.contract.admin_mobile_control_session_action_url("mca-1", "freeze"),
+            "https://aitokenapi.cc/api/admin/mobile-control/sessions/mca-1/freeze",
+        )
+        self.assertEqual(
+            self.contract.admin_mobile_control_order_action_url("svc-ord-1", "manual-review"),
+            "https://aitokenapi.cc/api/admin/mobile-control/orders/svc-ord-1/manual-review",
         )
 
     def test_agent_business_requests_carry_idempotency_and_mask_sensitive_invites(self) -> None:
@@ -153,6 +200,128 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(admin_settlement.body["action"], "pay")
         self.assertEqual(ledger_action.url, "https://aitokenapi.cc/api/admin/agent/ledger/ledger-1/reverse")
         self.assertEqual(ledger_action.body["reason"], "客户退款")
+
+    def test_mobile_control_requests_carry_independent_order_session_acceptance_contract(self) -> None:
+        offering = build_mobile_control_offering_request(self.contract)
+        order = build_mobile_control_order_create_request(
+            self.contract,
+            service_product_id="svc-mobile-control",
+            buyer_user_id="buyer-1",
+            agent_id="hermes",
+            channel="feishu",
+            agent_source="existing_local_agent",
+            idempotency_key="mca-order-1",
+        )
+        order_get = build_mobile_control_order_get_request(self.contract, "svc-ord-1")
+        session = build_mobile_control_session_create_request(
+            self.contract,
+            order_id="svc-ord-1",
+            agent_id="hermes",
+            channel="feishu",
+            platform_account_id="bot-account-1",
+            platform_chat_id="chat-1",
+            gateway_mode="official_bot",
+            agent_source="existing_local_agent",
+            idempotency_key="mca-session-1",
+        )
+        session_get = build_mobile_control_session_get_request(self.contract, "mca-1")
+        test = build_mobile_control_session_test_request(
+            self.contract,
+            session_id="mca-1",
+            test_prompt="请回复手机控制Agent验收成功",
+            idempotency_key="mca-test-1",
+        )
+        acceptance = build_mobile_control_session_acceptance_request(
+            self.contract,
+            session_id="mca-1",
+            source_event_id="mca-delivered-1",
+            inbound_platform_message_id="in-msg-1",
+            outbound_platform_message_id="out-msg-1",
+            test_prompt="请回复手机控制Agent验收成功",
+            agent_response_digest="sha256:reply",
+            evidence_url="https://aitokenapi.cc/evidence/mca-delivered-1",
+            idempotency_key="mca-accept-1",
+        )
+        disable = build_mobile_control_session_disable_request(
+            self.contract,
+            session_id="mca-1",
+            reason="客户主动停用",
+            idempotency_key="mca-disable-1",
+        )
+
+        self.assertEqual(offering.method, "GET")
+        self.assertEqual(order.url, self.contract.mobile_control_orders_url)
+        self.assertEqual(order.headers["Idempotency-Key"], "mca-order-1")
+        self.assertEqual(order.body["service_product_id"], "svc-mobile-control")
+        self.assertEqual(order.body["target_buyer_user_id"], "buyer-1")
+        self.assertEqual(order.body["agent_source"], "existing_local_agent")
+        self.assertTrue(order_get.url.endswith("/api/mobile-control/orders/svc-ord-1"))
+        self.assertEqual(session.url, self.contract.mobile_control_sessions_url)
+        self.assertEqual(session.body["order_id"], "svc-ord-1")
+        self.assertEqual(session.body["platform_chat_id"], "chat-1")
+        self.assertTrue(session_get.url.endswith("/api/mobile-control/sessions/mca-1"))
+        self.assertTrue(test.url.endswith("/api/mobile-control/sessions/mca-1/test"))
+        self.assertEqual(test.body["test_prompt"], "请回复手机控制Agent验收成功")
+        self.assertTrue(acceptance.url.endswith("/api/mobile-control/sessions/mca-1/acceptance"))
+        self.assertEqual(acceptance.body["source_event_id"], "mca-delivered-1")
+        self.assertEqual(acceptance.body["inbound_platform_message_id"], "in-msg-1")
+        self.assertTrue(disable.url.endswith("/api/mobile-control/sessions/mca-1/disable"))
+        safe_acceptance = sanitize_commercial_api_payload(acceptance.body)
+        self.assertNotIn("mca-delivered-1", str(safe_acceptance))
+        self.assertNotIn("in-msg-1", str(safe_acceptance))
+
+    def test_mobile_control_callback_and_admin_requests_are_separate_from_basic_agent_delivery(self) -> None:
+        callback = build_mobile_control_callback_request(
+            self.contract,
+            channel="qq_bot",
+            platform_message_id="msg-1",
+            platform_chat_id="group-1",
+            sender_id="user-1",
+            text="@机器人 帮我检查项目",
+            mentioned_bot=True,
+        )
+        admin_product = build_admin_mobile_control_product_update_request(
+            self.contract,
+            product={"id": "svc-mobile-control", "service_type": "mobile_control_agent", "status": "listed"},
+        )
+        admin_policy = build_admin_mobile_control_channel_policy_update_request(
+            self.contract,
+            policy={"channel": "qq_bot", "requires_mention": True},
+        )
+        admin_sessions = build_admin_mobile_control_sessions_request(self.contract, status="manual_review", cursor="page-1")
+        admin_session_action = build_admin_mobile_control_session_action_request(
+            self.contract,
+            session_id="mca-1",
+            action="freeze",
+            reason="平台回调异常",
+        )
+        admin_order_action = build_admin_mobile_control_order_action_request(
+            self.contract,
+            order_id="svc-ord-1",
+            action="refund",
+            reason="客户未完成验收",
+        )
+
+        self.assertEqual(callback.url, "https://aitokenapi.cc/api/mobile-control/callbacks/qq-bot")
+        self.assertTrue(callback.body["mentioned_bot"])
+        self.assertEqual(admin_product.method, "PUT")
+        self.assertEqual(admin_product.url, self.contract.admin_mobile_control_products_url)
+        self.assertEqual(admin_policy.url, self.contract.admin_mobile_control_channel_policies_url)
+        self.assertEqual(admin_sessions.query["status"], "manual_review")
+        self.assertEqual(admin_sessions.query["cursor"], "page-1")
+        self.assertTrue(admin_session_action.url.endswith("/api/admin/mobile-control/sessions/mca-1/freeze"))
+        self.assertTrue(admin_order_action.url.endswith("/api/admin/mobile-control/orders/svc-ord-1/refund"))
+
+    def test_mobile_control_idempotency_key_is_stable_and_does_not_expose_raw_ids(self) -> None:
+        first = stable_mobile_control_idempotency_key("acceptance", "mca-1", "svc-ord-1", "mca-delivered-1")
+        retry = stable_mobile_control_idempotency_key("acceptance", "mca-1", "svc-ord-1", "mca-delivered-1")
+        other = stable_mobile_control_idempotency_key("test", "mca-1", "svc-ord-1", "mca-delivered-1")
+
+        self.assertEqual(first, retry)
+        self.assertNotEqual(first, other)
+        self.assertNotIn("mca-1", first)
+        self.assertNotIn("svc-ord-1", first)
+        self.assertNotIn("mca-delivered-1", first)
 
     def test_legacy_buyer_bind_endpoint_is_not_exposed_on_client_contract(self) -> None:
         self.assertFalse(hasattr(self.contract, "buyer_bind_url"))

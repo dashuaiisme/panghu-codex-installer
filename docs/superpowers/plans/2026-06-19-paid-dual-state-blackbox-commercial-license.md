@@ -1,5 +1,7 @@
 # 付费双态、黑箱保护与商业授权实施计划
 
+> **历史/非权威说明：** 本文件是 2026-06-19 阶段的商业化方案草稿，不是当前产品规则来源。文中的价格、次数、有效期、设备数、套餐、版本、返佣比例、提现门槛、结算状态、上架状态和发布建议均不得作为当前交付口径使用；当前权威以 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md`、`docs/TECHNICAL_MAINTENANCE_MANUAL.md`、`docs/COMMERCIAL_BACKEND_API_CONTRACT.md`、`FINAL_REPORT.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在原版“胖虎AI多 Agent 一键部署工具”基础上，增加双态模式 20 元付费解锁、客户端黑箱保护、商业传播/代安装授权三层产品能力。
@@ -629,7 +631,7 @@ def create_deployer_order(
 ) -> tuple[bool, str, dict]:
     user_id = str(user.get("id") or user.get("user_id") or "").strip()
     if not user_id or not deployer_token:
-        return False, "缺少登录授权，请重新登录胖虎AI账号。", {}
+        return False, "缺少登录授权，请重新恢复或登录胖虎AI账号。", {}
     try:
         payload = open_json_with_cookies(
             DEPLOYER_ORDER_CREATE_URL,

@@ -14,7 +14,7 @@
 
 所有商业接口必须要求请求头 `Authorization: Bearer <operator_token>`。服务端必须用 token 校验 `operator_context`，不能只信任客户端请求体里的 `operator_user_id`。创建订单、查询支付、刷新权益、API Key 归属校验、配置会话预占、配置成功和配置失败都必须使用当前登录买家 token。日志、摘要和诊断包不得输出完整 token 或授权头。
 
-本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID 或配置会话 ID，下一次保存必须清除。买家登录态允许通过独立 cookie 文件和内置浏览器 profile 持久化；`buyer_session.json` 只能保存非敏感买家标识。启动恢复时不得把商业污染字段或部署 token 当成当前授权，只能用保存的买家会话向服务端重新申请本次部署授权；服务端返回 401/403 时客户端必须清理保存会话并回到登录门禁。
+本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID、配置会话 ID、密码或密码 blob，下一次保存必须清除。买家登录态允许通过独立 cookie 文件和内置浏览器 profile 持久化；`buyer_session.json` 只能保存非敏感买家标识。历史账号和可选“记住密码”只能进入独立 `login_accounts.json`，其中密码必须是本机系统加密 blob，不能是明文；WebView 公开状态只能暴露账号、勾选标记和是否存在密码记录，不能暴露全量明文密码。启动恢复时不得把商业污染字段或部署 token 当成当前授权，只能用保存的买家会话向服务端重新申请本次部署授权；服务端返回 401/403 时客户端必须清理保存会话并回到登录门禁。
 
 ## 2. 商品配置
 
@@ -250,7 +250,7 @@
 - 返佣账本和佣金冲正记录
 - 客户端节点状态摘要
 
-客户端日志和诊断包不得明文包含账号密码、手机号、邮箱、API Key、token、邀请码、订单号、权益 ID 或配置会话 ID。
+客户端日志和诊断包不得明文包含账号密码、加密密码 blob、手机号、邮箱、API Key、token、邀请码、订单号、权益 ID 或配置会话 ID。
 
 客户端每次配置结束必须形成同一份客户交付报告，供弹窗、日志、客服诊断包和后端状态对齐使用：
 
@@ -278,7 +278,70 @@
 
 `Gemini / agy` 当前只保留官方入口和待接入状态。未完成胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得作为付费完整配置交付。
 
-## 15. 后端验收清单
+## 15. 手机控制Agent独立服务合同
+
+手机控制Agent是独立增值服务，固定 `service_type=mobile_control_agent`。它用于把已可用 Agent 接入 QQ、微信、飞书、钉钉、企业微信等手机通讯或办公通道。
+
+它不得与基础 Agent 配置共用：
+
+- 商品
+- 订单
+- 权益
+- 配置会话
+- 验收记录
+- 扣费事件
+- 返佣事件
+
+基础 Agent 配置交付事件建议继续使用 `agent_install_delivered`。手机控制Agent交付事件必须单独使用 `mobile_control_agent_delivered`。
+
+服务端数据模型至少应覆盖：
+
+- `service_products`: `service_type`、名称、价格、状态、支持的 Agent、支持的平台通道、介绍文案和最低客户端版本。
+- `service_orders`: 买家、服务商品、Agent、通道、订单状态、收费状态、创建时间、交付时间和取消时间。
+- `mobile_control_sessions`: 订单、买家、Agent、通道、平台账号、聊天对象、网关模式、状态、最近探测时间和验收时间。
+- `mobile_control_acceptance_records`: 入站平台消息 ID、出站平台消息 ID、测试提示词、Agent 响应摘要、证据链接、验收人、验收时间和唯一 `source_event_id`。
+- `service_ledger_events`: `service_type`、订单、买家、金额、状态和唯一 `source_event_id`。
+
+Agent 来源不能只限定为“本工具本次基础配置会话已完成”。服务端必须支持：
+
+- 当前订单刚完成基础 Agent 交付。
+- 买家历史订单已有基础 Agent 交付。
+- 买家电脑本来已有可用 Agent，客户端检测或人工复核后进入手机控制Agent。
+- 无法自动确认时进入 `manual_review`，而不是直接隐藏入口。
+
+建议接口：
+
+- `GET /api/mobile-control/offering`
+- `POST /api/mobile-control/orders`
+- `GET /api/mobile-control/orders/:id`
+- `POST /api/mobile-control/sessions`
+- `GET /api/mobile-control/sessions/:id`
+- `POST /api/mobile-control/sessions/:id/test`
+- `POST /api/mobile-control/sessions/:id/acceptance`
+- `POST /api/mobile-control/sessions/:id/disable`
+- `POST /api/mobile-control/callbacks/qq-bot`
+- `POST /api/mobile-control/callbacks/feishu`
+- `POST /api/mobile-control/callbacks/dingtalk`
+- `POST /api/mobile-control/callbacks/wecom`
+- `POST /api/mobile-control/callbacks/weixin`
+- `GET/PUT /api/admin/mobile-control/products`
+- `GET/PUT /api/admin/mobile-control/channel-policies`
+- `GET /api/admin/mobile-control/sessions`
+- `POST /api/admin/mobile-control/sessions/:id/freeze`
+- `POST /api/admin/mobile-control/sessions/:id/release`
+- `POST /api/admin/mobile-control/orders/:id/refund`
+- `POST /api/admin/mobile-control/orders/:id/manual-review`
+
+验收与扣费规则：
+
+- 手机控制Agent必须记录入站平台消息、Agent 执行证据和出站平台回复证据。
+- 未形成上述证据时，不得标记 `mobile_control_agent_delivered`。
+- 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，只能进入暂停、重试或人工复核，不得自动判定为配置失败、自动退款或取消收费。
+- 收费、返佣和结算必须基于不可重复的 `source_event_id` 幂等处理。
+- 手机控制Agent退款、失败或人工复核不得自动撤销基础 Agent 配置交付。
+- 如果手机控制Agent未来参与代理返佣，返佣事件也必须使用独立 `mobile_control_agent_delivered`，不得复用 `agent_install_delivered`。
+
+## 16. 后端验收清单
 
 - 商品配置由后台控制，客户端不写死价格、次数、有效期、设备数或上架状态。
 - 商业部署清单必须返回 `manifest_signature`、`manifest_issued_at`、`manifest_signature_algorithm` 和 `manifest_key_id`，且能通过客户端内置 Ed25519 公钥验签；缺失或验签失败时客户端拒绝商业配置。
@@ -291,10 +354,13 @@
 - 后台可通过 `diagnostic_code` 查到完整链路。
 - 代理返佣比例、代理等级升级价格和展示开关全部由后台配置。
 - 代理中心必须区分 token 返佣、下游付费激活返佣和付费安装 Agent 返佣，不能把三者混成一个普通推广返佣字段。
+- 手机控制Agent必须作为独立 `service_type=mobile_control_agent` 处理，不能复用基础 Agent 配置的订单、权益、配置会话、验收记录或扣费事件。
+- 手机控制Agent入口不能被“本工具本次基础配置会话是否完成”硬锁死；已有可用 Agent、历史交付或人工复核必须能进入单独配置链路。
+- 手机控制Agent交付不能只以实时消息是否还能回传为准；验收证据已形成后，客户断网、禁 Key、取消平台授权或阻断回调不得自动免单。
 - 后端或客户端商业合同变更后，必须先运行 `python scripts/commercial_flow_acceptance.py --json`，离线验收订单、支付、权益、配置会话、设备超限不扣次、失败不扣次、成功扣次和佣金冲正主链路。
 - 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作。
 
-## 16. 代理业务管理
+## 17. 代理业务管理
 
 胖虎AI管理员账号必须新增一级菜单“代理业务管理”。该菜单是代理业务的唯一运营配置入口，至少包含：代理产品介绍、五级费用设置、返佣规则、代理审核、下游客户、佣金账本、结算提现、推广素材、风控冻结。桌面客户端不得复制这些配置规则，只能展示服务端快照和入口。
 
@@ -308,7 +374,7 @@
 - `agent_chain_snapshots`: 每次订单、token 消费、激活或安装交付事件保存当时 1-5 级上级链路。
 - `commission_policies`: 佣金政策主表，只允许后台启用、停用和发布新版本。
 - `commission_policy_rules`: 按 `event_type + receiver_level + depth` 配置 `rate_bps`，只影响新事件，历史订单使用历史快照。
-- `commission_events`: 事件类型限定为 `token_usage_settled`、`activation_paid`、`agent_install_delivered`，每个事件必须有唯一 `source_event_id` 防止重复返佣。
+- `commission_events`: 基础事件类型限定为 `token_usage_settled`、`activation_paid`、`agent_install_delivered`；手机控制Agent如参与返佣，必须使用独立 `mobile_control_agent_delivered`。每个事件必须有唯一 `source_event_id` 防止重复返佣。
 - `commission_ledger`: 佣金账本状态为 `pending`、`frozen`、`available`、`settled`、`reversed`、`manual_review`，金额字段统一使用 `commission_cents`。
 - `settlement_requests`: 提现和结算申请表，记录申请金额、关联佣金、状态、审核人、放款流水和失败原因。
 - `agent_marketing_content`: 招募页、FAQ、素材、话术、等级说明和风险边界。

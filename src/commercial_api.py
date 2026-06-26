@@ -24,7 +24,17 @@ SENSITIVE_FIELDS = {
     "operator_user_id",
     "target_buyer_user_id",
     "order_id",
+    "service_order_id",
     "config_session_id",
+    "session_id",
+    "source_event_id",
+    "platform_account_id",
+    "platform_chat_id",
+    "platform_message_id",
+    "inbound_platform_message_id",
+    "outbound_platform_message_id",
+    "evidence_url",
+    "sender_id",
 }
 
 SENSITIVE_TEXT_PATTERNS = (
@@ -34,7 +44,7 @@ SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+\b"),
     re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id)\s*[:=]\s*[A-Za-z0-9._~:/+-]+\b"),
     re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id)\s+[A-Za-z0-9._~:/+-]+\b"),
-    re.compile(r"\b(?:ord|order|ent|cfg|assist|invite)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
+    re.compile(r"\b(?:ord|order|ent|cfg|assist|invite|mca|svc|evt)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
 )
 
 
@@ -129,6 +139,73 @@ class CommercialApiContract:
             raise ValueError("代理账本 ID 为空。")
         return self._url(f"/api/admin/agent/ledger/{safe_ledger_id}/{action}")
 
+    @property
+    def mobile_control_offering_url(self) -> str:
+        return self._url("/api/mobile-control/offering")
+
+    @property
+    def mobile_control_orders_url(self) -> str:
+        return self._url("/api/mobile-control/orders")
+
+    def mobile_control_order_url(self, order_id: str) -> str:
+        safe_order_id = str(order_id or "").strip().strip("/")
+        if not safe_order_id:
+            raise ValueError("手机控制Agent订单 ID 为空。")
+        return self._url(f"/api/mobile-control/orders/{safe_order_id}")
+
+    @property
+    def mobile_control_sessions_url(self) -> str:
+        return self._url("/api/mobile-control/sessions")
+
+    def mobile_control_session_url(self, session_id: str) -> str:
+        safe_session_id = str(session_id or "").strip().strip("/")
+        if not safe_session_id:
+            raise ValueError("手机控制Agent会话 ID 为空。")
+        return self._url(f"/api/mobile-control/sessions/{safe_session_id}")
+
+    def mobile_control_session_test_url(self, session_id: str) -> str:
+        return self.mobile_control_session_url(session_id) + "/test"
+
+    def mobile_control_session_acceptance_url(self, session_id: str) -> str:
+        return self.mobile_control_session_url(session_id) + "/acceptance"
+
+    def mobile_control_session_disable_url(self, session_id: str) -> str:
+        return self.mobile_control_session_url(session_id) + "/disable"
+
+    def mobile_control_callback_url(self, channel: str) -> str:
+        normalized = str(channel or "").strip().replace("_", "-")
+        if normalized not in {"qq-bot", "weixin", "feishu", "dingtalk", "wecom"}:
+            raise ValueError("未知手机控制Agent平台通道。")
+        return self._url(f"/api/mobile-control/callbacks/{normalized}")
+
+    @property
+    def admin_mobile_control_products_url(self) -> str:
+        return self._url("/api/admin/mobile-control/products")
+
+    @property
+    def admin_mobile_control_channel_policies_url(self) -> str:
+        return self._url("/api/admin/mobile-control/channel-policies")
+
+    @property
+    def admin_mobile_control_sessions_url(self) -> str:
+        return self._url("/api/admin/mobile-control/sessions")
+
+    def admin_mobile_control_session_action_url(self, session_id: str, action: str) -> str:
+        if action not in {"freeze", "release"}:
+            raise ValueError("未知手机控制Agent会话后台动作。")
+        safe_session_id = str(session_id or "").strip().strip("/")
+        if not safe_session_id:
+            raise ValueError("手机控制Agent会话 ID 为空。")
+        return self._url(f"/api/admin/mobile-control/sessions/{safe_session_id}/{action}")
+
+    def admin_mobile_control_order_action_url(self, order_id: str, action: str) -> str:
+        if action not in {"refund", "manual-review"}:
+            raise ValueError("未知手机控制Agent订单后台动作。")
+        safe_order_id = str(order_id or "").strip().strip("/")
+        if not safe_order_id:
+            raise ValueError("手机控制Agent订单 ID 为空。")
+        return self._url(f"/api/admin/mobile-control/orders/{safe_order_id}/{action}")
+
 
 @dataclass(frozen=True)
 class CommercialApiRequest:
@@ -200,6 +277,14 @@ def stable_order_idempotency_key(
     seed = f"order:{product_id}:{buyer_user_id}:{operator_user_id}".encode("utf-8")
     digest = hashlib.sha256(seed).hexdigest()[:24]
     return f"order-{digest}"
+
+
+def stable_mobile_control_idempotency_key(action: str, *parts: str) -> str:
+    if action not in {"order", "session", "test", "acceptance", "disable", "callback"}:
+        raise ValueError("未知手机控制Agent幂等动作。")
+    seed = (action + ":" + ":".join(str(part or "") for part in parts)).encode("utf-8")
+    digest = hashlib.sha256(seed).hexdigest()[:24]
+    return f"mca-{action}-{digest}"
 
 
 def build_urllib_request_parts(request: CommercialApiRequest) -> tuple[str, dict[str, str], bytes | None]:
@@ -427,6 +512,211 @@ def build_admin_agent_ledger_action_request(
     return CommercialApiRequest(
         method="POST",
         url=contract.admin_agent_ledger_action_url(ledger_id, action),
+        body={"reason": reason},
+    )
+
+
+def build_mobile_control_offering_request(contract: CommercialApiContract) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.mobile_control_offering_url)
+
+
+def build_mobile_control_order_create_request(
+    contract: CommercialApiContract,
+    service_product_id: str,
+    buyer_user_id: str,
+    agent_id: str,
+    channel: str,
+    agent_source: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.mobile_control_orders_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "service_product_id": service_product_id,
+            "target_buyer_user_id": buyer_user_id,
+            "agent_id": agent_id,
+            "channel": channel,
+            "agent_source": agent_source,
+        },
+    )
+
+
+def build_mobile_control_order_get_request(
+    contract: CommercialApiContract,
+    order_id: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.mobile_control_order_url(order_id))
+
+
+def build_mobile_control_session_create_request(
+    contract: CommercialApiContract,
+    order_id: str,
+    agent_id: str,
+    channel: str,
+    platform_account_id: str,
+    platform_chat_id: str,
+    gateway_mode: str,
+    agent_source: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.mobile_control_sessions_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "order_id": order_id,
+            "agent_id": agent_id,
+            "channel": channel,
+            "platform_account_id": platform_account_id,
+            "platform_chat_id": platform_chat_id,
+            "gateway_mode": gateway_mode,
+            "agent_source": agent_source,
+        },
+    )
+
+
+def build_mobile_control_session_get_request(
+    contract: CommercialApiContract,
+    session_id: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.mobile_control_session_url(session_id))
+
+
+def build_mobile_control_session_test_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    test_prompt: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.mobile_control_session_test_url(session_id),
+        headers={"Idempotency-Key": idempotency_key},
+        body={"test_prompt": test_prompt},
+    )
+
+
+def build_mobile_control_session_acceptance_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    source_event_id: str,
+    inbound_platform_message_id: str,
+    outbound_platform_message_id: str,
+    test_prompt: str,
+    agent_response_digest: str,
+    evidence_url: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.mobile_control_session_acceptance_url(session_id),
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "source_event_id": source_event_id,
+            "inbound_platform_message_id": inbound_platform_message_id,
+            "outbound_platform_message_id": outbound_platform_message_id,
+            "test_prompt": test_prompt,
+            "agent_response_digest": agent_response_digest,
+            "evidence_url": evidence_url,
+        },
+    )
+
+
+def build_mobile_control_session_disable_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    reason: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.mobile_control_session_disable_url(session_id),
+        headers={"Idempotency-Key": idempotency_key},
+        body={"reason": reason},
+    )
+
+
+def build_mobile_control_callback_request(
+    contract: CommercialApiContract,
+    channel: str,
+    platform_message_id: str,
+    platform_chat_id: str,
+    sender_id: str,
+    text: str,
+    mentioned_bot: bool = False,
+    wake_word_matched: bool = False,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.mobile_control_callback_url(channel),
+        body={
+            "channel": channel,
+            "platform_message_id": platform_message_id,
+            "platform_chat_id": platform_chat_id,
+            "sender_id": sender_id,
+            "text": text,
+            "mentioned_bot": bool(mentioned_bot),
+            "wake_word_matched": bool(wake_word_matched),
+        },
+    )
+
+
+def build_admin_mobile_control_product_update_request(
+    contract: CommercialApiContract,
+    product: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="PUT", url=contract.admin_mobile_control_products_url, body={"product": dict(product)})
+
+
+def build_admin_mobile_control_channel_policy_update_request(
+    contract: CommercialApiContract,
+    policy: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="PUT",
+        url=contract.admin_mobile_control_channel_policies_url,
+        body={"policy": dict(policy)},
+    )
+
+
+def build_admin_mobile_control_sessions_request(
+    contract: CommercialApiContract,
+    status: str = "",
+    cursor: str = "",
+    limit: int = 50,
+) -> CommercialApiRequest:
+    query = {"limit": str(max(1, min(int(limit), 100)))}
+    if status.strip():
+        query["status"] = status.strip()
+    if cursor.strip():
+        query["cursor"] = cursor.strip()
+    return CommercialApiRequest(method="GET", url=contract.admin_mobile_control_sessions_url, query=query)
+
+
+def build_admin_mobile_control_session_action_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    action: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_mobile_control_session_action_url(session_id, action),
+        body={"reason": reason},
+    )
+
+
+def build_admin_mobile_control_order_action_request(
+    contract: CommercialApiContract,
+    order_id: str,
+    action: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_mobile_control_order_action_url(order_id, action),
         body={"reason": reason},
     )
 

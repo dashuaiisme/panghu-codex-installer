@@ -1045,7 +1045,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(result.method, "embedded_webview")
         self.assertIn("WebView", result.message)
 
-    def test_open_url_falls_back_to_browser_when_embedded_webview_unavailable(self) -> None:
+    def test_open_url_blocks_customer_site_when_embedded_webview_unavailable(self) -> None:
         opened = {}
         original_try = installer_module.try_open_embedded_webview
         original_browser = installer_module.webbrowser.open
@@ -1061,9 +1061,9 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             installer_module.webbrowser.open = original_browser
             installer_module.webview = original_webview
 
-        self.assertEqual(opened["browser"], "https://aitokenapi.cc/pay/demo")
-        self.assertTrue(result.ok)
-        self.assertEqual(result.method, "external_browser")
+        self.assertNotIn("browser", opened)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.method, "embedded_webview_blocked")
         self.assertIn("未加载 pywebview", result.message)
 
     def test_login_entry_is_unified_and_not_buyer_agent_mode_split(self) -> None:
@@ -1114,7 +1114,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(installer_module.MODULE_PAGE_META[installer_module.MODULE_SITE]["account"][1], installer_module.DEFAULT_BASE_URL + "/console")
         self.assertEqual(
             [title for _item_id, title, _subtitle in installer_module.MODULE_SIDE_NAV_ITEMS[installer_module.MODULE_COURSES]],
-            ["代理总览", "下游客户", "token 返佣", "激活返佣", "安装返佣", "工具代理后端", "代理规则"],
+            ["代理总览", "下游客户", "token 返佣", "激活返佣", "安装返佣", "工具代理后端", "招商介绍", "代理规则"],
         )
         for item_id, _title, _subtitle in installer_module.MODULE_SIDE_NAV_ITEMS[installer_module.MODULE_COURSES]:
             self.assertIn(item_id, installer_module.MODULE_PAGE_META[installer_module.MODULE_COURSES])
