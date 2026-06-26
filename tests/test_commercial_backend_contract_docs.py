@@ -59,13 +59,13 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
 
         required_terms = [
-            "历史版本残留的本地商业污染字段不得写入或继续保留在 `profile.json`",
-            "旧 `profile.json`",
+            "本地商业污染字段不得写入或继续保留在 `profile.json`",
+            "profile.json",
             "第三方身份、第三方 token、买家登录 token",
-            "启动恢复时不得把旧商业污染字段或旧买家 token 当成当前账号",
+            "启动恢复时不得把商业污染字段或买家 token 当成当前账号",
             "只能恢复账号提示、API Key、模型和界面偏好",
             "真正的登录、授权和部署 token 必须来自本次重新登录",
-            "代理身份不再是客户端登录前模式",
+            "代理身份只来自登录后的服务端权益",
         ]
         for term in required_terms:
             with self.subTest(term=term):

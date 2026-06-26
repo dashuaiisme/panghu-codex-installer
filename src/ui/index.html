@@ -15,6 +15,7 @@
   --bg-btn-secondary-active: #d5d5db;
   --bg-btn-ghost-hover: rgba(0, 0, 0, 0.03);                 /* macOS Desktop background */
   --bg-surface: #f5f5f7;              /* macOS Window background */
+  --bg-surface-sub: #fafafc;          /* Sub-surface/input background */
   --bg-card: #ffffff;                 /* macOS Main Workspace card background */
   --bg-sidebar: #ebebec;              /* macOS Window Left & Right sidebar background */
   --border-color: #d2d2d7;            /* macOS Window border */
@@ -1983,7 +1984,7 @@ function applyPythonState(state) {
   // Update form inputs directly
   var keyInput = document.getElementById("api-key-input");
   if (keyInput) keyInput.value = apiKeyValue;
-  var skipCheck = document.getElementById("skip-test-checkbox");
+  var skipCheck = document.getElementById("chk-skip-test");
   if (skipCheck) skipCheck.checked = skipTest;
   
   refreshUI();
@@ -2050,7 +2051,7 @@ function simulateLogout() {
 
 function saveAndTestKey() {
   var keyVal = document.getElementById("api-key-input") ? document.getElementById("api-key-input").value : apiKeyValue;
-  var skipT = document.getElementById("skip-test-checkbox") ? document.getElementById("skip-test-checkbox").checked : skipTest;
+  var skipT = document.getElementById("chk-skip-test") ? document.getElementById("chk-skip-test").checked : skipTest;
   
   if (!keyVal) {
     alert("请输入有效的 API Key！");
@@ -3184,47 +3185,49 @@ function getStep2Html() {
       </div>
     </div>
     
-    <div class="section-label">密钥参数</div>
-    
-    <div class="form-row cols-1" style="margin-bottom:12px;">
-      <div class="field">
-        <label>胖虎AI API Key</label>
-        <div class="field-value input-with-icon">
-          <span class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-          </span>
-          <input type="${showKey ? 'text' : 'password'}" id="api-key-input" value="${apiKeyValue}" placeholder="sk-panghu-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="padding-right:36px;" onchange="apiKeyValue=this.value" />
-          <button onclick="toggleKeyVisibility()" style="position: absolute; right: 8px; background: transparent; border: none; cursor: pointer; color: var(--ink-muted); display: flex; align-items: center; padding: 4px; z-index: 10; outline: none;">
-            ${showKey ? `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
-            ` : `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-            `}
-          </button>
+    <div class="purchase-panel" style="margin-bottom:0;">
+      <div class="purchase-title" style="margin-bottom:12px;">密钥参数</div>
+      
+      <div class="form-row cols-1" style="margin-bottom:12px;">
+        <div class="field">
+          <label>胖虎AI API Key</label>
+          <div class="field-value input-with-icon">
+            <span class="input-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+            </span>
+            <input type="${showKey ? 'text' : 'password'}" id="api-key-input" value="${apiKeyValue}" placeholder="sk-panghu-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="padding-right:36px;" onchange="apiKeyValue=this.value" />
+            <button onclick="toggleKeyVisibility()" style="position: absolute; right: 8px; background: transparent; border: none; cursor: pointer; color: var(--ink-muted); display: flex; align-items: center; padding: 4px; z-index: 10; outline: none;">
+              ${showKey ? `
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+              ` : `
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              `}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-    
-    <div class="form-row" style="margin-bottom:16px;">
-      <div class="field">
-        <label>接口地址 (系统锁定)</label>
-        <input type="text" value="${DEFAULT_BASE_URL}" readonly />
+      
+      <div class="form-row" style="margin-bottom:16px;">
+        <div class="field">
+          <label>接口地址 (系统锁定)</label>
+          <input type="text" value="${DEFAULT_BASE_URL}" readonly />
+        </div>
+        <div class="field">
+          <label>默认模型</label>
+          <select id="model-select" onchange="defaultModel=this.value">
+            <option value="gpt-5.5" ${defaultModel=='gpt-5.5' ? 'selected' : ''}>gpt-5.5 (推荐)</option>
+            <option value="gpt-5.4" ${defaultModel=='gpt-5.4' ? 'selected' : ''}>gpt-5.4</option>
+            <option value="gpt-4.1" ${defaultModel=='gpt-4.1' ? 'selected' : ''}>gpt-4.1</option>
+          </select>
+        </div>
       </div>
-      <div class="field">
-        <label>默认模型</label>
-        <select id="model-select" onchange="defaultModel=this.value">
-          <option value="gpt-5.5" ${defaultModel=='gpt-5.5' ? 'selected' : ''}>gpt-5.5 (推荐)</option>
-          <option value="gpt-5.4" ${defaultModel=='gpt-5.4' ? 'selected' : ''}>gpt-5.4</option>
-          <option value="gpt-4.1" ${defaultModel=='gpt-4.1' ? 'selected' : ''}>gpt-4.1</option>
-        </select>
+      
+      <div style="display:flex; justify-content:flex-end; align-items:center; gap:16px; margin-top:20px;">
+        <label class="field-checkbox-row" style="user-select:none; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" ${skipTest ? 'checked' : ''} id="chk-skip-test" onchange="skipTest=this.checked" /> 跳过接口测试
+        </label>
+        <button class="btn btn-primary" onclick="saveAndTestKey()">保存并测试 Key</button>
       </div>
-    </div>
-    
-    <div style="display:flex; justify-content:flex-end; align-items:center; gap:16px; margin-top:20px;">
-      <label class="field-checkbox-row" style="user-select:none; display:flex; align-items:center; gap:6px; cursor:pointer;">
-        <input type="checkbox" ${skipTest ? 'checked' : ''} id="chk-skip-test" onchange="skipTest=this.checked" /> 跳过接口测试
-      </label>
-      <button class="btn btn-primary" onclick="saveAndTestKey()">保存并测试 Key</button>
     </div>
   `;
 }
@@ -3255,7 +3258,7 @@ function getStep3Html() {
     
     <div class="field" style="margin-top:16px;">
       <label>诊断输出记录 (env_text)</label>
-      <textarea id="env-text-area" readonly style="height:150px; background:#f5f5f7; color:#1d1d1f; font-family:var(--font-mono); font-size:11px; padding:12px; border-radius:var(--radius-sm); border:1px solid var(--border-color); resize:none; line-height:1.5;">${environmentChecked ? getMockEnvCheckOutput() : '等待执行环境检测...'}</textarea>
+      <textarea id="env-text-area" readonly style="height:150px; background:var(--bg-surface-sub); color:var(--ink-primary); font-family:var(--font-mono); font-size:11px; padding:12px; border-radius:var(--radius-sm); border:1px solid var(--border-color); resize:none; line-height:1.5;">${environmentChecked ? getMockEnvCheckOutput() : '等待执行环境检测...'}</textarea>
     </div>
   `;
 }
@@ -3919,13 +3922,18 @@ function getDynamicDeliverySerial() {
 
 
 function changeTheme(themeName) {
-  document.body.className = "theme-" + themeName;
+  var newClass = "theme-" + themeName;
+  if (document.body.className === newClass) {
+    return;
+  }
+  document.body.className = newClass;
   var selector = document.getElementById("theme-selector");
   if (selector) selector.value = themeName;
   if (window.pywebview && window.pywebview.api) {
     window.pywebview.api.set_theme(themeName);
   }
 }
+
 
 
 function toggleLogPanel() {
@@ -4172,7 +4180,7 @@ simulateLogout = function() {
 
 saveAndTestKey = function() {
   var keyEl = document.getElementById("api-key-input");
-  var skipEl = document.getElementById("skip-test-checkbox");
+  var skipEl = document.getElementById("chk-skip-test");
   var keyVal = keyEl ? keyEl.value : apiKeyValue;
   var skipT = skipEl ? skipEl.checked : skipTest;
   if (!keyVal) {
