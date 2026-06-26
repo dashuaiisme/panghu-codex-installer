@@ -42,7 +42,7 @@ def main() -> int:
 
     if not report["runtime_webview_loaded"]:
         report["blocking_gaps"].append(
-            "当前运行环境未加载 pywebview；客户网站页面会回退到系统浏览器，不能声明完全内置浏览器闭环。"
+            "当前运行环境未加载 pywebview；客户网站页面会被阻断且不打开系统浏览器，不能声明完全内置浏览器闭环。"
         )
 
     for page in pages:
