@@ -99,28 +99,28 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, text)
 
-    def test_backend_contract_doc_covers_mobile_control_independent_service_contract(self) -> None:
+    def test_backend_contract_doc_covers_communication_software_link_independent_service_contract(self) -> None:
         path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
         text = path.read_text(encoding="utf-8")
 
         required_terms = [
-            "手机控制Agent独立服务合同",
-            "`service_type=mobile_control_agent`",
-            "`mobile_control_agent_delivered`",
+            "连接通讯软件独立服务合同",
+            "`service_type=communication_software_link`",
+            "`communication_software_link_delivered`",
             "`service_products`",
             "`service_orders`",
-            "`mobile_control_sessions`",
-            "`mobile_control_acceptance_records`",
+            "`communication_software_link_sessions`",
+            "`communication_software_link_acceptance_records`",
             "`service_ledger_events`",
-            "GET /api/mobile-control/offering",
-            "POST /api/mobile-control/orders",
-            "POST /api/mobile-control/sessions",
-            "POST /api/mobile-control/sessions/:id/test",
-            "POST /api/mobile-control/sessions/:id/acceptance",
-            "POST /api/mobile-control/callbacks/qq-bot",
-            "GET/PUT /api/admin/mobile-control/products",
-            "GET/PUT /api/admin/mobile-control/channel-policies",
-            "POST /api/admin/mobile-control/orders/:id/refund",
+            "GET /api/communication-software-link/offering",
+            "POST /api/communication-software-link/orders",
+            "POST /api/communication-software-link/sessions",
+            "POST /api/communication-software-link/sessions/:id/test",
+            "POST /api/communication-software-link/sessions/:id/acceptance",
+            "POST /api/communication-software-link/callbacks/qq-bot",
+            "GET/PUT /api/admin/communication-software-link/products",
+            "GET/PUT /api/admin/communication-software-link/channel-policies",
+            "POST /api/admin/communication-software-link/orders/:id/refund",
             "已有可用 Agent",
             "订单必须已支付",
             "未支付订单不得创建配置会话",

@@ -1,6 +1,6 @@
 # 主线推进计划
 
-最后更新：2026-06-26
+最后更新：2026-06-28
 
 ## 0. 本文件职责
 
@@ -39,30 +39,38 @@
 - 已将 `agent_center` 纳入商业 manifest 签名控制字段，避免代理中心收益/结算快照绕过服务端签名保护。
 - 已同步 `docs/COMMERCIAL_BACKEND_API_CONTRACT.md` 和 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md`：胖虎AI管理员后台需要“代理业务管理”，公开招商页固定为 `/agent/join`，桌面端只展示服务端快照和入口。
 - 已确认当前自动化测试通过不等于客户可交付。
+- 本轮代码健康检查已完成：`py_compile OK`、`self-test OK`、`unittest 306 OK`。
+- 本轮旧前端删除 / 商业 manifest / 发布脚本 focused pytest 为 `98 passed, 11 subtests passed`；商业后端 focused pytest 为 `158 passed, 11 subtests passed`。
+- 本轮 `.venv\Scripts\python.exe scripts\customer_web_entry_acceptance.py` 返回 `web_entry_status=ready`；系统 Python 返回 `blocked` 是因为没有 `webview`，不代表项目运行环境失败。
+- 旧 WebView 前端已按最新指令删除；旧截图脚本和旧 B 级截图目录不再作为当前验收证据。
+- 本轮 `commercial_flow_acceptance.py --json` 返回 `status=PASS`，但只按 `offline_only` / `offline_guarded` / `mock_guarded` 范围确认。
+- 本轮 `commercial_release_acceptance.py --json` 返回 `status=WARN`，原因是只有旧名历史客户包、三端包 `stale`、未注入商业清单生产公钥。
 
 ## 3. 当前正在做
 
-1. 后端与主程序商业边界继续逐项对照。
-2. 确认服务端合同、测试守卫和客户可见文案都围绕当前登录买家上下文。
-3. 继续确认代理中心三类返佣和下游客户合同尚未被客户端硬编码，也没有被误写成已完成。
-4. 将手机控制Agent写入统一文档体系：独立入口、独立服务、独立验收、独立收费、防止买家通过断网或禁 Key 卡扣费。
+1. 基于本轮验收结果更新收口文档，把旧前端和旧截图证据改为删除 / 暂停状态。
+2. 保留真实服务端、真实交互、客户端 scope、连接通讯软件、代理中心服务端、新前端和发布链路未完成边界。
+3. 将 `commercial_release_acceptance.py --json` 的 `WARN` 作为发布前阻塞项处理。
+4. 继续确认代理中心三类返佣和下游客户合同尚未被客户端硬编码，也没有被误写成完成态。
 5. 为后续 agent 提供稳定执行依据。
 
 ## 4. 下一步
 
 1. 继续审计 `src/panghu_codex_installer.py`、`src/commercial_api.py`、`src/commercial_backend_contract.py` 中的商业合同边界。
 2. 对照代理中心服务端合同，继续检查主程序是否只展示 `agent_center` 服务端快照，是否存在旧代理登录、本地代理模式或本地返佣计算残留。
-3. 对照手机控制Agent服务合同，拆出后端商品、订单、会话、平台通道、验收记录、扣费事件和防套利状态机。
-4. 输出剩余后端实现偏差清单。
-5. 再决定后端修正任务拆分和并行评审。
+3. 对照连接通讯软件服务合同，拆出后端商品、订单、会话、平台通道、验收记录、扣费事件和防套利状态机。
+4. 新前端单独重做后，再重新生成 B 级截图证据。
+5. 完成真实服务端和真实交互验收后，再决定是否进入打包和生产下载入口流程。
 
 ## 5. 明确未完成
 
 - 真实网页登录、注册、充值、支付、创建 API Key 闭环验收。
 - 代理中心真实服务端实现和真实数据闭环：token 返佣、下游付费激活返佣、付费安装 Agent 返佣、下游客户归因、结算状态和管理员后台配置页。当前仓库只有离线合同、请求构造、文档合同和测试守卫。
-- 手机控制Agent真实后端、平台通道、客户端入口和交付验收尚未实现；当前只是文档合同和后续后端实现口径。
+- 连接通讯软件真实后端、平台通道、客户端入口和交付验收尚未实现；当前只是文档合同和后续后端实现口径。
 - Codex、ClaudeCode、OpenClaw、Hermes 使用真实客户 API Key 的最小中文对话闭环验收；Gemini / agy 配置链路待开发，当前不计完整交付。
+- 新前端重做、接入和 B 级截图验收。
 - 三端客户包打包、Release、下载页和 `latest.json` 更新。
+- 轻量发布前检查当前仍为 `WARN`，旧名历史客户包、三端包 `stale`、商业清单生产公钥未注入。
 
 ## 6. 当前验证命令
 
@@ -70,8 +78,11 @@
 python -m py_compile src\panghu_codex_installer.py scripts\agent_delivery_acceptance.py scripts\customer_web_entry_acceptance.py
 python src\panghu_codex_installer.py --self-test
 python -m unittest discover -s tests -p "test_*.py"
+.venv\Scripts\python.exe scripts\customer_web_entry_acceptance.py
+python scripts\commercial_flow_acceptance.py --json
+python scripts\commercial_release_acceptance.py --json
 ```
 
-最近结果：`python -m pytest tests/test_commercial_core.py tests/test_panghu_commercial_manifest.py tests/test_commercial_api.py tests/test_commercial_backend_contract.py tests/test_commercial_flow_acceptance.py -q` 已通过 170 条测试；`python -m pytest tests/test_commercial_backend_contract_docs.py -q` 已通过 9 条测试和 111 个 subtests。更大范围的 unittest/self-test 仍需在本轮收尾前复跑。
+本轮结果：`py_compile OK`、`self-test OK`、`unittest 306 OK`；旧前端删除 / 商业 manifest / 发布脚本 focused pytest `98 passed, 11 subtests passed`；商业后端 focused pytest `158 passed, 11 subtests passed`；`.venv` 网站入口前提为 `web_entry_status=ready`；商业合同离线验收为 `PASS`，但属于 `offline_only` / `offline_guarded` / `mock_guarded`；轻量发布前检查为 `WARN`。
 
 这些命令只代表代码健康与回归检查通过，不代表产品已可正式交付。

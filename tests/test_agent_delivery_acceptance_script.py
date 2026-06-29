@@ -1,4 +1,6 @@
 import os
+import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -12,6 +14,73 @@ import agent_delivery_acceptance  # noqa: E402
 
 
 class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
+    def run_script(self, *args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "agent_delivery_acceptance.py"), *args],
+            cwd=ROOT,
+            check=check,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+        )
+
+    def test_cli_scope_selected_agents_do_not_block_on_client_detection(self) -> None:
+        result = self.run_script("--delivery-scope", "cli", "--agents", "codex,claude_code,openclaw,hermes")
+        report = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(report["delivery_scope"], "cli")
+        self.assertEqual(report["delivery_status"], "blocked")
+        self.assertEqual(report["selected_agent_ids"], ["codex", "claude_code", "openclaw", "hermes"])
+        self.assertNotIn("客户端未确认", "\n".join(report["blocking_gaps"]))
+        self.assertIn("最小中文对话未执行", "\n".join(report["blocking_gaps"]))
+        for item in report["agents"]:
+            self.assertEqual(item["delivery_status"], "blocked")
+            self.assertIn("cli", item["mode_statuses"])
+            self.assertNotIn("client", item["mode_statuses"])
+            self.assertIn(item["mode_statuses"]["dialogue"], {"not_run", "not_supported"})
+
+    def test_selected_gemini_agy_stays_blocking_even_for_cli_scope(self) -> None:
+        result = self.run_script("--delivery-scope", "cli", "--agents", "gemini_agy")
+        report = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(report["delivery_status"], "blocked")
+        self.assertEqual(report["delivery_scope"], "cli")
+        self.assertEqual(report["selected_agent_ids"], ["gemini_agy"])
+        self.assertEqual(report["agents"][0]["delivery_status"], "blocked")
+        self.assertEqual(report["agents"][0]["mode_statuses"]["cli"], "not_supported")
+        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_supported")
+        self.assertIn("Gemini / agy 配置待开发", "\n".join(report["blocking_gaps"]))
+
+    def test_client_scope_selected_agent_blocks_on_unconfirmed_client(self) -> None:
+        result = self.run_script("--delivery-scope", "client", "--agents", "claude_code")
+        report = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(report["delivery_status"], "blocked")
+        self.assertEqual(report["delivery_scope"], "client")
+        self.assertEqual(report["selected_agent_ids"], ["claude_code"])
+        self.assertEqual(report["agents"][0]["delivery_status"], "blocked")
+        self.assertNotIn("cli", report["agents"][0]["mode_statuses"])
+        self.assertIn(report["agents"][0]["mode_statuses"]["client"], {"ready", "not_confirmed"})
+        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_run")
+        self.assertIn("ClaudeCode 客户端未确认", "\n".join(report["blocking_gaps"]))
+
+    def test_both_scope_reports_cli_and_client_as_separate_delivery_modes(self) -> None:
+        result = self.run_script("--delivery-scope", "both", "--agents", "codex")
+        report = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(report["delivery_status"], "blocked")
+        self.assertEqual(report["agents"][0]["selected_modes"], ["cli", "client"])
+        self.assertIn("cli", report["agents"][0]["mode_statuses"])
+        self.assertIn("client", report["agents"][0]["mode_statuses"])
+        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_run")
+
     def test_isolated_acceptance_env_writes_temp_configs_without_user_paths(self) -> None:
         calls = []
 

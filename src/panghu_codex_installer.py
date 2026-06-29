@@ -21,38 +21,45 @@ from enum import Enum
 from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener, urlopen
 
 from commercial_api import (
     CommercialApiContract,
+    build_agent_apply_request,
     build_agent_center_request,
     build_agent_commissions_request,
     build_agent_downstreams_request,
+    build_agent_public_offering_request,
+    build_agent_settlement_request,
     build_api_key_owner_verify_request,
     build_config_session_complete_request,
     build_config_session_fail_request,
     build_config_session_reserve_request,
     build_entitlement_query_request,
-    build_mobile_control_offering_request,
-    build_mobile_control_order_create_request,
-    build_mobile_control_order_get_request,
-    build_mobile_control_session_acceptance_request,
-    build_mobile_control_session_create_request,
-    build_mobile_control_session_disable_request,
-    build_mobile_control_session_get_request,
-    build_mobile_control_session_test_request,
+    build_communication_software_link_offering_request,
+    build_communication_software_link_order_create_request,
+    build_communication_software_link_order_get_request,
+    build_communication_software_link_session_acceptance_request,
+    build_communication_software_link_session_create_request,
+    build_communication_software_link_session_disable_request,
+    build_communication_software_link_session_get_request,
+    build_communication_software_link_session_test_request,
     build_order_create_request,
     build_payment_poll_request,
+    build_referral_bind_request,
     execute_commercial_api_request,
     mask_business_identifier,
     parse_config_session_reserve_data,
-    parse_mobile_control_order_status_data,
+    parse_agent_center_snapshot_data,
+    parse_communication_software_link_order_status_data,
+    parse_communication_software_link_state_fields,
     parse_payment_status_data,
     sanitize_commercial_text,
     stable_config_reserve_idempotency_key,
     stable_config_session_idempotency_key,
-    stable_mobile_control_idempotency_key,
+    stable_agent_business_idempotency_key,
+    stable_communication_software_link_idempotency_key,
     stable_order_idempotency_key,
     with_operator_auth,
 )
@@ -101,7 +108,7 @@ except Exception:  # pragma: no cover - optional dependency for embedded custome
     webview = None
 
 
-APP_NAME = "胖虎AI"
+APP_NAME = "胖虎AI客户端"
 APP_VERSION = "1.0.15"
 HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
@@ -129,17 +136,20 @@ def load_commercial_manifest_public_key() -> str:
 COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM = load_commercial_manifest_public_key()
 GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
 PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
-WINDOWS_RELEASE_DIR_NAME = "胖虎AI"
+WINDOWS_RELEASE_DIR_NAME = APP_NAME
+PREVIOUS_RELEASE_DIR_NAME = "胖虎AI"
 LEGACY_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
 WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
 WINDOWS_RELEASE_ASSET_ALIASES = (
     WINDOWS_RELEASE_ASSET_NAME,
+    f"{PREVIOUS_RELEASE_DIR_NAME}-Windows.zip",
     f"{LEGACY_RELEASE_DIR_NAME}-Windows.zip",
     "AI.Agent.-Windows.zip",
 )
 MAC_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac.zip"
 MAC_RELEASE_ASSET_ALIASES = (
     MAC_RELEASE_ASSET_NAME,
+    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac.zip",
     f"{LEGACY_RELEASE_DIR_NAME}-Mac.zip",
     "AI.Agent.-Mac.zip",
 )
@@ -147,14 +157,17 @@ MAC_APPLE_SILICON_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-AppleSil
 MAC_INTEL_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-Intel.zip"
 MAC_APPLE_SILICON_RELEASE_ASSET_ALIASES = (
     MAC_APPLE_SILICON_RELEASE_ASSET_NAME,
+    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip",
     f"{LEGACY_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip",
     "AI.Agent.-Mac-AppleSilicon.zip",
     MAC_RELEASE_ASSET_NAME,
+    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac.zip",
     f"{LEGACY_RELEASE_DIR_NAME}-Mac.zip",
     "AI.Agent.-Mac.zip",
 )
 MAC_INTEL_RELEASE_ASSET_ALIASES = (
     MAC_INTEL_RELEASE_ASSET_NAME,
+    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac-Intel.zip",
     f"{LEGACY_RELEASE_DIR_NAME}-Mac-Intel.zip",
     "AI.Agent.-Mac-Intel.zip",
 )
@@ -167,6 +180,7 @@ KEY_CREATE_URL = f"{DEFAULT_BASE_URL}/console/token"
 CONSOLE_URL = f"{DEFAULT_BASE_URL}/console"
 BUY_URL = f"{DEFAULT_BASE_URL}/buy"
 AFFILIATE_URL = f"{DEFAULT_BASE_URL}/affiliate"
+SIM_CONTROL_URL = "https://sim.aitokenapi.cc"
 AGENT_CENTER_URL = f"{DEFAULT_BASE_URL}/agent"
 AGENT_CUSTOMERS_URL = f"{DEFAULT_BASE_URL}/agent/customers"
 AGENT_TOKEN_COMM_URL = f"{DEFAULT_BASE_URL}/agent/token-commission"
@@ -178,13 +192,14 @@ AGENT_JOIN_URL = f"{DEFAULT_BASE_URL}/agent/join"
 VALUE_ADDED_URLS = {
     "gpt_plus": f"{DEFAULT_BASE_URL}/services?entry=gpt-plus",
     "phone_card": f"{DEFAULT_BASE_URL}/services?entry=phone-card",
-    "sms_code": f"{DEFAULT_BASE_URL}/services?entry=sms-code",
+    "sms_code": SIM_CONTROL_URL,
 }
-MOBILE_CONTROL_AGENT_OPTIONS = ("codex", "claude_code", "openclaw", "hermes", "gemini_agy")
-MOBILE_CONTROL_CHANNEL_OPTIONS = ("qq_bot", "weixin", "feishu", "dingtalk", "wecom")
-MOBILE_CONTROL_AGENT_SOURCE_OPTIONS = ("existing_local_agent", "historical_delivery", "current_delivery", "manual_review")
-MOBILE_CONTROL_GATEWAY_MODE_OPTIONS = ("official_bot", "customer_bot", "manual_bridge")
-MOBILE_CONTROL_DEFAULT_PROMPT = "请回复手机控制Agent验收成功"
+COMMUNICATION_SOFTWARE_LINK_AGENT_OPTIONS = ("codex", "claude_code", "openclaw", "hermes")
+COMMUNICATION_SOFTWARE_LINK_CHANNEL_OPTIONS = ("qq_bot", "weixin", "feishu", "dingtalk", "wecom")
+COMMUNICATION_SOFTWARE_LINK_AGENT_SOURCE_OPTIONS = ("existing_local_agent", "historical_delivery", "current_delivery", "manual_review")
+COMMUNICATION_SOFTWARE_LINK_GATEWAY_MODE_OPTIONS = ("official_bot", "customer_bot", "manual_bridge")
+COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT = "请回复连接通讯软件验收成功"
+INVITE_QUERY_KEYS = ("invite", "invite_code", "ref", "referral", "referral_code")
 CODEX_WINDOWS_STORE_URL = "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
 CODEX_DOWNLOAD_URL = "https://developers.openai.com/codex/"
 CLAUDE_CODE_DOCS_URL = "https://code.claude.com/docs/en/quickstart"
@@ -246,8 +261,8 @@ FLOW_STEPS = (
     (7, "最小中文对话", "确认能直接中文对话"),
     (8, "功能验收矩阵", "逐项确认是否达标"),
     (9, "基础交付验收", "已完成所有基础交付验收"),
-    (10, "手机控制Agent", "配置手机机器人通道"),
-    (11, "手机控制Agent交付验收", "手机端发送消息验证"),
+    (10, "连接通讯软件", "配置通讯软件通道"),
+    (11, "连接通讯软件交付验收", "通讯软件发送消息验证"),
 )
 
 MODULE_AGENT = "agent"
@@ -271,7 +286,7 @@ MODULE_SIDE_NAV_ITEMS = {
     MODULE_VALUE_ADDED: (
         ("gpt_plus", "GPT 账号会员", "Plus、Team、Pro 服务入口"),
         ("phone_card", "国外手机卡", "海外号码与通信服务"),
-        ("sms_code", "接码服务", "验证码接收与临时号服务"),
+        ("sms_code", "接码控制台", "手机号接码控制中心"),
     ),
     MODULE_COURSES: (
         ("agent_home", "代理总览", "代理等级、邀请入口与结算摘要"),
@@ -294,7 +309,7 @@ MODULE_PAGE_META = {
     MODULE_VALUE_ADDED: {
         "gpt_plus": ("GPT 账号会员", VALUE_ADDED_URLS["gpt_plus"], "进入增值业务页的 GPT 账号会员分区，具体上架状态和价格以服务端为准。"),
         "phone_card": ("国外手机卡", VALUE_ADDED_URLS["phone_card"], "进入增值业务页的海外号码与通信服务分区，所有商品信息由网站服务端控制。"),
-        "sms_code": ("接码服务", VALUE_ADDED_URLS["sms_code"], "进入增值业务页的接码服务分区，购买规则与时长不在本地硬编码。"),
+        "sms_code": ("接码控制台", VALUE_ADDED_URLS["sms_code"], "打开手机号接码控制中心；价格、订单、可用号码和短信回传仍以服务端为准。"),
     },
     MODULE_COURSES: {
         "agent_home": ("代理总览", AGENT_CENTER_URL, "查看当前代理状态、等级、邀请入口和结算摘要。"),
@@ -348,10 +363,10 @@ MODULE_ACTION_CARDS = {
             ("交付边界", "客户端不硬编码国家库存、价格或开卡规则。"),
         ),
         "sms_code": (
-            ("服务入口", "展示接码服务、备用号和不同国家通道入口。"),
-            ("适用场景", "适合 AI 服务注册、二次验证或辅助接收短信验证码。"),
-            ("客服协同", "服务状态和购买逻辑依旧由网站服务端控制。"),
-            ("交付边界", "客户端不本地计算接码时长、价格或退款规则。"),
+            ("控制台入口", "打开 sim 子域名的手机号接码控制中心，承接号码托管和接码工作台。"),
+            ("平台绑定", "用户开始接码前必须选择 OpenAI、Google 等本次接收平台。"),
+            ("短信回传", "验证码必须匹配用户、号码、当前会话、时间窗口和本次平台。"),
+            ("服务状态", "可用号码、订单、价格、失败处理和退款规则以服务端返回为准。"),
         ),
     },
     MODULE_COURSES: {
@@ -2304,21 +2319,56 @@ def commercial_api_request_with_auth(
             cursor=str(kwargs.get("cursor") or ""),
             limit=int(kwargs.get("limit") or 50),
         )
-    elif action == "mobile_control_offering":
-        request = build_mobile_control_offering_request(CommercialApiContract(DEFAULT_BASE_URL))
-    elif action == "mobile_control_order_create":
+    elif action == "agent_public_offering":
+        request = build_agent_public_offering_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "agent_apply":
+        product_id = str(kwargs["product_id"])
+        request = build_agent_apply_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            product_id=product_id,
+            idempotency_key=stable_agent_business_idempotency_key(
+                "agent_apply",
+                contexts.operator.user_id,
+                product_id,
+            ),
+        )
+    elif action == "referral_bind":
+        invite_code = normalize_referral_invite_code(str(kwargs["invite_code"]))
+        request = build_referral_bind_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            invite_code=invite_code,
+            idempotency_key=stable_agent_business_idempotency_key(
+                "referral_bind",
+                contexts.target_buyer.user_id,
+                invite_code,
+            ),
+        )
+    elif action == "agent_settlement":
+        requested_cents = int(kwargs["requested_cents"])
+        request = build_agent_settlement_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            requested_cents=requested_cents,
+            idempotency_key=stable_agent_business_idempotency_key(
+                "agent_settlement",
+                contexts.operator.user_id,
+                str(requested_cents),
+            ),
+        )
+    elif action == "communication_software_link_offering":
+        request = build_communication_software_link_offering_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "communication_software_link_order_create":
         service_product_id = str(kwargs["service_product_id"])
         agent_id = str(kwargs["agent_id"])
         channel = str(kwargs["channel"])
         agent_source = str(kwargs["agent_source"])
-        request = build_mobile_control_order_create_request(
+        request = build_communication_software_link_order_create_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             service_product_id=service_product_id,
             buyer_user_id=contexts.target_buyer.user_id,
             agent_id=agent_id,
             channel=channel,
             agent_source=agent_source,
-            idempotency_key=stable_mobile_control_idempotency_key(
+            idempotency_key=stable_communication_software_link_idempotency_key(
                 "order",
                 contexts.target_buyer.user_id,
                 contexts.operator.user_id,
@@ -2328,12 +2378,12 @@ def commercial_api_request_with_auth(
                 agent_source,
             ),
         )
-    elif action == "mobile_control_order_get":
-        request = build_mobile_control_order_get_request(
+    elif action == "communication_software_link_order_get":
+        request = build_communication_software_link_order_get_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             order_id=str(kwargs["order_id"]),
         )
-    elif action == "mobile_control_session_create":
+    elif action == "communication_software_link_session_create":
         order_id = str(kwargs["order_id"])
         agent_id = str(kwargs["agent_id"])
         channel = str(kwargs["channel"])
@@ -2341,7 +2391,7 @@ def commercial_api_request_with_auth(
         platform_chat_id = str(kwargs["platform_chat_id"])
         gateway_mode = str(kwargs["gateway_mode"])
         agent_source = str(kwargs["agent_source"])
-        request = build_mobile_control_session_create_request(
+        request = build_communication_software_link_session_create_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             order_id=order_id,
             agent_id=agent_id,
@@ -2350,7 +2400,7 @@ def commercial_api_request_with_auth(
             platform_chat_id=platform_chat_id,
             gateway_mode=gateway_mode,
             agent_source=agent_source,
-            idempotency_key=stable_mobile_control_idempotency_key(
+            idempotency_key=stable_communication_software_link_idempotency_key(
                 "session",
                 contexts.target_buyer.user_id,
                 contexts.operator.user_id,
@@ -2363,19 +2413,19 @@ def commercial_api_request_with_auth(
                 agent_source,
             ),
         )
-    elif action == "mobile_control_session_get":
-        request = build_mobile_control_session_get_request(
+    elif action == "communication_software_link_session_get":
+        request = build_communication_software_link_session_get_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             session_id=str(kwargs["session_id"]),
         )
-    elif action == "mobile_control_session_test":
+    elif action == "communication_software_link_session_test":
         session_id = str(kwargs["session_id"])
         test_prompt = str(kwargs["test_prompt"])
-        request = build_mobile_control_session_test_request(
+        request = build_communication_software_link_session_test_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             session_id=session_id,
             test_prompt=test_prompt,
-            idempotency_key=stable_mobile_control_idempotency_key(
+            idempotency_key=stable_communication_software_link_idempotency_key(
                 "test",
                 contexts.target_buyer.user_id,
                 contexts.operator.user_id,
@@ -2383,7 +2433,7 @@ def commercial_api_request_with_auth(
                 test_prompt,
             ),
         )
-    elif action == "mobile_control_session_acceptance":
+    elif action == "communication_software_link_session_acceptance":
         session_id = str(kwargs["session_id"])
         source_event_id = str(kwargs["source_event_id"])
         inbound_platform_message_id = str(kwargs["inbound_platform_message_id"])
@@ -2391,7 +2441,7 @@ def commercial_api_request_with_auth(
         test_prompt = str(kwargs["test_prompt"])
         agent_response_digest = str(kwargs["agent_response_digest"])
         evidence_url = str(kwargs["evidence_url"])
-        request = build_mobile_control_session_acceptance_request(
+        request = build_communication_software_link_session_acceptance_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             session_id=session_id,
             source_event_id=source_event_id,
@@ -2400,7 +2450,7 @@ def commercial_api_request_with_auth(
             test_prompt=test_prompt,
             agent_response_digest=agent_response_digest,
             evidence_url=evidence_url,
-            idempotency_key=stable_mobile_control_idempotency_key(
+            idempotency_key=stable_communication_software_link_idempotency_key(
                 "acceptance",
                 contexts.target_buyer.user_id,
                 contexts.operator.user_id,
@@ -2410,13 +2460,13 @@ def commercial_api_request_with_auth(
                 outbound_platform_message_id,
             ),
         )
-    elif action == "mobile_control_session_disable":
+    elif action == "communication_software_link_session_disable":
         session_id = str(kwargs["session_id"])
-        request = build_mobile_control_session_disable_request(
+        request = build_communication_software_link_session_disable_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             session_id=session_id,
             reason=str(kwargs.get("reason") or "buyer_disabled_from_client"),
-            idempotency_key=stable_mobile_control_idempotency_key(
+            idempotency_key=stable_communication_software_link_idempotency_key(
                 "disable",
                 contexts.target_buyer.user_id,
                 contexts.operator.user_id,
@@ -3016,6 +3066,36 @@ def open_path(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
+def normalize_referral_invite_code(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.query:
+        query = parse_qs(parsed.query, keep_blank_values=False)
+        for key in INVITE_QUERY_KEYS:
+            values = query.get(key)
+            if values and str(values[0]).strip():
+                return str(values[0]).strip()
+    if parsed.scheme and parsed.netloc:
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[-2].lower() in {"invite", "referral"}:
+            return parts[-1].strip()
+        return ""
+    if "=" in raw:
+        key, _, candidate = raw.partition("=")
+        if key.strip().lower() in INVITE_QUERY_KEYS:
+            return candidate.strip()
+    return raw
+
+
+def build_register_url(invite_code_or_url: str = "") -> str:
+    invite_code = normalize_referral_invite_code(invite_code_or_url)
+    if not invite_code:
+        return REGISTER_URL
+    return f"{REGISTER_URL}?invite={quote(invite_code, safe='')}"
+
+
 def open_url(
     url: str,
     cookie_jar: http.cookiejar.CookieJar | None = None,
@@ -3120,6 +3200,8 @@ def embedded_customer_page_title(url: str) -> str:
         return ""
     if safe.rstrip("/") in {DEFAULT_BASE_URL, CONSOLE_URL.lower()}:
         return "胖虎AI 控制台"
+    if safe.rstrip("/") == SIM_CONTROL_URL.lower():
+        return "手机号接码控制中心"
     if "/agent" in safe:
         return "胖虎AI 代理中心"
     if "/services" in safe:
@@ -4429,9 +4511,14 @@ class WebviewApi:
     def __init__(self, app: "InstallerApp") -> None:
         self.app = app
 
+    @staticmethod
+    def _accepted(message: str) -> dict:
+        return {"success": True, "accepted": True, "message": message}
+
     def get_initial_state(self) -> dict:
         is_logged = self.app.logged_in_user is not None and self.app.deployer_auth is not None
         metrics = self.app._commercial_metric_values()
+        agent_center_state = self.app.current_agent_center_state()
 
         agent_enabled = {}
         for k, v in self.app.agent_enabled.items():
@@ -4517,6 +4604,9 @@ class WebviewApi:
             "activeModule": self.app.active_module.get(),
             "loginAccounts": login_state.get("accounts") or [],
             "accounts": login_state.get("accounts") or [],
+            "buyerPurchase": self.app.current_buyer_purchase_state(),
+            "agentCenter": agent_center_state,
+            "communicationSoftwareLink": self.app.current_communication_software_link_web_state(),
         }
 
     def login(self, username, password, remember_password=False, auto_login=False):
@@ -4670,28 +4760,28 @@ class WebviewApi:
     def start_deploy(self):
         try:
             self.app.start_deploy()
-            return {"success": True}
+            return self._accepted("部署请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def start_dual_state_config(self):
         try:
             self.app.start_dual_state_config()
-            return {"success": True}
+            return self._accepted("双态配置请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def start_official_chatgpt_config(self):
         try:
             self.app.start_official_chatgpt_config()
-            return {"success": True}
+            return self._accepted("官方直登配置请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def start_config_only(self):
         try:
             self.app.start_config_only()
-            return {"success": True}
+            return self._accepted("配置任务已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -4726,130 +4816,130 @@ class WebviewApi:
     def start_update_check(self):
         try:
             self.app.start_update_check()
-            return {"success": True}
+            return self._accepted("更新检查已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def buyer_create_order(self):
         try:
             self.app.start_buyer_create_order()
-            return {"success": True}
+            return self._accepted("订单创建请求已受理，支付状态以服务端回填为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def buyer_poll_payment(self):
         try:
             self.app.start_buyer_poll_payment()
-            return {"success": True}
+            return self._accepted("支付查询已受理，是否可交付以服务端权益回填为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def buyer_refresh_entitlements(self):
         try:
             self.app.start_buyer_refresh_entitlements()
-            return {"success": True}
+            return self._accepted("权益刷新已受理，最终权益以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def refresh_agent_center(self):
         try:
             self.app.start_refresh_agent_center()
-            return {"success": True}
+            return self._accepted("代理中心刷新已受理，最终快照以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def refresh_agent_center_detail(self):
         try:
             self.app.start_refresh_agent_center_detail()
-            return {"success": True}
+            return self._accepted("代理中心明细刷新已受理，最终明细以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def _apply_mobile_control_payload(self, payload=None):
+    def _apply_communication_software_link_payload(self, payload=None):
         if not isinstance(payload, dict):
             return
         mapping = {
-            "service_product_id": self.app.mobile_service_product_id,
-            "order_id": self.app.mobile_order_id,
-            "session_id": self.app.mobile_session_id,
-            "agent_id": self.app.mobile_agent_id,
-            "channel": self.app.mobile_channel,
-            "agent_source": self.app.mobile_agent_source,
-            "platform_account_id": self.app.mobile_platform_account_id,
-            "platform_chat_id": self.app.mobile_platform_chat_id,
-            "gateway_mode": self.app.mobile_gateway_mode,
-            "test_prompt": self.app.mobile_test_prompt,
-            "source_event_id": self.app.mobile_source_event_id,
-            "inbound_platform_message_id": self.app.mobile_inbound_message_id,
-            "outbound_platform_message_id": self.app.mobile_outbound_message_id,
-            "agent_response_digest": self.app.mobile_response_digest,
-            "evidence_url": self.app.mobile_evidence_url,
+            "service_product_id": self.app.communication_software_link_service_product_id,
+            "order_id": self.app.communication_software_link_order_id,
+            "session_id": self.app.communication_software_link_session_id,
+            "agent_id": self.app.communication_software_link_agent_id,
+            "channel": self.app.communication_software_link_channel,
+            "agent_source": self.app.communication_software_link_agent_source,
+            "platform_account_id": self.app.communication_software_link_platform_account_id,
+            "platform_chat_id": self.app.communication_software_link_platform_chat_id,
+            "gateway_mode": self.app.communication_software_link_gateway_mode,
+            "test_prompt": self.app.communication_software_link_test_prompt,
+            "source_event_id": self.app.communication_software_link_source_event_id,
+            "inbound_platform_message_id": self.app.communication_software_link_inbound_message_id,
+            "outbound_platform_message_id": self.app.communication_software_link_outbound_message_id,
+            "agent_response_digest": self.app.communication_software_link_response_digest,
+            "evidence_url": self.app.communication_software_link_evidence_url,
         }
         for key, var in mapping.items():
             if key in payload:
                 var.set(str(payload.get(key) or ""))
 
-    def mobile_control_refresh_offering(self, payload=None):
+    def communication_software_link_refresh_offering(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_refresh_offering()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_refresh_offering()
+            return self._accepted("连接通讯软件服务商品刷新已受理，价格和上架状态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_create_order(self, payload=None):
+    def communication_software_link_create_order(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_create_order()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_create_order()
+            return self._accepted("连接通讯软件订单创建已受理，支付/人工确认状态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_get_order(self, payload=None):
+    def communication_software_link_get_order(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_get_order()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_get_order()
+            return self._accepted("连接通讯软件订单查询已受理，终态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_create_session(self, payload=None):
+    def communication_software_link_create_session(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_create_session()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_create_session()
+            return self._accepted("连接通讯软件配置会话创建已受理，最终会话状态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_get_session(self, payload=None):
+    def communication_software_link_get_session(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_get_session()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_get_session()
+            return self._accepted("连接通讯软件会话查询已受理，终态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_test(self, payload=None):
+    def communication_software_link_test(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_test()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_test()
+            return self._accepted("连接通讯软件测试请求已受理，测试结果以服务端回填为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_acceptance(self, payload=None):
+    def communication_software_link_acceptance(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_acceptance()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_acceptance()
+            return self._accepted("连接通讯软件验收证据提交请求已受理，最终交付以服务端真实验收记录为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    def mobile_control_disable(self, payload=None):
+    def communication_software_link_disable(self, payload=None):
         try:
-            self._apply_mobile_control_payload(payload)
-            self.app.start_mobile_control_disable()
-            return {"success": True}
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_disable()
+            return self._accepted("连接通讯软件停用请求已受理，停用终态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -4952,8 +5042,8 @@ class InstallerApp:
         self.agent_center_live_data: dict = {}
         self.agent_downstreams_live_data: dict = {}
         self.agent_commissions_live_data: dict[str, dict] = {}
-        self.mobile_control_offering_data: dict = {}
-        self.mobile_control_order_statuses: dict[str, dict] = {}
+        self.communication_software_link_offering_data: dict = {}
+        self.communication_software_link_order_statuses: dict[str, dict] = {}
         self.commercial_api = CommercialApiContract(DEFAULT_BASE_URL)
         self.last_diagnostic_code = ""
         self.saved_key_ok = False
@@ -4969,25 +5059,26 @@ class InstallerApp:
 
         self.login_username = tk.StringVar()
         self.login_password = tk.StringVar()
+        self.registration_invite_code = tk.StringVar()
         self.remember_password = tk.BooleanVar(value=True)
         self.auto_login = tk.BooleanVar(value=False)
         self.buyer_product_id = tk.StringVar()
         self.buyer_order_id = tk.StringVar()
-        self.mobile_service_product_id = tk.StringVar()
-        self.mobile_order_id = tk.StringVar()
-        self.mobile_session_id = tk.StringVar()
-        self.mobile_agent_id = tk.StringVar(value="codex")
-        self.mobile_channel = tk.StringVar(value="feishu")
-        self.mobile_agent_source = tk.StringVar(value="existing_local_agent")
-        self.mobile_platform_account_id = tk.StringVar()
-        self.mobile_platform_chat_id = tk.StringVar()
-        self.mobile_gateway_mode = tk.StringVar(value="official_bot")
-        self.mobile_test_prompt = tk.StringVar(value=MOBILE_CONTROL_DEFAULT_PROMPT)
-        self.mobile_source_event_id = tk.StringVar()
-        self.mobile_inbound_message_id = tk.StringVar()
-        self.mobile_outbound_message_id = tk.StringVar()
-        self.mobile_response_digest = tk.StringVar()
-        self.mobile_evidence_url = tk.StringVar()
+        self.communication_software_link_service_product_id = tk.StringVar()
+        self.communication_software_link_order_id = tk.StringVar()
+        self.communication_software_link_session_id = tk.StringVar()
+        self.communication_software_link_agent_id = tk.StringVar(value="codex")
+        self.communication_software_link_channel = tk.StringVar(value="feishu")
+        self.communication_software_link_agent_source = tk.StringVar(value="existing_local_agent")
+        self.communication_software_link_platform_account_id = tk.StringVar()
+        self.communication_software_link_platform_chat_id = tk.StringVar()
+        self.communication_software_link_gateway_mode = tk.StringVar(value="official_bot")
+        self.communication_software_link_test_prompt = tk.StringVar(value=COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT)
+        self.communication_software_link_source_event_id = tk.StringVar()
+        self.communication_software_link_inbound_message_id = tk.StringVar()
+        self.communication_software_link_outbound_message_id = tk.StringVar()
+        self.communication_software_link_response_digest = tk.StringVar()
+        self.communication_software_link_evidence_url = tk.StringVar()
         self.login_entry_mode = tk.StringVar(value="buyer")
         self.buyer_purchase_statuses: dict[BuyerSelfServiceNode, NodeStatus] = {}
         self.api_key = tk.StringVar()
@@ -5099,6 +5190,7 @@ class InstallerApp:
 
         is_logged = self.logged_in_user is not None and self.deployer_auth is not None
         metrics = self._commercial_metric_values()
+        agent_center_state = self.current_agent_center_state()
 
         agent_enabled = {}
         for k, v in self.agent_enabled.items():
@@ -5180,17 +5272,9 @@ class InstallerApp:
             "activeModule": self.active_module.get(),
             "loginAccounts": load_login_account_public_state().get("accounts") or [],
             "accounts": load_login_account_public_state().get("accounts") or [],
-            "agentCenter": self.agent_center_live_data or {},
-            "mobileControl": {
-                "offering": self.mobile_control_offering_data or {},
-                "serviceProductId": self.mobile_service_product_id.get(),
-                "orderId": self.mobile_order_id.get(),
-                "sessionId": self.mobile_session_id.get(),
-                "agentId": self.mobile_agent_id.get(),
-                "channel": self.mobile_channel.get(),
-                "agentSource": self.mobile_agent_source.get(),
-                "gatewayMode": self.mobile_gateway_mode.get(),
-            },
+            "buyerPurchase": self.current_buyer_purchase_state(),
+            "agentCenter": agent_center_state,
+            "communicationSoftwareLink": self.current_communication_software_link_web_state(),
         }
 
         try:
@@ -5400,8 +5484,8 @@ class InstallerApp:
             "当选定 Agent 的目标链路全部达标后，才进入客户交付收口；Gemini / agy 本版只算安装入口，不算完整交付。",
             "正式发客户前还要重新打包并完成三端包、公钥、Release、下载页授权流程。",
         )
-        self._build_mobile_control_step()
-        self._build_mobile_control_acceptance_step()
+        self._build_communication_software_link_step()
+        self._build_communication_software_link_acceptance_step()
         for canvas in self.step_canvases.values():
             canvas.place(in_=self.steps_host, x=0, y=0, relwidth=1, relheight=1)
 
@@ -5508,7 +5592,7 @@ class InstallerApp:
         title_block.pack(side="left")
         tk.Label(
             title_block,
-            text="胖虎AI",
+            text=APP_NAME,
             bg=APP_FRAME_BG,
             fg=INK,
             font=("Microsoft YaHei UI", 10, "bold"),
@@ -5516,7 +5600,7 @@ class InstallerApp:
         ).pack(anchor="w", pady=(0, 1))
         tk.Label(
             title_block,
-            text="胖虎AI 商业交付平台",
+            text="胖虎AI客户端商业交付平台",
             bg=APP_FRAME_BG,
             fg=MUTED,
             font=("Microsoft YaHei UI", 7),
@@ -6431,9 +6515,76 @@ class InstallerApp:
         )
 
     def agent_center_current_summary_text(self) -> str:
-        if self.agent_center_live_data:
-            return agent_center_summary_text({"agent_center": self.agent_center_live_data})
+        current = self.current_agent_center_state()
+        if current:
+            return agent_center_summary_text({"agent_center": current})
         return agent_center_summary_text(self.deployer_manifest)
+
+    def current_agent_center_state(self) -> dict:
+        live_data = getattr(self, "agent_center_live_data", {})
+        if isinstance(live_data, dict) and live_data:
+            return parse_agent_center_snapshot_data(live_data)
+        manifest = getattr(self, "deployer_manifest", {})
+        if isinstance(manifest, dict):
+            center = manifest.get("agent_center") or manifest.get("center")
+            if isinstance(center, dict):
+                return parse_agent_center_snapshot_data(center)
+        return {}
+
+    def current_buyer_purchase_state(self) -> dict:
+        statuses = getattr(self, "buyer_purchase_statuses", {})
+        entitlements = getattr(self, "commercial_entitlements", [])
+        return {
+            "productId": self._safe_var_value("buyer_product_id"),
+            "orderId": self._safe_var_value("buyer_order_id"),
+            "nodes": {node.value: status.value for node, status in statuses.items()},
+            "entitlementCount": len(entitlements),
+            "activeEntitlementCount": len([item for item in entitlements if item.status == "active"]),
+        }
+
+    def _safe_var_value(self, attr: str) -> str:
+        value = getattr(self, attr, None)
+        if value is None:
+            return ""
+        getter = getattr(value, "get", None)
+        if callable(getter):
+            return str(getter() or "")
+        return str(value or "")
+
+    def current_communication_software_link_web_state(self) -> dict:
+        return {
+            "offering": getattr(self, "communication_software_link_offering_data", {}) or {},
+            "serviceProductId": self._safe_var_value("communication_software_link_service_product_id"),
+            "orderId": self._safe_var_value("communication_software_link_order_id"),
+            "sessionId": self._safe_var_value("communication_software_link_session_id"),
+            "agentId": self._safe_var_value("communication_software_link_agent_id"),
+            "channel": self._safe_var_value("communication_software_link_channel"),
+            "agentSource": self._safe_var_value("communication_software_link_agent_source"),
+            "gatewayMode": self._safe_var_value("communication_software_link_gateway_mode"),
+            "state": self.current_communication_software_link_state(),
+        }
+
+    def current_communication_software_link_state(self) -> dict:
+        order_id = self._safe_var_value("communication_software_link_order_id").strip()
+        session_id = self._safe_var_value("communication_software_link_session_id").strip()
+        statuses = getattr(self, "communication_software_link_order_statuses", {})
+        order_status = statuses.get(order_id, {}) if order_id else {}
+        delivery_boundary = (
+            "连接通讯软件最终交付必须以服务端真实验收记录为准；"
+            "本地字段或离线/mock 守卫不能单独证明真实平台回调、Agent Runtime Adapter、支付和账本闭环。"
+        )
+        return {
+            "order": order_status,
+            "sessionId": session_id,
+            "sourceEventId": self._safe_var_value("communication_software_link_source_event_id"),
+            "inboundPlatformMessageId": self._safe_var_value("communication_software_link_inbound_message_id"),
+            "outboundPlatformMessageId": self._safe_var_value("communication_software_link_outbound_message_id"),
+            "agentResponseDigest": self._safe_var_value("communication_software_link_response_digest"),
+            "evidenceUrl": self._safe_var_value("communication_software_link_evidence_url"),
+            "realServiceStatus": "server_required",
+            "clientMayClaimDeliveryComplete": False,
+            "deliveryBoundary": delivery_boundary,
+        }
 
     def _ensure_commercial_contexts(self) -> bool:
         if self.commercial_contexts is None or self.deployer_auth is None:
@@ -6501,7 +6652,7 @@ class InstallerApp:
                 self.set_status_from_worker(f"状态：代理佣金数据已刷新，服务端返回 {count} 条")
             else:
                 center = data.get("agent_center") or data.get("center") or data
-                self.agent_center_live_data = center if isinstance(center, dict) else {}
+                self.agent_center_live_data = parse_agent_center_snapshot_data(center) if isinstance(center, dict) else {}
                 self.set_status_from_worker("状态：代理中心服务端数据已刷新")
             self.run_on_ui(self.refresh_steps)
         except Exception as exc:
@@ -6510,7 +6661,7 @@ class InstallerApp:
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
-    def _find_mobile_service_product_id(self, data: dict) -> str:
+    def _find_communication_software_link_service_product_id(self, data: dict) -> str:
         candidates = []
         for key in ("products", "items", "offerings"):
             values = data.get(key)
@@ -6521,50 +6672,51 @@ class InstallerApp:
                 continue
             service_type = str(item.get("service_type") or item.get("type") or "")
             status = str(item.get("status") or "").lower()
-            if service_type == "mobile_control_agent" and status in {"listed", "active", "available", ""}:
+            if service_type == "communication_software_link" and status in {"listed", "active", "available", ""}:
                 return str(item.get("product_id") or item.get("id") or "")
         return str(data.get("service_product_id") or data.get("product_id") or "")
 
-    def start_mobile_control_refresh_offering(self) -> None:
+    def start_communication_software_link_refresh_offering(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_offering",
+            "communication_software_link_offering",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_offering_worker, args=(request,), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_offering_worker, args=(request,), daemon=True).start()
 
-    def _mobile_control_offering_worker(self, request) -> None:
+    def _communication_software_link_offering_worker(self, request) -> None:
         try:
             data, summary = execute_commercial_api_with_trusted_certs(request)
             self.log_from_worker(summary)
-            self.mobile_control_offering_data = data
-            product_id = self._find_mobile_service_product_id(data)
-            if product_id and not self.mobile_service_product_id.get().strip():
-                self.run_on_ui(lambda: self.mobile_service_product_id.set(product_id))
-            self.set_status_from_worker("状态：手机控制Agent服务商品已从服务端刷新")
+            self.communication_software_link_offering_data = data
+            product_id = self._find_communication_software_link_service_product_id(data)
+            if product_id and not self.communication_software_link_service_product_id.get().strip():
+                self.run_on_ui(lambda: self.communication_software_link_service_product_id.set(product_id))
+            self.set_status_from_worker("状态：连接通讯软件服务商品已从服务端刷新")
             self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
-            self.log_from_worker(f"手机控制Agent服务商品刷新失败：{exc}")
-            self.show_error_from_worker("手机控制Agent刷新失败", str(exc))
+            self.log_from_worker(f"连接通讯软件服务商品刷新失败：{exc}")
+            self.show_error_from_worker("连接通讯软件刷新失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
-    def current_mobile_control_offering_text(self) -> str:
-        data = self.mobile_control_offering_data or {}
+    def current_communication_software_link_offering_text(self) -> str:
+        data = self.communication_software_link_offering_data or {}
         if not data:
-            return "登录并刷新服务端后，这里会显示手机控制Agent服务商品。价格、通道和上架状态以服务端返回为准。"
-        product_id = self._find_mobile_service_product_id(data)
+            return "登录并刷新服务端后，这里会显示连接通讯软件服务商品。价格、通道和上架状态以服务端返回为准。"
+        product_id = self._find_communication_software_link_service_product_id(data)
         list_count = 0
         for key in ("products", "items", "offerings"):
             values = data.get(key)
             if isinstance(values, list):
                 list_count += len(values)
-        parts = ["服务端已返回手机控制Agent商品信息。"]
+        parts = ["服务端已返回连接通讯软件商品信息。"]
         if product_id:
             parts.append(f"当前服务商品 ID：{mask_key(product_id)}")
         if list_count:
@@ -6572,232 +6724,268 @@ class InstallerApp:
         parts.append("具体价格、次数、有效期、上架状态和通道范围不在本地硬编码。")
         return " ".join(parts)
 
-    def refresh_mobile_control_panel(self) -> None:
-        label = getattr(self, "mobile_control_service_summary_label", None)
+    def refresh_communication_software_link_panel(self) -> None:
+        label = getattr(self, "communication_software_link_service_summary_label", None)
         if label:
-            label.configure(text=self.current_mobile_control_offering_text())
+            label.configure(text=self.current_communication_software_link_offering_text())
 
-    def _mobile_control_common_kwargs(self) -> dict[str, str]:
+    def _communication_software_link_common_kwargs(self) -> dict[str, str]:
         return {
-            "agent_id": self.mobile_agent_id.get().strip(),
-            "channel": self.mobile_channel.get().strip(),
-            "agent_source": self.mobile_agent_source.get().strip(),
+            "agent_id": self.communication_software_link_agent_id.get().strip(),
+            "channel": self.communication_software_link_channel.get().strip(),
+            "agent_source": self.communication_software_link_agent_source.get().strip(),
         }
 
-    def start_mobile_control_create_order(self) -> None:
+    def start_communication_software_link_create_order(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
-        service_product_id = self.mobile_service_product_id.get().strip()
+        service_product_id = self.communication_software_link_service_product_id.get().strip()
         if not service_product_id:
-            messagebox.showwarning("缺少商品", "请先刷新或填写服务端返回的手机控制Agent服务商品 ID。")
+            messagebox.showwarning("缺少商品", "请先刷新或填写服务端返回的连接通讯软件服务商品 ID。")
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_order_create",
+            "communication_software_link_order_create",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             service_product_id=service_product_id,
-            **self._mobile_control_common_kwargs(),
+            **self._communication_software_link_common_kwargs(),
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_create_order_worker, args=(request,), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_create_order_worker, args=(request,), daemon=True).start()
 
-    def _mobile_control_create_order_worker(self, request) -> None:
+    def _communication_software_link_create_order_worker(self, request) -> None:
         try:
             data, summary = execute_commercial_api_with_trusted_certs(request)
             self.log_from_worker(summary)
             order_id = str(data.get("order_id") or data.get("service_order_id") or data.get("id") or "").strip()
             if not order_id:
-                raise ValueError("创建手机控制Agent订单返回缺少订单 ID。")
-            order_status = parse_mobile_control_order_status_data(data)
-            self.mobile_control_order_statuses[order_id] = order_status
-            self.run_on_ui(lambda: self.mobile_order_id.set(order_id))
-            self.set_status_from_worker("状态：手机控制Agent订单已创建")
-            self.show_info_from_worker("手机控制Agent订单已创建", build_customer_payment_instruction(data))
+                raise ValueError("创建连接通讯软件订单返回缺少订单 ID。")
+            order_status = parse_communication_software_link_order_status_data(data)
+            self.communication_software_link_order_statuses[order_id] = order_status
+            self.run_on_ui(lambda: self.communication_software_link_order_id.set(order_id))
+            self.set_status_from_worker("状态：连接通讯软件订单创建请求已受理，支付/人工确认状态以服务端返回为准")
+            self.run_on_ui(self.sync_webview_state)
+            self.show_info_from_worker("连接通讯软件订单创建请求已受理", build_customer_payment_instruction(data))
         except Exception as exc:
-            self.log_from_worker(f"手机控制Agent订单创建失败：{exc}")
-            self.show_error_from_worker("手机控制Agent订单创建失败", str(exc))
+            self.log_from_worker(f"连接通讯软件订单创建失败：{exc}")
+            self.show_error_from_worker("连接通讯软件订单创建失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
-    def start_mobile_control_get_order(self) -> None:
+    def start_communication_software_link_get_order(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
-        order_id = self.mobile_order_id.get().strip()
+        order_id = self.communication_software_link_order_id.get().strip()
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建或填写手机控制Agent订单 ID。")
+            messagebox.showwarning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_order_get",
+            "communication_software_link_order_get",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             order_id=order_id,
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_get_order_worker, args=(request,), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_get_order_worker, args=(request,), daemon=True).start()
 
-    def _mobile_control_get_order_worker(self, request) -> None:
+    def _communication_software_link_get_order_worker(self, request) -> None:
         try:
             data, summary = execute_commercial_api_with_trusted_certs(request)
             self.log_from_worker(summary)
-            order_status = parse_mobile_control_order_status_data(data)
-            self.mobile_control_order_statuses[order_status["order_id"]] = order_status
-            self.set_status_from_worker("状态：手机控制Agent订单状态已刷新")
+            order_status = parse_communication_software_link_order_status_data(data)
+            self.communication_software_link_order_statuses[order_status["order_id"]] = order_status
+            self.set_status_from_worker("状态：连接通讯软件订单状态已刷新")
             self.run_on_ui(self.refresh_steps)
         except Exception as exc:
-            self.log_from_worker(f"手机控制Agent订单查询失败：{exc}")
-            self.show_error_from_worker("手机控制Agent订单查询失败", str(exc))
+            self.log_from_worker(f"连接通讯软件订单查询失败：{exc}")
+            self.show_error_from_worker("连接通讯软件订单查询失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
-    def start_mobile_control_create_session(self) -> None:
+    def start_communication_software_link_create_session(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
-        order_id = self.mobile_order_id.get().strip()
+        order_id = self.communication_software_link_order_id.get().strip()
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建或填写手机控制Agent订单 ID。")
+            messagebox.showwarning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
             return
-        order_status = self.mobile_control_order_statuses.get(order_id)
+        order_status = self.communication_software_link_order_statuses.get(order_id)
         if not order_status or not order_status.get("session_allowed"):
             messagebox.showwarning(
                 "订单未确认",
-                "请先查询手机控制Agent订单状态；订单必须已支付，或服务端明确进入人工预售/人工复核后，才能创建配置会话。",
+                "请先查询连接通讯软件订单状态；订单必须已支付，或服务端明确进入人工预售/人工复核后，才能创建配置会话。",
             )
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_session_create",
+            "communication_software_link_session_create",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             order_id=order_id,
-            platform_account_id=self.mobile_platform_account_id.get().strip(),
-            platform_chat_id=self.mobile_platform_chat_id.get().strip(),
-            gateway_mode=self.mobile_gateway_mode.get().strip(),
-            **self._mobile_control_common_kwargs(),
+            platform_account_id=self.communication_software_link_platform_account_id.get().strip(),
+            platform_chat_id=self.communication_software_link_platform_chat_id.get().strip(),
+            gateway_mode=self.communication_software_link_gateway_mode.get().strip(),
+            **self._communication_software_link_common_kwargs(),
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_create_session_worker, args=(request,), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_create_session_worker, args=(request,), daemon=True).start()
 
-    def _mobile_control_create_session_worker(self, request) -> None:
+    def _apply_communication_software_link_state_fields(self, fields: dict[str, str]) -> None:
+        order_id = str(fields.get("order_id") or "").strip()
+        session_id = str(fields.get("session_id") or "").strip()
+        status = str(fields.get("status") or "").strip()
+        var_updates = {
+            "communication_software_link_order_id": order_id,
+            "communication_software_link_session_id": session_id,
+            "communication_software_link_source_event_id": str(fields.get("source_event_id") or "").strip(),
+            "communication_software_link_inbound_message_id": str(fields.get("inbound_platform_message_id") or "").strip(),
+            "communication_software_link_outbound_message_id": str(fields.get("outbound_platform_message_id") or "").strip(),
+            "communication_software_link_response_digest": str(fields.get("agent_response_digest") or "").strip(),
+            "communication_software_link_evidence_url": str(fields.get("evidence_url") or "").strip(),
+        }
+        for attr, value in var_updates.items():
+            if value:
+                getattr(self, attr).set(value)
+        if order_id:
+            order_status = dict(self.communication_software_link_order_statuses.get(order_id, {}))
+            order_status["order_id"] = order_id
+            if session_id:
+                order_status["session_id"] = session_id
+            if status:
+                order_status["communication_software_link_status"] = status
+            self.communication_software_link_order_statuses[order_id] = order_status
+
+    def _communication_software_link_create_session_worker(self, request) -> None:
         try:
             data, summary = execute_commercial_api_with_trusted_certs(request)
             self.log_from_worker(summary)
-            session_id = str(data.get("session_id") or data.get("mobile_control_session_id") or data.get("id") or "").strip()
-            if not session_id:
-                raise ValueError("创建手机控制Agent配置会话返回缺少会话 ID。")
-            self.run_on_ui(lambda: self.mobile_session_id.set(session_id))
-            self.set_status_from_worker("状态：手机控制Agent配置会话已创建")
+            fields = parse_communication_software_link_state_fields(data)
+            if not fields["session_id"]:
+                raise ValueError("创建连接通讯软件配置会话返回缺少会话 ID。")
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(fields))
+            self.set_status_from_worker("状态：连接通讯软件配置会话创建请求已受理，最终会话状态以服务端返回为准")
             self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
-            self.log_from_worker(f"手机控制Agent会话创建失败：{exc}")
-            self.show_error_from_worker("手机控制Agent会话创建失败", str(exc))
+            self.log_from_worker(f"连接通讯软件会话创建失败：{exc}")
+            self.show_error_from_worker("连接通讯软件会话创建失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
-    def start_mobile_control_get_session(self) -> None:
+    def start_communication_software_link_get_session(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
-        session_id = self.mobile_session_id.get().strip()
+        session_id = self.communication_software_link_session_id.get().strip()
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先创建或填写手机控制Agent配置会话 ID。")
+            messagebox.showwarning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_session_get",
+            "communication_software_link_session_get",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             session_id=session_id,
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_generic_worker, args=("会话状态已刷新", request), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_generic_worker, args=("会话状态已刷新", request), daemon=True).start()
 
-    def start_mobile_control_test(self) -> None:
+    def start_communication_software_link_test(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
-        session_id = self.mobile_session_id.get().strip()
-        test_prompt = self.mobile_test_prompt.get().strip() or MOBILE_CONTROL_DEFAULT_PROMPT
+        session_id = self.communication_software_link_session_id.get().strip()
+        test_prompt = self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先创建或填写手机控制Agent配置会话 ID。")
+            messagebox.showwarning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_session_test",
+            "communication_software_link_session_test",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             session_id=session_id,
             test_prompt=test_prompt,
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_generic_worker, args=("测试请求已提交", request), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_generic_worker, args=("测试请求已提交", request), daemon=True).start()
 
-    def start_mobile_control_acceptance(self) -> None:
+    def start_communication_software_link_acceptance(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
         required = {
-            "配置会话 ID": self.mobile_session_id.get().strip(),
-            "源事件 ID": self.mobile_source_event_id.get().strip(),
-            "入站消息 ID": self.mobile_inbound_message_id.get().strip(),
-            "出站消息 ID": self.mobile_outbound_message_id.get().strip(),
-            "响应摘要": self.mobile_response_digest.get().strip(),
-            "证据 URL": self.mobile_evidence_url.get().strip(),
+            "配置会话 ID": self.communication_software_link_session_id.get().strip(),
+            "源事件 ID": self.communication_software_link_source_event_id.get().strip(),
+            "入站消息 ID": self.communication_software_link_inbound_message_id.get().strip(),
+            "出站消息 ID": self.communication_software_link_outbound_message_id.get().strip(),
+            "响应摘要": self.communication_software_link_response_digest.get().strip(),
+            "证据 URL": self.communication_software_link_evidence_url.get().strip(),
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
             messagebox.showwarning("缺少验收证据", "请补齐：" + "、".join(missing))
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_session_acceptance",
+            "communication_software_link_session_acceptance",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             session_id=required["配置会话 ID"],
             source_event_id=required["源事件 ID"],
             inbound_platform_message_id=required["入站消息 ID"],
             outbound_platform_message_id=required["出站消息 ID"],
-            test_prompt=self.mobile_test_prompt.get().strip() or MOBILE_CONTROL_DEFAULT_PROMPT,
+            test_prompt=self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT,
             agent_response_digest=required["响应摘要"],
             evidence_url=required["证据 URL"],
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_generic_worker, args=("验收证据已提交", request), daemon=True).start()
+        threading.Thread(
+            target=self._communication_software_link_generic_worker,
+            args=("验收证据提交请求已受理，等待服务端真实验收", request),
+            daemon=True,
+        ).start()
 
-    def start_mobile_control_disable(self) -> None:
+    def start_communication_software_link_disable(self) -> None:
         if self.worker_running:
             return
         if not self._ensure_commercial_contexts():
             return
-        session_id = self.mobile_session_id.get().strip()
+        session_id = self.communication_software_link_session_id.get().strip()
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先填写要停用的手机控制Agent配置会话 ID。")
+            messagebox.showwarning("缺少会话", "请先填写要停用的连接通讯软件配置会话 ID。")
             return
         request = commercial_api_request_with_auth(
-            "mobile_control_session_disable",
+            "communication_software_link_session_disable",
             self.commercial_contexts,
             deployer_auth=self.deployer_auth,
             session_id=session_id,
         )
         self.set_busy(True)
-        threading.Thread(target=self._mobile_control_generic_worker, args=("会话停用请求已提交", request), daemon=True).start()
+        threading.Thread(target=self._communication_software_link_generic_worker, args=("会话停用请求已提交", request), daemon=True).start()
 
-    def _mobile_control_generic_worker(self, success_status: str, request) -> None:
+    def _communication_software_link_generic_worker(self, success_status: str, request) -> None:
         try:
             data, summary = execute_commercial_api_with_trusted_certs(request)
             self.log_from_worker(summary)
             keys = sorted(str(key) for key in data.keys()) if isinstance(data, dict) else []
             key_text = "、".join(keys[:8]) if keys else "无结构化字段"
-            self.log_from_worker(f"手机控制Agent服务端返回字段：{key_text}")
-            self.set_status_from_worker(f"状态：手机控制Agent{success_status}")
+            self.log_from_worker(f"连接通讯软件服务端返回字段：{key_text}")
+            fields = parse_communication_software_link_state_fields(data)
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(fields))
+            if success_status == "验收证据已提交":
+                success_status = "验收证据提交请求已受理，等待服务端真实验收"
+            self.set_status_from_worker(f"状态：连接通讯软件{success_status}")
             self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
-            self.log_from_worker(f"手机控制Agent请求失败：{exc}")
-            self.show_error_from_worker("手机控制Agent请求失败", str(exc))
+            self.log_from_worker(f"连接通讯软件请求失败：{exc}")
+            self.show_error_from_worker("连接通讯软件请求失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
@@ -6843,6 +7031,7 @@ class InstallerApp:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.NEEDS_MANUAL
             self.set_status_from_worker("状态：订单已创建，请完成支付后查询支付状态")
             self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
             self.show_info_from_worker("订单已创建", build_customer_payment_instruction(data))
         except Exception as exc:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.FAILED
@@ -6886,6 +7075,7 @@ class InstallerApp:
                 self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.NEEDS_MANUAL
                 self.set_status_from_worker("状态：支付尚未完成或需人工确认")
             self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.FAILED
             self.run_on_ui(self.refresh_buyer_purchase_status)
@@ -6916,6 +7106,7 @@ class InstallerApp:
             self.set_status_from_worker("状态：权益已刷新，可以继续创建 Key 或安装配置")
             self.run_on_ui(self.refresh_steps)
             self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ENTITLEMENT_REFRESH] = NodeStatus.FAILED
             self.run_on_ui(self.refresh_buyer_purchase_status)
@@ -6998,7 +7189,7 @@ class InstallerApp:
         title_block.pack(side="left")
         tk.Label(
             title_block,
-            text="胖虎AI",
+            text=APP_NAME,
             bg=CARD_BG,
             fg=INK,
             font=("Microsoft YaHei UI", 15, "bold"),
@@ -7006,7 +7197,7 @@ class InstallerApp:
         ).pack(anchor="w", pady=(0, 1))
         tk.Label(
             title_block,
-            text="胖虎AI 商业交付平台",
+            text="胖虎AI客户端商业交付平台",
             bg=CARD_BG,
             fg=PRIMARY_DARK,
             font=("Microsoft YaHei UI", 9, "bold"),
@@ -7060,6 +7251,20 @@ class InstallerApp:
         pwd_entry = ttk.Entry(password, textvariable=self.login_password, show="*", font=("Microsoft YaHei UI", 11), width=45)
         pwd_entry.pack(fill="x", ipady=7, pady=(6, 16))
 
+        invite = tk.Frame(self.buyer_login_panel, bg=CARD_BG)
+        invite.pack(fill="x")
+        tk.Label(invite, text="邀请码 / 代理邀请链接（新账号注册时填写）", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        ttk.Entry(invite, textvariable=self.registration_invite_code, font=("Microsoft YaHei UI", 11), width=45).pack(fill="x", ipady=7, pady=(6, 8))
+        tk.Label(
+            invite,
+            text="没有账号时先填代理给的邀请码或邀请链接，再点注册；绑定和返佣仍以胖虎AI网站服务端为准。",
+            bg=CARD_BG,
+            fg=MUTED,
+            wraplength=480,
+            justify="left",
+            font=("Microsoft YaHei UI", 8),
+        ).pack(anchor="w", pady=(0, 12))
+
         buttons = tk.Frame(self.buyer_login_panel, bg=CARD_BG)
         buttons.pack(fill="x", pady=(5, 0))
         self.login_button = self._button(buttons, "登录并激活工具", self.start_login, "primary")
@@ -7067,7 +7272,10 @@ class InstallerApp:
         self._text_button(
             buttons,
             "没有账号？先去注册",
-            lambda: open_url(REGISTER_URL, storage_path=self.current_buyer_web_profile_path()),
+            lambda: open_url(
+                self.current_registration_url(),
+                storage_path=self.current_buyer_web_profile_path(),
+            ),
         ).pack(side="left", padx=(18, 0), pady=(4, 0))
 
         tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(20, 15))
@@ -7080,6 +7288,9 @@ class InstallerApp:
             justify="left",
             font=("Microsoft YaHei UI", 9),
         ).pack(anchor="w")
+
+    def current_registration_url(self) -> str:
+        return build_register_url(self.registration_invite_code.get())
 
     def _build_buyer_purchase_panel(self, parent: tk.Frame) -> None:
         panel = tk.Frame(parent, bg=INFO_BG, padx=12, pady=9, highlightthickness=1, highlightbackground=BORDER)
@@ -7707,12 +7918,12 @@ class InstallerApp:
             row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0)
         )
 
-    def _build_mobile_control_step(self) -> None:
+    def _build_communication_software_link_step(self) -> None:
         frame = self._create_step_frame(10)
         self._step_title(
             frame,
-            "第十步：手机控制Agent",
-            "手机控制Agent是独立增值服务。它可以绑定本次交付、历史交付、已有本机 Agent 或人工复核通过的 Agent，不强制绑定基础安装流程。",
+            "第十步：连接通讯软件",
+            "连接通讯软件是独立增值服务。它可以绑定本次交付、历史交付、已有本机 Agent 或人工复核通过的 Agent，不强制绑定基础安装流程。",
         )
         self._step_hint(frame, 10)
         self._notice_strip(
@@ -7725,19 +7936,19 @@ class InstallerApp:
         form = tk.Frame(frame, bg=CARD_BG)
         form.pack(fill="x")
         for col in range(2):
-            form.grid_columnconfigure(col, weight=1, uniform="mobile_control")
-        self._form_entry(form, "手机控制服务商品 ID", self.mobile_service_product_id, row=0, column=0)
-        self._form_entry(form, "手机控制订单 ID", self.mobile_order_id, row=0, column=1)
-        self._form_combo(form, "目标 Agent", self.mobile_agent_id, MOBILE_CONTROL_AGENT_OPTIONS, row=1, column=0)
-        self._form_combo(form, "手机通道", self.mobile_channel, MOBILE_CONTROL_CHANNEL_OPTIONS, row=1, column=1)
-        self._form_combo(form, "Agent 来源", self.mobile_agent_source, MOBILE_CONTROL_AGENT_SOURCE_OPTIONS, row=2, column=0)
-        self._form_combo(form, "网关模式", self.mobile_gateway_mode, MOBILE_CONTROL_GATEWAY_MODE_OPTIONS, row=2, column=1)
-        self._form_entry(form, "平台账号 ID", self.mobile_platform_account_id, row=3, column=0)
-        self._form_entry(form, "平台会话 / 群聊 ID", self.mobile_platform_chat_id, row=3, column=1)
+            form.grid_columnconfigure(col, weight=1, uniform="communication_software_link")
+        self._form_entry(form, "连接通讯软件服务商品 ID", self.communication_software_link_service_product_id, row=0, column=0)
+        self._form_entry(form, "连接通讯软件订单 ID", self.communication_software_link_order_id, row=0, column=1)
+        self._form_combo(form, "目标 Agent", self.communication_software_link_agent_id, COMMUNICATION_SOFTWARE_LINK_AGENT_OPTIONS, row=1, column=0)
+        self._form_combo(form, "通讯软件通道", self.communication_software_link_channel, COMMUNICATION_SOFTWARE_LINK_CHANNEL_OPTIONS, row=1, column=1)
+        self._form_combo(form, "Agent 来源", self.communication_software_link_agent_source, COMMUNICATION_SOFTWARE_LINK_AGENT_SOURCE_OPTIONS, row=2, column=0)
+        self._form_combo(form, "网关模式", self.communication_software_link_gateway_mode, COMMUNICATION_SOFTWARE_LINK_GATEWAY_MODE_OPTIONS, row=2, column=1)
+        self._form_entry(form, "平台账号 ID", self.communication_software_link_platform_account_id, row=3, column=0)
+        self._form_entry(form, "平台会话 / 群聊 ID", self.communication_software_link_platform_chat_id, row=3, column=1)
 
         service_summary = tk.Label(
             frame,
-            text="登录并刷新服务端后，这里会按服务端返回的手机控制Agent商品继续创建订单。",
+            text="登录并刷新服务端后，这里会按服务端返回的连接通讯软件商品继续创建订单。",
             bg=INFO_BG,
             fg=PRIMARY_DARK,
             padx=12,
@@ -7750,54 +7961,54 @@ class InstallerApp:
             highlightbackground=BORDER,
         )
         service_summary.pack(fill="x", pady=(4, 12))
-        self.mobile_control_service_summary_label = service_summary
+        self.communication_software_link_service_summary_label = service_summary
 
         actions = tk.Frame(frame, bg=CARD_BG)
         actions.pack(fill="x")
         for col in range(3):
-            actions.grid_columnconfigure(col, weight=1, uniform="mobile_control_actions")
-        self._grid_button(actions, "刷新服务商品", self.start_mobile_control_refresh_offering, "secondary", 0, 0)
-        self._grid_button(actions, "创建手机控制订单", self.start_mobile_control_create_order, "primary", 0, 1)
-        self._grid_button(actions, "查询订单", self.start_mobile_control_get_order, "secondary", 0, 2)
-        self._grid_button(actions, "创建配置会话", self.start_mobile_control_create_session, "primary", 1, 0)
-        self._grid_button(actions, "查询会话", self.start_mobile_control_get_session, "secondary", 1, 1)
-        self._grid_button(actions, "下一步：手机控制验收", lambda: self.go_to_step(11), "secondary", 1, 2)
+            actions.grid_columnconfigure(col, weight=1, uniform="communication_software_link_actions")
+        self._grid_button(actions, "刷新服务商品", self.start_communication_software_link_refresh_offering, "secondary", 0, 0)
+        self._grid_button(actions, "创建连接通讯软件订单", self.start_communication_software_link_create_order, "primary", 0, 1)
+        self._grid_button(actions, "查询订单", self.start_communication_software_link_get_order, "secondary", 0, 2)
+        self._grid_button(actions, "创建配置会话", self.start_communication_software_link_create_session, "primary", 1, 0)
+        self._grid_button(actions, "查询会话", self.start_communication_software_link_get_session, "secondary", 1, 1)
+        self._grid_button(actions, "下一步：连接通讯软件验收", lambda: self.go_to_step(11), "secondary", 1, 2)
 
-    def _build_mobile_control_acceptance_step(self) -> None:
+    def _build_communication_software_link_acceptance_step(self) -> None:
         frame = self._create_step_frame(11)
         self._step_title(
             frame,
-            "第十一步：手机控制Agent交付验收",
-            "只有服务端确认入站消息、Agent 调用、出站回复和证据 URL 后，手机控制Agent才算交付。未验收不能扣次或包装成完整交付。",
+            "第十一步：连接通讯软件交付验收",
+            "只有服务端确认入站消息、Agent 调用、出站回复和证据 URL 后，连接通讯软件才算交付。未验收不能扣次或包装成完整交付。",
         )
         self._step_hint(frame, 11)
 
         form = tk.Frame(frame, bg=CARD_BG)
         form.pack(fill="x")
         for col in range(2):
-            form.grid_columnconfigure(col, weight=1, uniform="mobile_acceptance")
-        self._form_entry(form, "配置会话 ID", self.mobile_session_id, row=0, column=0)
-        self._form_entry(form, "测试提示词", self.mobile_test_prompt, row=0, column=1)
-        self._form_entry(form, "源事件 ID", self.mobile_source_event_id, row=1, column=0)
-        self._form_entry(form, "入站消息 ID", self.mobile_inbound_message_id, row=1, column=1)
-        self._form_entry(form, "出站消息 ID", self.mobile_outbound_message_id, row=2, column=0)
-        self._form_entry(form, "Agent 响应摘要", self.mobile_response_digest, row=2, column=1)
-        self._form_entry(form, "证据 URL", self.mobile_evidence_url, row=3, column=0)
+            form.grid_columnconfigure(col, weight=1, uniform="communication_software_link_acceptance")
+        self._form_entry(form, "配置会话 ID", self.communication_software_link_session_id, row=0, column=0)
+        self._form_entry(form, "测试提示词", self.communication_software_link_test_prompt, row=0, column=1)
+        self._form_entry(form, "源事件 ID", self.communication_software_link_source_event_id, row=1, column=0)
+        self._form_entry(form, "入站消息 ID", self.communication_software_link_inbound_message_id, row=1, column=1)
+        self._form_entry(form, "出站消息 ID", self.communication_software_link_outbound_message_id, row=2, column=0)
+        self._form_entry(form, "Agent 响应摘要", self.communication_software_link_response_digest, row=2, column=1)
+        self._form_entry(form, "证据 URL", self.communication_software_link_evidence_url, row=3, column=0)
 
         self._notice_strip(
             frame,
             "验收边界",
-            "手机控制Agent暂不保存第三方平台账号密码，不保存部署授权 token，不把订单、权益、配置会话写入 profile.json。验收状态以服务端返回为准。",
+            "连接通讯软件暂不保存第三方平台账号密码，不保存部署授权 token，不把订单、权益、配置会话写入 profile.json。验收状态以服务端返回为准。",
             "info",
         ).pack(fill="x", pady=(4, 12))
 
         actions = tk.Frame(frame, bg=CARD_BG)
         actions.pack(fill="x")
         for col in range(3):
-            actions.grid_columnconfigure(col, weight=1, uniform="mobile_acceptance_actions")
-        self._grid_button(actions, "发送测试请求", self.start_mobile_control_test, "secondary", 0, 0)
-        self._grid_button(actions, "提交验收证据", self.start_mobile_control_acceptance, "primary", 0, 1)
-        self._grid_button(actions, "停用配置会话", self.start_mobile_control_disable, "secondary", 0, 2)
+            actions.grid_columnconfigure(col, weight=1, uniform="communication_software_link_acceptance_actions")
+        self._grid_button(actions, "发送测试请求", self.start_communication_software_link_test, "secondary", 0, 0)
+        self._grid_button(actions, "提交验收证据", self.start_communication_software_link_acceptance, "primary", 0, 1)
+        self._grid_button(actions, "停用配置会话", self.start_communication_software_link_disable, "secondary", 0, 2)
 
     def has_valid_key(self) -> bool:
         return self.saved_key_ok and self.saved_key_signature == self.current_key_signature()
@@ -7986,12 +8197,12 @@ class InstallerApp:
                 else "未解锁：请先完成前置检查并执行安装。"
             ),
             10: (
-                "可配置：手机控制Agent是独立增值服务，可绑定本次、历史或已有本机 Agent；订单、通道和价格以服务端返回为准。"
+                "可配置：连接通讯软件是独立增值服务，可绑定本次、历史或已有本机 Agent；订单、通道和价格以服务端返回为准。"
                 if self.can_access_step(10)
                 else "未解锁：请先登录胖虎AI账号。"
             ),
             11: (
-                "待验收：必须提交入站消息、Agent 调用、出站回复和证据 URL，服务端确认后才算手机控制Agent交付。"
+                "待验收：必须提交入站消息、Agent 调用、出站回复和证据 URL，服务端确认后才算连接通讯软件交付。"
                 if self.can_access_step(11)
                 else "未解锁：请先登录胖虎AI账号。"
             ),
@@ -8077,7 +8288,7 @@ class InstallerApp:
         self.refresh_agent_commercial_states()
         self.refresh_recommended_agent_product()
         self.refresh_buyer_purchase_status()
-        self.refresh_mobile_control_panel()
+        self.refresh_communication_software_link_panel()
         self.refresh_topbar()
         self.refresh_commercial_info_panel()
         self.refresh_agent_matrix_panel()
@@ -9071,7 +9282,11 @@ class InstallerApp:
         self.commercial_capabilities = manifest_commercial_capabilities(manifest)
         self.commercial_products = manifest_commercial_products(manifest)
         self.commercial_entitlements = manifest_commercial_entitlements(manifest)
+        center = manifest.get("agent_center") if isinstance(manifest, dict) else None
+        if isinstance(center, dict):
+            self.agent_center_live_data = parse_agent_center_snapshot_data(center)
         self.run_on_ui(self.refresh_steps)
+        self.run_on_ui(self.sync_webview_state)
 
     def open_workspace(self) -> None:
         path = workspace_root()
@@ -9147,7 +9362,7 @@ def self_test() -> None:
         api_contract,
         "ent",
         "buyer",
-        "operator",
+        "buyer",
         "codex",
         "direct_api",
         "device",
@@ -9398,13 +9613,17 @@ def main() -> int:
     enable_windows_dpi_awareness()
 
     use_tkinter = "--tkinter" in sys.argv
+    bundled_webview_shell = ui_path("index.html")
     webview_available = False
-    if not use_tkinter:
+    if not use_tkinter and bundled_webview_shell.exists():
         try:
             import webview
             webview_available = True
         except ImportError:
             pass
+    elif not use_tkinter:
+        print("旧 WebView UI 已移除，当前以 Tkinter 后端壳启动；新前端后续单独接入。")
+        use_tkinter = True
 
     if webview_available:
         try:
@@ -9413,13 +9632,9 @@ def main() -> int:
 
             app = InstallerApp(root, webview_mode=True)
 
-            html_file = ui_path("index.html")
-            if not html_file.exists():
-                raise FileNotFoundError(f"index.html not found at {html_file}")
-
             window = webview.create_window(
                 title=APP_NAME,
-                url=str(html_file.absolute()),
+                url=str(bundled_webview_shell.absolute()),
                 js_api=WebviewApi(app),
                 width=1400,
                 height=900,

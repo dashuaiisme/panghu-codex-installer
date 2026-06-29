@@ -36,6 +36,21 @@ def make_cookie(name: str, value: str, rest: dict | None = None) -> http.cookiej
 
 
 class InstallerBackendTests(unittest.TestCase):
+    def test_register_url_preserves_agent_invite_for_new_account_registration(self) -> None:
+        self.assertEqual(pci.build_register_url(""), pci.REGISTER_URL)
+        self.assertEqual(
+            pci.build_register_url("INVITE-ABC"),
+            "https://aitokenapi.cc/register?invite=INVITE-ABC",
+        )
+        self.assertEqual(
+            pci.build_register_url("https://aitokenapi.cc/register?invite=agent%201"),
+            "https://aitokenapi.cc/register?invite=agent%201",
+        )
+        self.assertEqual(
+            pci.build_register_url("https://aitokenapi.cc/invite/agent-l1"),
+            "https://aitokenapi.cc/register?invite=agent-l1",
+        )
+
     def test_login_account_store_keeps_email_flags_and_encrypted_password_outside_profile(self) -> None:
         original_account_path = pci.login_account_store_path
         original_protect = pci.protect_local_secret
@@ -536,6 +551,148 @@ class InstallerBackendTests(unittest.TestCase):
 
         self.assertEqual(state["apiKeyValue"], "")
         self.assertNotIn("sk-live-secret-token", json.dumps(state, ensure_ascii=False))
+
+    def test_webview_state_filters_agent_center_internal_summary_fields(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        app = pci.InstallerApp.__new__(pci.InstallerApp)
+        app.logged_in_user = {"id": "buyer-1"}
+        app.deployer_auth = {"token": "deploy-secret"}
+        app.api_key = FakeVar("")
+        app.skip_test = FakeVar(False)
+        app.saved_key_ok = False
+        app.environment_checked = False
+        app.environment_ok = False
+        app.worker_running = False
+        app.step = FakeVar(1)
+        app.active_subnav = FakeVar("agent_home")
+        app.active_module = FakeVar("courses")
+        app.login_username = FakeVar("buyer@example.com")
+        app.agent_enabled = {agent.id: FakeVar(False) for agent in pci.AGENTS}
+        app.agent_mode = {agent.id: FakeVar("cli") for agent in pci.AGENTS}
+        app.webview_logs = pci.empty_flow_logs()
+        app.commercial_entitlements = []
+        app.buyer_purchase_statuses = {}
+        app.communication_software_link_offering_data = {}
+        app.communication_software_link_order_statuses = {}
+        app.communication_software_link_service_product_id = FakeVar("")
+        app.communication_software_link_order_id = FakeVar("")
+        app.communication_software_link_session_id = FakeVar("")
+        app.communication_software_link_agent_id = FakeVar("")
+        app.communication_software_link_channel = FakeVar("")
+        app.communication_software_link_agent_source = FakeVar("")
+        app.communication_software_link_gateway_mode = FakeVar("")
+        app.communication_software_link_source_event_id = FakeVar("")
+        app.communication_software_link_inbound_message_id = FakeVar("")
+        app.communication_software_link_outbound_message_id = FakeVar("")
+        app.communication_software_link_response_digest = FakeVar("")
+        app.communication_software_link_evidence_url = FakeVar("")
+        app.agent_center_live_data = {
+            "enabled": True,
+            "status": "active",
+            "upgrade_label": "申请升级",
+            "invite_url": "https://aitokenapi.cc/invite/abc",
+            "join_page_url": "https://aitokenapi.cc/agent/join",
+            "backend_url": "https://aitokenapi.cc/agent/center",
+            "rules_url": "https://aitokenapi.cc/agent/rules",
+            "settlement_status": "available",
+            "last_synced_at": "2026-06-29T10:00:00+08:00",
+            "summary": {
+                "downstream_count": 1,
+                "token_commission_cents": 2,
+                "activation_commission_cents": 3,
+                "agent_install_commission_cents": 4,
+                "available_settlement_cents": 5,
+                "pending_settlement_cents": 6,
+                "frozen_cents": 7,
+                "commission_ratio": "50%",
+                "admin_note": "internal",
+            },
+            "benefits": ["可绑定买家"],
+            "boundaries": ["收益以后台结算为准"],
+        }
+        app._commercial_metric_values = lambda: {"remaining": "以服务端为准", "valid_until": "以服务端为准", "device_limit": "以服务端为准"}
+        app.selected_agents = lambda: []
+        app.can_access_step = lambda _idx: False
+
+        state = pci.WebviewApi(app).get_initial_state()
+
+        self.assertEqual(state["agentCenter"]["backend_url"], "https://aitokenapi.cc/agent/center")
+        self.assertEqual(state["agentCenter"]["benefits"], ["可绑定买家"])
+        summary = state["agentCenter"]["summary"]
+        self.assertEqual(summary["downstream_count"], 1)
+        self.assertNotIn("commission_ratio", summary)
+        self.assertNotIn("admin_note", summary)
+
+    def test_communication_software_link_state_keeps_real_service_boundary_visible(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        app = pci.InstallerApp.__new__(pci.InstallerApp)
+        app.communication_software_link_order_id = FakeVar("svc-ord-1")
+        app.communication_software_link_session_id = FakeVar("csl-1")
+        app.communication_software_link_source_event_id = FakeVar("evt-1")
+        app.communication_software_link_inbound_message_id = FakeVar("in-msg-1")
+        app.communication_software_link_outbound_message_id = FakeVar("out-msg-1")
+        app.communication_software_link_response_digest = FakeVar("sha256:reply")
+        app.communication_software_link_evidence_url = FakeVar("https://aitokenapi.cc/evidence/evt-1")
+        app.communication_software_link_order_statuses = {
+            "svc-ord-1": {
+                "order_status": "delivered",
+                "communication_software_link_status": "acceptance_submitted",
+            }
+        }
+
+        state = app.current_communication_software_link_state()
+
+        self.assertEqual(state["order"]["order_status"], "delivered")
+        self.assertEqual(state["realServiceStatus"], "server_required")
+        self.assertFalse(state["clientMayClaimDeliveryComplete"])
+        self.assertIn("服务端真实验收", state["deliveryBoundary"])
+
+    def test_communication_software_link_web_state_carries_real_service_boundary(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        app = pci.InstallerApp.__new__(pci.InstallerApp)
+        app.communication_software_link_offering_data = {"product_id": "svc-communication-software-link"}
+        app.communication_software_link_service_product_id = FakeVar("svc-communication-software-link")
+        app.communication_software_link_order_id = FakeVar("svc-ord-1")
+        app.communication_software_link_session_id = FakeVar("csl-1")
+        app.communication_software_link_agent_id = FakeVar("codex")
+        app.communication_software_link_channel = FakeVar("feishu")
+        app.communication_software_link_agent_source = FakeVar("existing_local_agent")
+        app.communication_software_link_gateway_mode = FakeVar("official_bot")
+        app.communication_software_link_source_event_id = FakeVar("evt-1")
+        app.communication_software_link_inbound_message_id = FakeVar("in-msg-1")
+        app.communication_software_link_outbound_message_id = FakeVar("out-msg-1")
+        app.communication_software_link_response_digest = FakeVar("sha256:reply")
+        app.communication_software_link_evidence_url = FakeVar("https://aitokenapi.cc/evidence/evt-1")
+        app.communication_software_link_order_statuses = {
+            "svc-ord-1": {
+                "order_status": "delivered",
+                "communication_software_link_status": "acceptance_submitted",
+            }
+        }
+
+        web_state = app.current_communication_software_link_web_state()
+
+        self.assertEqual(web_state["state"]["realServiceStatus"], "server_required")
+        self.assertFalse(web_state["state"]["clientMayClaimDeliveryComplete"])
+        self.assertIn("服务端真实验收", web_state["state"]["deliveryBoundary"])
 
     def test_webview_cookie_bridge_uses_current_panghu_login_cookie(self) -> None:
         jar = http.cookiejar.CookieJar()

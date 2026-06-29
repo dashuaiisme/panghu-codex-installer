@@ -367,7 +367,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             build_commercial_config_session_reserve_preview(
                 entitlement_id="",
                 buyer_user_id="buyer-1",
-                operator_user_id="operator-1",
+                operator_user_id="buyer-1",
                 agent_id="codex",
                 mode_key="direct_api",
                 diagnostic_code="PH-CFG-1",
@@ -376,7 +376,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         request = build_commercial_config_session_reserve_preview(
             entitlement_id="ent-real",
             buyer_user_id="buyer-1",
-            operator_user_id="operator-1",
+            operator_user_id="buyer-1",
             agent_id="codex",
             mode_key="direct_api",
             diagnostic_code="PH-CFG-1",
@@ -389,7 +389,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         first = build_commercial_config_session_reserve_preview(
             entitlement_id="ent-real",
             buyer_user_id="buyer-1",
-            operator_user_id="operator-1",
+            operator_user_id="buyer-1",
             agent_id="codex",
             mode_key="direct_api",
             diagnostic_code="PH-CFG-1",
@@ -397,7 +397,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         second = build_commercial_config_session_reserve_preview(
             entitlement_id="ent-real",
             buyer_user_id="buyer-1",
-            operator_user_id="operator-1",
+            operator_user_id="buyer-1",
             agent_id="codex",
             mode_key="direct_api",
             diagnostic_code="PH-CFG-1",
@@ -405,7 +405,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         different_attempt = build_commercial_config_session_reserve_preview(
             entitlement_id="ent-real",
             buyer_user_id="buyer-1",
-            operator_user_id="operator-1",
+            operator_user_id="buyer-1",
             agent_id="codex",
             mode_key="direct_api",
             diagnostic_code="PH-CFG-2",
@@ -435,7 +435,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         session_id, summary = execute_config_session_reserve(
             entitlement_id="ent-real",
             buyer_user_id="buyer-1",
-            operator_user_id="operator-1",
+            operator_user_id="buyer-1",
             agent_id="codex",
             mode_key="direct_api",
             diagnostic_code="PH-CFG-1",
@@ -465,24 +465,70 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
 
         cases = [
+            ("api_key_owner_verify", {"api_key": "sk-test"}),
             ("order_create", {"product_id": "prod-1"}),
             ("payment_poll", {"order_id": "ord-1"}),
             ("entitlement_query", {}),
-        ]
-
-        for action, kwargs in cases:
-            with self.subTest(action=action):
-                request = commercial_api_request_with_auth(
-                    action,
-                    contexts,
-                    deployer_auth={"token": "buyer-token"},
-                    **kwargs,
-                )
-
-        cases = [
-            ("order_create", {"product_id": "prod-1"}),
-            ("payment_poll", {"order_id": "ord-1"}),
-            ("entitlement_query", {}),
+            ("agent_center", {}),
+            ("agent_downstreams", {"cursor": "page-1"}),
+            ("agent_commissions", {"event_type": "tool_order_paid"}),
+            ("agent_public_offering", {}),
+            ("agent_apply", {"product_id": "agent-l1-free"}),
+            ("referral_bind", {"invite_code": "https://aitokenapi.cc/register?invite=INVITE1"}),
+            ("agent_settlement", {"requested_cents": 1000}),
+            ("communication_software_link_offering", {}),
+            (
+                "communication_software_link_order_create",
+                {
+                    "service_product_id": "svc-communication-software-link",
+                    "agent_id": "hermes",
+                    "channel": "feishu",
+                    "agent_source": "existing_local_agent",
+                },
+            ),
+            ("communication_software_link_order_get", {"order_id": "svc-ord-1"}),
+            (
+                "communication_software_link_session_create",
+                {
+                    "order_id": "svc-ord-1",
+                    "agent_id": "hermes",
+                    "channel": "feishu",
+                    "platform_account_id": "bot-1",
+                    "platform_chat_id": "chat-1",
+                    "gateway_mode": "official_bot",
+                    "agent_source": "existing_local_agent",
+                },
+            ),
+            ("communication_software_link_session_get", {"session_id": "csl-1"}),
+            ("communication_software_link_session_test", {"session_id": "csl-1", "test_prompt": "ping"}),
+            (
+                "communication_software_link_session_acceptance",
+                {
+                    "session_id": "csl-1",
+                    "source_event_id": "evt-1",
+                    "inbound_platform_message_id": "in-msg-1",
+                    "outbound_platform_message_id": "out-msg-1",
+                    "test_prompt": "ping",
+                    "agent_response_digest": "sha256:reply",
+                    "evidence_url": "https://aitokenapi.cc/evidence/evt-1",
+                },
+            ),
+            ("communication_software_link_session_disable", {"session_id": "csl-1"}),
+            (
+                "complete",
+                {
+                    "config_session_id": "cfg-1",
+                    "diagnostic_code": "PH-CFG-1",
+                },
+            ),
+            (
+                "fail",
+                {
+                    "config_session_id": "cfg-1",
+                    "diagnostic_code": "PH-CFG-1",
+                    "failure_reason": "验收失败",
+                },
+            ),
         ]
 
         for action, kwargs in cases:
@@ -499,6 +545,10 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                     self.assertEqual(request.body["operator_user_id"], "buyer-1")
                 if "buyer_user_id" in request.body:
                     self.assertEqual(request.body["buyer_user_id"], "buyer-1")
+                if action in {"agent_apply", "referral_bind", "agent_settlement"}:
+                    self.assertIn("Idempotency-Key", request.headers)
+                if action == "referral_bind":
+                    self.assertEqual(request.body["invite_code"], "INVITE1")
 
     def test_commercial_api_request_rejects_legacy_buyer_bind_action(self) -> None:
         contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
@@ -510,6 +560,30 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 deployer_auth={"token": "buyer-token"},
                 invite_code="INVITE1",
             )
+
+    def test_desktop_commercial_dispatcher_does_not_expose_admin_agent_actions(self) -> None:
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
+
+        forbidden_actions = [
+            "admin_agent_product_update",
+            "admin_agent_policy_update",
+            "admin_agent_marketing_update",
+            "admin_agent_application_review",
+            "admin_agent_settlement_action",
+            "admin_agent_ledger_action",
+            "admin_communication_software_link_product_update",
+            "admin_communication_software_link_channel_policy_update",
+            "admin_communication_software_link_session_action",
+            "admin_communication_software_link_order_action",
+        ]
+
+        for action in forbidden_actions:
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, "Unknown commercial api action"):
+                commercial_api_request_with_auth(
+                    action,
+                    contexts,
+                    deployer_auth={"token": "buyer-token"},
+                )
 
     def test_legacy_agent_assist_context_factory_is_not_available(self) -> None:
         self.assertFalse(hasattr(installer_module, "create_agent_assist_contexts"))
@@ -1003,7 +1077,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
 
         self.assertEqual(app.buyer_product_id.value, "prod-codex")
 
-    def test_mobile_control_get_order_caches_payment_state_for_session_guard(self) -> None:
+    def test_communication_software_link_get_order_caches_payment_state_for_session_guard(self) -> None:
         class FakeVar:
             def __init__(self, value="") -> None:
                 self.value = value
@@ -1028,8 +1102,8 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
         )
         app.deployer_auth = {"token": "deploy-token"}
-        app.mobile_order_id = FakeVar("svc-ord-1")
-        app.mobile_control_order_statuses = {}
+        app.communication_software_link_order_id = FakeVar("svc-ord-1")
+        app.communication_software_link_order_statuses = {}
         app.set_busy = lambda _busy: None
         app.log_from_worker = lambda _message: None
         app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
@@ -1047,17 +1121,54 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             )
             installer_module.threading.Thread = ImmediateThread
 
-            app.start_mobile_control_get_order()
+            app.start_communication_software_link_get_order()
         finally:
             installer_module.commercial_api_request_with_auth = original_request
             installer_module.execute_commercial_api_with_trusted_certs = original_execute
             installer_module.threading.Thread = original_thread
 
-        self.assertTrue(app.mobile_control_order_statuses["svc-ord-1"]["session_allowed"])
-        self.assertEqual(app.mobile_control_order_statuses["svc-ord-1"]["payment_id"], "pay-1")
-        self.assertEqual(app.last_status, "状态：手机控制Agent订单状态已刷新")
+        self.assertTrue(app.communication_software_link_order_statuses["svc-ord-1"]["session_allowed"])
+        self.assertEqual(app.communication_software_link_order_statuses["svc-ord-1"]["payment_id"], "pay-1")
+        self.assertEqual(app.last_status, "状态：连接通讯软件订单状态已刷新")
 
-    def test_mobile_control_create_session_blocks_until_order_payment_or_manual_review_confirmed(self) -> None:
+    def test_communication_software_link_create_order_surfaces_server_confirmation_boundary(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value) -> None:
+                self.value = value
+
+        app = InstallerApp.__new__(InstallerApp)
+        app.communication_software_link_order_id = FakeVar("")
+        app.communication_software_link_order_statuses = {}
+        app.log_from_worker = lambda _message: None
+        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
+        app.run_on_ui = lambda callback: callback()
+        app.show_error_from_worker = lambda _title, _message: None
+        app.sync_webview_state = lambda: None
+        app.set_busy = lambda _busy: None
+        infos = []
+        app.show_info_from_worker = lambda title, message: infos.append((title, message))
+
+        original_execute = installer_module.execute_commercial_api_with_trusted_certs
+        try:
+            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
+                {"order_id": "svc-ord-1", "status": "created", "payment_url": "https://aitokenapi.cc/pay/svc-ord-1"},
+                "订单已创建",
+            )
+            app._communication_software_link_create_order_worker(object())
+        finally:
+            installer_module.execute_commercial_api_with_trusted_certs = original_execute
+
+        self.assertEqual(app.communication_software_link_order_id.get(), "svc-ord-1")
+        self.assertEqual(app.last_status, "状态：连接通讯软件订单创建请求已受理，支付/人工确认状态以服务端返回为准")
+        self.assertEqual(infos[0][0], "连接通讯软件订单创建请求已受理")
+
+    def test_communication_software_link_create_session_blocks_until_order_payment_or_manual_review_confirmed(self) -> None:
         class FakeVar:
             def __init__(self, value="") -> None:
                 self.value = value
@@ -1071,21 +1182,21 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
         )
         app.deployer_auth = {"token": "deploy-token"}
-        app.mobile_order_id = FakeVar("svc-ord-1")
-        app.mobile_control_order_statuses = {"svc-ord-1": {"session_allowed": False}}
+        app.communication_software_link_order_id = FakeVar("svc-ord-1")
+        app.communication_software_link_order_statuses = {"svc-ord-1": {"session_allowed": False}}
         warnings = []
 
         original_warning = installer_module.messagebox.showwarning
         try:
             installer_module.messagebox.showwarning = lambda title, message: warnings.append((title, message))
-            app.start_mobile_control_create_session()
+            app.start_communication_software_link_create_session()
         finally:
             installer_module.messagebox.showwarning = original_warning
 
         self.assertEqual(warnings[0][0], "订单未确认")
         self.assertIn("已支付", warnings[0][1])
 
-    def test_mobile_control_create_session_allows_paid_order_status(self) -> None:
+    def test_communication_software_link_create_session_allows_paid_order_status(self) -> None:
         class FakeVar:
             def __init__(self, value="") -> None:
                 self.value = value
@@ -1110,15 +1221,15 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
         )
         app.deployer_auth = {"token": "deploy-token"}
-        app.mobile_order_id = FakeVar("svc-ord-1")
-        app.mobile_session_id = FakeVar("")
-        app.mobile_agent_id = FakeVar("hermes")
-        app.mobile_channel = FakeVar("feishu")
-        app.mobile_agent_source = FakeVar("existing_local_agent")
-        app.mobile_platform_account_id = FakeVar("bot-account-1")
-        app.mobile_platform_chat_id = FakeVar("chat-1")
-        app.mobile_gateway_mode = FakeVar("official_bot")
-        app.mobile_control_order_statuses = {"svc-ord-1": {"session_allowed": True}}
+        app.communication_software_link_order_id = FakeVar("svc-ord-1")
+        app.communication_software_link_session_id = FakeVar("")
+        app.communication_software_link_agent_id = FakeVar("hermes")
+        app.communication_software_link_channel = FakeVar("feishu")
+        app.communication_software_link_agent_source = FakeVar("existing_local_agent")
+        app.communication_software_link_platform_account_id = FakeVar("bot-account-1")
+        app.communication_software_link_platform_chat_id = FakeVar("chat-1")
+        app.communication_software_link_gateway_mode = FakeVar("official_bot")
+        app.communication_software_link_order_statuses = {"svc-ord-1": {"session_allowed": True}}
         app.set_busy = lambda _busy: None
         app.log_from_worker = lambda _message: None
         app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
@@ -1138,21 +1249,93 @@ class PanghuCommercialManifestTests(unittest.TestCase):
 
             installer_module.commercial_api_request_with_auth = fake_request
             installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
-                {"session_id": "mca-1"},
+                {"session_id": "csl-1"},
                 "会话已创建",
             )
             installer_module.threading.Thread = ImmediateThread
 
-            app.start_mobile_control_create_session()
+            app.start_communication_software_link_create_session()
         finally:
             installer_module.commercial_api_request_with_auth = original_request
             installer_module.execute_commercial_api_with_trusted_certs = original_execute
             installer_module.threading.Thread = original_thread
 
-        self.assertEqual(captured["action"], "mobile_control_session_create")
+        self.assertEqual(captured["action"], "communication_software_link_session_create")
         self.assertEqual(captured["kwargs"]["order_id"], "svc-ord-1")
-        self.assertEqual(app.mobile_session_id.get(), "mca-1")
-        self.assertEqual(app.last_status, "状态：手机控制Agent配置会话已创建")
+        self.assertEqual(app.communication_software_link_session_id.get(), "csl-1")
+        self.assertEqual(app.last_status, "状态：连接通讯软件配置会话创建请求已受理，最终会话状态以服务端返回为准")
+
+    def test_communication_software_link_workers_backfill_server_state_fields(self) -> None:
+        class FakeVar:
+            def __init__(self, value="") -> None:
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value) -> None:
+                self.value = value
+
+        app = InstallerApp.__new__(InstallerApp)
+        app.communication_software_link_order_id = FakeVar("")
+        app.communication_software_link_session_id = FakeVar("")
+        app.communication_software_link_source_event_id = FakeVar("")
+        app.communication_software_link_inbound_message_id = FakeVar("")
+        app.communication_software_link_outbound_message_id = FakeVar("")
+        app.communication_software_link_response_digest = FakeVar("")
+        app.communication_software_link_evidence_url = FakeVar("")
+        app.communication_software_link_order_statuses = {"svc-ord-1": {"session_allowed": True}}
+        app.log_from_worker = lambda _message: None
+        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
+        app.run_on_ui = lambda callback: callback()
+        app.show_error_from_worker = lambda _title, _message: None
+        app.refresh_steps = lambda: None
+        app.set_busy = lambda _busy: None
+
+        responses = iter(
+            [
+                (
+                    {
+                        "service_order_id": "svc-ord-1",
+                        "communication_software_link_session_id": "csl-1",
+                        "session_status": "ready",
+                    },
+                    "会话已创建",
+                ),
+                (
+                    {
+                        "order_id": "svc-ord-1",
+                        "session_id": "csl-1",
+                        "status": "acceptance_submitted",
+                        "source_event_id": "evt-1",
+                        "inbound_platform_message_id": "in-msg-1",
+                        "outbound_platform_message_id": "out-msg-1",
+                        "agent_response_digest": "sha256:reply",
+                        "evidence_url": "https://aitokenapi.cc/evidence/evt-1",
+                    },
+                    "验收证据已提交",
+                ),
+            ]
+        )
+
+        original_execute = installer_module.execute_commercial_api_with_trusted_certs
+        try:
+            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: next(responses)
+            app._communication_software_link_create_session_worker(object())
+            app._communication_software_link_generic_worker("验收证据已提交", object())
+        finally:
+            installer_module.execute_commercial_api_with_trusted_certs = original_execute
+
+        self.assertEqual(app.communication_software_link_order_id.get(), "svc-ord-1")
+        self.assertEqual(app.communication_software_link_session_id.get(), "csl-1")
+        self.assertEqual(app.communication_software_link_source_event_id.get(), "evt-1")
+        self.assertEqual(app.communication_software_link_inbound_message_id.get(), "in-msg-1")
+        self.assertEqual(app.communication_software_link_outbound_message_id.get(), "out-msg-1")
+        self.assertEqual(app.communication_software_link_response_digest.get(), "sha256:reply")
+        self.assertEqual(app.communication_software_link_evidence_url.get(), "https://aitokenapi.cc/evidence/evt-1")
+        self.assertEqual(app.communication_software_link_order_statuses["svc-ord-1"]["session_id"], "csl-1")
+        self.assertEqual(app.communication_software_link_order_statuses["svc-ord-1"]["communication_software_link_status"], "acceptance_submitted")
+        self.assertEqual(app.last_status, "状态：连接通讯软件验收证据提交请求已受理，等待服务端真实验收")
 
     def test_buyer_purchase_status_shows_key_creation_gap_and_balance_hint_when_no_products(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
@@ -1225,13 +1408,15 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("不能算完成内嵌网页闭环", source)
 
     def test_ui_does_not_hydrate_backend_api_key_into_dom_value(self) -> None:
-        source = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
+        ui_shell = ROOT / "src" / "ui" / "index.html"
+        py_source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
 
-        self.assertNotIn('apiKeyValue = state.apiKeyValue || "";', source)
-        self.assertNotIn("keyInput.value = apiKeyValue", source)
-        self.assertNotIn('value="${apiKeyValue}"', source)
-        self.assertNotIn('apiKeyValue = params.get("key") || "";', source)
-        self.assertNotIn('params.get("key")', source)
+        self.assertFalse(ui_shell.exists())
+        self.assertIn('"apiKeyValue": ""', py_source)
+        self.assertIn('"apiKeyPresent": bool(self.app.api_key.get().strip())', py_source)
+        self.assertIn('"apiKeyMasked": mask_key(self.app.api_key.get().strip())', py_source)
+        self.assertNotIn('"apiKeyValue": self.app.api_key.get()', py_source)
+        self.assertNotIn('"apiKeyValue": self.api_key.get()', py_source)
 
     def test_login_entry_is_unified_and_not_buyer_agent_mode_split(self) -> None:
         source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
@@ -1391,6 +1576,43 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertNotIn("height=548", source)
         self.assertIn("def enable_windows_dpi_awareness()", source)
         self.assertIn("canvas.update_idletasks()", source)
+
+    def test_customer_web_modules_keep_delivery_right_rail_visible(self) -> None:
+        ui_shell = ROOT / "src" / "ui" / "index.html"
+        source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+
+        self.assertFalse(ui_shell.exists())
+        self.assertIn("MODULE_SITE", source)
+        self.assertIn("MODULE_VALUE_ADDED", source)
+        self.assertIn("MODULE_COURSES", source)
+        self.assertIn("def _build_non_agent_module_frame", source)
+        self.assertIn("MODULE_PAGE_META", source)
+        self.assertIn("MODULE_ACTION_CARDS", source)
+        self.assertIn("网站服务端", source)
+        self.assertIn("服务端商品", source)
+        self.assertIn("agent_center", source)
+
+    def test_webview_backend_bridge_contracts_are_not_dead_buttons(self) -> None:
+        py_source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+
+        self.assertFalse((ROOT / "src" / "ui" / "index.html").exists())
+        self.assertIn("def start_official_chatgpt_config(self):", py_source)
+        self.assertNotIn("def start_official_mode_config(self):", py_source)
+        self.assertIn("def refresh_agent_center(self):", py_source)
+        self.assertIn("def refresh_agent_center_detail(self):", py_source)
+        self.assertIn("def refresh_agent_center(self):", py_source)
+        self.assertIn("def refresh_agent_center_detail(self):", py_source)
+        self.assertIn("def current_agent_center_state(self) -> dict:", py_source)
+        self.assertIn('"agentCenter": agent_center_state', py_source)
+        self.assertIn('"buyerPurchase": self.app.current_buyer_purchase_state()', py_source)
+        self.assertIn('"buyerPurchase": self.current_buyer_purchase_state()', py_source)
+        self.assertIn('"communicationSoftwareLink": self.app.current_communication_software_link_web_state()', py_source)
+        self.assertIn('"communicationSoftwareLink": self.current_communication_software_link_web_state()', py_source)
+        self.assertIn('"state": self.current_communication_software_link_state()', py_source)
+        self.assertIn("parse_agent_center_snapshot_data", py_source)
+        self.assertIn("self.agent_center_live_data = parse_agent_center_snapshot_data(center)", py_source)
+        self.assertIn('return {"success": True, "accepted": True, "message": message}', py_source)
+        self.assertIn("def current_communication_software_link_web_state(self) -> dict:", py_source)
 
     def test_online_update_start_failure_message_is_sanitized(self) -> None:
         app = InstallerApp.__new__(InstallerApp)

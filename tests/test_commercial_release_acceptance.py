@@ -35,7 +35,7 @@ def run_acceptance_script(*args: str, check: bool = True) -> subprocess.Complete
 
 class CommercialReleaseAcceptanceTests(unittest.TestCase):
     def test_release_artifact_names_use_single_unicode_safe_app_name(self) -> None:
-        app_name = "胖虎AI"
+        app_name = "胖虎AI客户端"
 
         self.assertEqual(commercial_release_acceptance.customer_app_name(), app_name)
         self.assertEqual(commercial_release_acceptance.WINDOWS_RELEASE_ARTIFACT, f"{app_name}-Windows.zip")
@@ -55,9 +55,9 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
     def test_release_acceptance_script_does_not_scatter_raw_artifact_name_literals(self) -> None:
         script_text = (ROOT / "scripts" / "commercial_release_acceptance.py").read_text(encoding="utf-8")
 
-        self.assertNotIn("胖虎AI-Windows.zip", script_text)
-        self.assertNotIn("胖虎AI-Mac-AppleSilicon.zip", script_text)
-        self.assertNotIn("胖虎AI-Mac-Intel.zip", script_text)
+        self.assertNotIn("胖虎AI客户端-Windows.zip", script_text)
+        self.assertNotIn("胖虎AI客户端-Mac-AppleSilicon.zip", script_text)
+        self.assertNotIn("胖虎AI客户端-Mac-Intel.zip", script_text)
 
     def test_release_acceptance_script_reports_local_artifacts_and_offline_flow(self) -> None:
         result = run_acceptance_script("--json")
@@ -72,13 +72,13 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         self.assertEqual(report["commercial_flow"]["device_policy"]["remaining_uses_after_device_block"], 1)
 
         artifacts = report["release_artifacts"]
-        self.assertIn("胖虎AI-Windows.zip", artifacts)
-        self.assertIn("胖虎AI-Mac-AppleSilicon.zip", artifacts)
-        self.assertIn("胖虎AI-Mac-Intel.zip", artifacts)
-        self.assertRegex(artifacts["胖虎AI-Windows.zip"]["sha256"], r"^[A-Fa-f0-9]{64}$")
-        self.assertIn(artifacts["胖虎AI-Windows.zip"]["freshness"], {"fresh", "stale"})
-        self.assertIn(artifacts["胖虎AI-Mac-AppleSilicon.zip"]["freshness"], {"fresh", "stale"})
-        self.assertIn(artifacts["胖虎AI-Mac-Intel.zip"]["freshness"], {"fresh", "stale"})
+        self.assertIn("胖虎AI客户端-Windows.zip", artifacts)
+        self.assertIn("胖虎AI客户端-Mac-AppleSilicon.zip", artifacts)
+        self.assertIn("胖虎AI客户端-Mac-Intel.zip", artifacts)
+        self.assertRegex(artifacts["胖虎AI客户端-Windows.zip"]["sha256"], r"^[A-Fa-f0-9]{64}$")
+        self.assertIn(artifacts["胖虎AI客户端-Windows.zip"]["freshness"], {"fresh", "stale"})
+        self.assertIn(artifacts["胖虎AI客户端-Mac-AppleSilicon.zip"]["freshness"], {"fresh", "stale"})
+        self.assertIn(artifacts["胖虎AI客户端-Mac-Intel.zip"]["freshness"], {"fresh", "stale"})
 
         generated_key = report["generated_public_key_module"]
         self.assertFalse(generated_key["has_bom"])
@@ -139,6 +139,14 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         self.assertFalse(report["hard_boundaries"]["non_codex_full_config_delivery_found"])
         self.assertEqual(report["hard_boundaries"]["non_codex_full_config_delivery_hits"], [])
 
+    def test_release_acceptance_blocks_communication_link_client_claiming_real_delivery(self) -> None:
+        result = run_acceptance_script("--json")
+        report = json.loads(result.stdout)
+
+        self.assertIn("communication_link_real_delivery_claim_found", report["hard_boundaries"])
+        self.assertFalse(report["hard_boundaries"]["communication_link_real_delivery_claim_found"])
+        self.assertEqual(report["hard_boundaries"]["communication_link_real_delivery_claim_hits"], [])
+
     def test_generated_public_key_module_is_not_release_freshness_source(self) -> None:
         baseline_paths = {path.relative_to(ROOT).as_posix() for path in commercial_release_acceptance._source_baseline_paths()}
 
@@ -148,13 +156,19 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         result = run_acceptance_script("--json", "--artifact-scope", "windows")
         report = json.loads(result.stdout)
 
-        self.assertEqual(list(report["release_artifacts"].keys()), ["胖虎AI-Windows.zip"])
+        self.assertEqual(list(report["release_artifacts"].keys()), ["胖虎AI客户端-Windows.zip"])
+
+    def test_previous_release_artifact_names_remain_legacy_aliases(self) -> None:
+        aliases = commercial_release_acceptance.release_artifact_aliases("胖虎AI客户端-Windows.zip")
+
+        self.assertIn("胖虎AI-Windows.zip", aliases)
+        self.assertIn("胖虎AI多Agent一键部署工具-Windows.zip", aliases)
 
     def test_packaged_zip_content_scan_reports_internal_project_files(self) -> None:
         with TemporaryDirectory() as temp_dir:
             zip_path = Path(temp_dir) / "客户包.zip"
             with ZipFile(zip_path, "w") as archive:
-                archive.writestr("胖虎AI.exe", b"binary")
+                archive.writestr("胖虎AI客户端.exe", b"binary")
                 archive.writestr("docs/TECHNICAL_MAINTENANCE_MANUAL.md", "internal manual")
                 archive.writestr("scripts/commercial_manifest_signer.py", "signer")
                 archive.writestr("tests/test_commercial_release_acceptance.py", "test")
@@ -179,9 +193,9 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         report = json.loads(result.stdout)
 
         self.assertIn("packaged_artifact_contents", report)
-        self.assertIn("胖虎AI-Windows.zip", report["packaged_artifact_contents"])
+        self.assertIn("胖虎AI客户端-Windows.zip", report["packaged_artifact_contents"])
         self.assertFalse(
-            report["packaged_artifact_contents"]["胖虎AI-Windows.zip"]["internal_files_found"]
+            report["packaged_artifact_contents"]["胖虎AI客户端-Windows.zip"]["internal_files_found"]
         )
 
     def test_release_acceptance_reports_temporary_files_left_in_release_dir(self) -> None:
@@ -201,7 +215,7 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             zip_path = Path(temp_dir) / "Windows.zip"
             with ZipFile(zip_path, "w") as archive:
-                archive.writestr("胖虎AI/胖虎AI.exe", b"fake")
+                archive.writestr("胖虎AI客户端/胖虎AI客户端.exe", b"fake")
 
             completed = subprocess.CompletedProcess(
                 args=[],
@@ -215,7 +229,7 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         command = run_mock.call_args_list[0].args[0]
         self.assertEqual(report["status"], "PASS")
         self.assertEqual(command[1], "--self-test")
-        self.assertTrue(str(command[0]).endswith("胖虎AI.exe"))
+        self.assertTrue(str(command[0]).endswith("胖虎AI客户端.exe"))
         self.assertNotIn(str(ROOT / "release"), str(command[0]))
         self.assertEqual(report["source_zip"], str(zip_path.relative_to(ROOT)) if zip_path.is_relative_to(ROOT) else str(zip_path))
 
@@ -247,7 +261,7 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             zip_path = Path(temp_dir) / "Windows.zip"
             with ZipFile(zip_path, "w") as archive:
-                archive.writestr("胖虎AI/胖虎AI.exe", b"fake")
+                archive.writestr("胖虎AI客户端/胖虎AI客户端.exe", b"fake")
 
             completed = subprocess.CompletedProcess(
                 args=[],
@@ -272,7 +286,7 @@ class CommercialReleaseAcceptanceTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             zip_path = Path(temp_dir) / "Windows.zip"
             with ZipFile(zip_path, "w") as archive:
-                archive.writestr("胖虎AI/胖虎AI.exe", b"fake")
+                archive.writestr("胖虎AI客户端/胖虎AI客户端.exe", b"fake")
 
             cleanup_completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             timeout = subprocess.TimeoutExpired(

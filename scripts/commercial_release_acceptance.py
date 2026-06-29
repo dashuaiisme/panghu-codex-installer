@@ -50,6 +50,14 @@ def legacy_release_dir_name() -> str:
     return str(LEGACY_RELEASE_DIR_NAME or "")
 
 
+def previous_release_dir_name() -> str:
+    try:
+        from panghu_codex_installer import PREVIOUS_RELEASE_DIR_NAME
+    except Exception:
+        return ""
+    return str(PREVIOUS_RELEASE_DIR_NAME or "")
+
+
 WINDOWS_RELEASE_ARTIFACT = f"{customer_app_name()}-Windows.zip"
 MAC_APPLE_SILICON_RELEASE_ARTIFACT = f"{customer_app_name()}-Mac-AppleSilicon.zip"
 MAC_INTEL_RELEASE_ARTIFACT = f"{customer_app_name()}-Mac-Intel.zip"
@@ -115,6 +123,14 @@ NON_CODEX_FULL_CONFIG_PATTERN = re.compile(
     r"(?P<allowed>full_config_allowed\s*[:=]\s*True|\"full_config_allowed\"\s*:\s*true)",
     re.IGNORECASE | re.DOTALL,
 )
+COMMUNICATION_LINK_REAL_DELIVERY_CLAIM_PATTERNS = [
+    re.compile(r"clientMayClaimDeliveryComplete[\"']?\s*[:=]\s*True\b"),
+    re.compile(r'"clientMayClaimDeliveryComplete"\s*:\s*true\b', re.IGNORECASE),
+    re.compile(r"client_may_claim_delivery_complete[\"']?\s*[:=]\s*True\b"),
+    re.compile(r'"client_may_claim_delivery_complete"\s*:\s*true\b', re.IGNORECASE),
+    re.compile(r"realServiceStatus[\"']?\s*[:=]\s*[\"'](?:completed|delivered|pass|passed)[\"']", re.IGNORECASE),
+    re.compile(r'"real_service_status"\s*:\s*"(?:completed|delivered|pass|passed)"', re.IGNORECASE),
+]
 
 PACKAGED_SELF_TEST_TIMEOUT_SECONDS = 30
 LOCAL_PACKAGED_SELF_TEST_OPT_IN_ENV = "PANGHU_ALLOW_LOCAL_PACKAGED_SELF_TEST"
@@ -209,6 +225,15 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
 
 def release_artifact_aliases(artifact_name: str) -> list[str]:
     aliases = [artifact_name]
+    previous_name = previous_release_dir_name()
+    if previous_name:
+        if artifact_name == WINDOWS_RELEASE_ARTIFACT:
+            aliases.append(f"{previous_name}-Windows.zip")
+        elif artifact_name == MAC_APPLE_SILICON_RELEASE_ARTIFACT:
+            aliases.append(f"{previous_name}-Mac-AppleSilicon.zip")
+            aliases.append(f"{previous_name}-Mac.zip")
+        elif artifact_name == MAC_INTEL_RELEASE_ARTIFACT:
+            aliases.append(f"{previous_name}-Mac-Intel.zip")
     legacy_name = legacy_release_dir_name()
     if not legacy_name:
         return aliases
@@ -349,6 +374,7 @@ def build_hard_boundary_report(deep_scan: bool = False) -> dict:
     packaged_app_commercial_literal_hits = []
     packaged_app_commercial_static_value_hits = []
     non_codex_full_config_delivery_hits = []
+    communication_link_real_delivery_claim_hits = []
     packaged_app_source_files_scanned = []
     for path in tracked_text_files:
         try:
@@ -378,6 +404,11 @@ def build_hard_boundary_report(deep_scan: bool = False) -> dict:
                         "pattern": "non_codex_full_config_allowed",
                     }
                 )
+            for pattern in COMMUNICATION_LINK_REAL_DELIVERY_CLAIM_PATTERNS:
+                if pattern.search(text):
+                    communication_link_real_delivery_claim_hits.append(
+                        {"file": relative, "pattern": pattern.pattern}
+                    )
 
     return {
         "scan_mode": "deep" if deep_scan else "light",
@@ -393,6 +424,8 @@ def build_hard_boundary_report(deep_scan: bool = False) -> dict:
         "packaged_app_source_files_scanned": sorted(set(packaged_app_source_files_scanned)),
         "non_codex_full_config_delivery_found": bool(non_codex_full_config_delivery_hits),
         "non_codex_full_config_delivery_hits": non_codex_full_config_delivery_hits,
+        "communication_link_real_delivery_claim_found": bool(communication_link_real_delivery_claim_hits),
+        "communication_link_real_delivery_claim_hits": communication_link_real_delivery_claim_hits,
     }
 
 
@@ -557,6 +590,8 @@ def build_report(include_exe_self_test: bool, artifact_scope: str = "all", deep_
         warnings.append("客户包主程序包含商业次数、有效期、设备数或上架状态样例，请移到测试或服务端清单。")
     if hard_boundaries["non_codex_full_config_delivery_found"]:
         warnings.append("客户包主程序疑似把未通过功能验收矩阵的 Agent 标为完整付费交付，请先完成配置写入、启动检测和最小对话验证。")
+    if hard_boundaries["communication_link_real_delivery_claim_found"]:
+        warnings.append("客户包主程序疑似允许连接通讯软件客户端声明真实交付完成；最终交付必须以服务端真实验收记录为准。")
     content_hits = [
         f"{name}: " + ", ".join(info["internal_file_hits"])
         for name, info in packaged_content_report.items()

@@ -243,7 +243,7 @@ class CommercialCoreTests(unittest.TestCase):
                 "entitlement_id": "ent-secret",
                 "config_session_id": "cfg-secret",
                 "service_order_id": "svc-secret",
-                "mobile_session_id": "mca-secret",
+                "communication_software_link_session_id": "csl-secret",
                 "deployment_token": "deploy-secret-token",
                 "third_party_password": "third-party-secret",
             },
@@ -258,7 +258,7 @@ class CommercialCoreTests(unittest.TestCase):
             "ent-secret",
             "cfg-secret",
             "svc-secret",
-            "mca-secret",
+            "csl-secret",
             "deploy-secret-token",
             "third-party-secret",
         ):

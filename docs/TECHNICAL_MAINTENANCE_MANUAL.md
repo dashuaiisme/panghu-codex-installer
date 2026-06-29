@@ -1,6 +1,6 @@
-# 胖虎AI技术维护手册
+# 胖虎AI客户端技术维护手册
 
-最后更新：2026-06-26
+最后更新：2026-06-29
 
 > 产品结构、界面规则、客户可见交付口径，以 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md` 为准。
 > 本手册负责技术维护、接口、构建、发布、脚本和限制说明。
@@ -8,9 +8,9 @@
 
 ## 1. 项目边界
 
-本项目是独立的客户侧桌面工具，正式名称为“胖虎AI”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上进入一站式 AI 客户端服务流程：配置已接入完整链路的 Agent，打开胖虎AI中转站/网站入口，查看充值购买、增值业务、手机号/短信接码、GPT 会员服务、手机控制 Agent 和代理中心等服务端入口。Gemini / agy 当前只保留官方入口和待接入状态。
+本项目是独立的客户侧桌面工具，正式名称为“胖虎AI客户端”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上进入一站式 AI 客户端服务流程：配置已接入完整链路的 Agent，打开胖虎AI中转站/网站入口，查看充值购买、增值业务、手机号/短信接码、GPT 会员服务、连接通讯软件和代理中心等服务端入口。Gemini / agy 当前只保留官方入口和待接入状态。
 
-本项目不是“胖虎AI 本地源码仓”的一部分。它只对接胖虎AI的登录、部署授权、更新清单、API Key、服务端业务入口和公开下载入口。胖虎AI网站、控制台、后端、数据库、支付、钱包、商品上架、代充履约和接码平台结算等内容归服务端或另一个长期项目维护。
+本项目不是“胖虎AI中转站”的一部分。它只对接胖虎AI的登录、部署授权、更新清单、API Key、服务端业务入口和公开下载入口。胖虎AI中转站、网站、控制台、后端、数据库、支付、钱包、商品上架、代充履约和接码平台结算等内容归服务端源码项目维护。
 
 文档权威顺序：
 
@@ -23,9 +23,16 @@
 正式仓库：
 
 ```text
-C:\Users\Administrator\Documents\codex\panghu-codex-installer
+C:\Users\Administrator\Documents\codex\胖虎AI客户端
 https://github.com/dashuaiisme/panghu-codex-installer
 ```
+
+路径说明：
+
+- `C:\Users\Administrator\Documents\codex\胖虎AI客户端` 是长期登记路径和用户可见入口。
+- 该中文路径是 Junction，实际目标目录 / git root 是 `C:\Users\Administrator\Documents\codex\panghu-codex-installer`。
+- 因此终端、Git 或 Codex 窗口显示 `panghu-codex-installer` 时不是派错仓库；两者属于同一仓库。
+- 旧路径 `C:\Users\Administrator\Documents\codex\胖虎AI` 当前不再作为权威入口。
 
 统一下载入口：
 
@@ -53,8 +60,8 @@ https://aitokenapi.cc/deployer/latest.json
 8. 工具调用官方安装入口安装 Agent。
 9. 对安全可写的 Codex 写入胖虎AI配置。
 10. 登录后通过“胖虎AI网站”模块的内置浏览器入口打开控制台、创建 API Key、充值购买、推广返佣和代理中心等服务端页面。
-11. 登录后可进入“配置Agent -> 手机控制Agent”配置独立增值服务。该入口不能只因为本次基础 Agent 配置会话未完成而锁死；已有可用 Agent、历史交付记录或人工复核通过时，都可以作为手机控制Agent的 Agent 来源。
-12. 登录后可进入“增值业务”查看服务端下发的 GPT 会员代充、账号服务、手机号/短信接码、手机控制 Agent 和其他业务入口；客户端只展示服务端状态，不计算价格、库存、履约或上架规则。
+11. 登录后可进入“配置Agent -> 连接通讯软件”配置独立增值服务。该入口不能只因为本次基础 Agent 配置会话未完成而锁死；已有可用 Agent、历史交付记录或人工复核通过时，都可以作为连接通讯软件的 Agent 来源。
+12. 登录后可进入“增值业务”查看服务端下发的 GPT 会员代充、账号服务、手机号/短信接码、连接通讯软件和其他业务入口；其中接码入口挂载手机号接码控制中心，目标地址为胖虎AI现有域名的 `sim` 子域名；客户端只展示服务端状态，不计算价格、库存、履约或上架规则。
 13. 如果服务端下发临时 OpenAI 官网访问窗口，工具短时间启用 PAC 系统代理，并到点恢复。
 14. 后续用“检查更新”从公开清单下载新版包。
 
@@ -250,34 +257,36 @@ X-Panghu-Deployer-Token: 部署令牌
 - 客户端日志、诊断包和客服摘要不得输出完整 API Key、token、Authorization、邀请码、订单号、权益 ID 或配置会话 ID。
 - 修改商业合同、权益、配置会话、扣次、撤销、返佣、manifest 验签或客户包前置逻辑后，必须跑对应商业验收脚本。
 
-### 手机控制Agent服务合同
+### 连接通讯软件服务合同
 
-手机控制Agent是独立增值服务，不得复用基础 Agent 配置订单、配置会话、验收记录或扣费事件。
+连接通讯软件是独立增值服务，不得复用基础 Agent 配置订单、配置会话、验收记录或扣费事件。
+
+全链路命名统一为“连接通讯软件”；技术接口、事件名、表名、UI 文案和交付话术都使用 `communication-software-link` / `communication_software_link` 这一组新命名。
 
 服务端合同至少要能表达：
 
-- `service_type=mobile_control_agent`
+- `service_type=communication_software_link`
 - 独立商品、订单、配置会话、验收记录和账本事件
 - Agent 来源：本次基础交付、历史基础交付、本机已有 Agent 检测、人工复核
 - 平台通道：`qq_bot`、`weixin`、`feishu`、`dingtalk`、`wecom`
 - 验收证据：入站平台消息 ID、Agent 调用证据、出站平台消息 ID、响应摘要、验收时间、`source_event_id`
 - 状态区分：待配置、等待平台授权、已连接、测试中、验收通过、失败、暂停、人工复核
-- 创建手机控制Agent配置会话前，服务端订单必须已支付，或明确进入人工预售/人工复核；未支付订单不得写入平台账号或聊天对象。
+- 创建连接通讯软件配置会话前，服务端订单必须已支付，或明确进入人工预售/人工复核；未支付订单不得写入平台账号或聊天对象。
 
 入口规则：
 
-- 主入口固定在“配置Agent -> 手机控制Agent”。
+- 主入口固定在“配置Agent -> 连接通讯软件”。
 - 增值业务模块只做销售卡片和介绍入口。
-- 代理中心不得承载手机控制Agent配置入口。
-- 不允许用“基础 Agent 是否由本工具本次配置完成”作为唯一解锁条件。已有 Agent 或历史交付可通过检测和人工复核进入手机控制Agent链路。
+- 代理中心不得承载连接通讯软件配置入口。
+- 不允许用“基础 Agent 是否由本工具本次配置完成”作为唯一解锁条件。已有 Agent 或历史交付可通过检测和人工复核进入连接通讯软件链路。
 
 扣费与防套利规则：
 
 - `agent_install_delivered` 只代表基础 Agent 配置交付。
-- `mobile_control_agent_delivered` 只代表手机控制Agent交付。
-- 两个事件必须进入各自服务账本和验收记录，不能用手机控制Agent验收去补基础 Agent 交付，也不能用基础 Agent 验收去触发手机控制Agent扣费。
-- 手机控制Agent交付不能只看当前是否还能收到消息。配置完成并形成验收证据后，客户断网、禁用 Key、关闭平台授权、删除机器人或阻断回调，应进入暂停、重试或人工复核，不得自动失败、自动退款或取消收费。
-- 如果从未形成入站消息、Agent 调用和出站回复证据，不能标记手机控制Agent交付完成。
+- `communication_software_link_delivered` 只代表连接通讯软件交付。
+- 两个事件必须进入各自服务账本和验收记录，不能用连接通讯软件验收去补基础 Agent 交付，也不能用基础 Agent 验收去触发连接通讯软件扣费。
+- 连接通讯软件交付不能只看当前是否还能收到消息。配置完成并形成验收证据后，客户断网、禁用 Key、关闭平台授权、删除机器人或阻断回调，应进入暂停、重试或人工复核，不得自动失败、自动退款或取消收费。
+- 如果从未形成入站消息、Agent 调用和出站回复证据，不能标记连接通讯软件交付完成。
 - 所有交付和账本事件必须用唯一 `source_event_id` 幂等处理，防止重复扣费、重复返佣和重复回调伪造交付。
 
 ### 胖虎AI网站内置入口
@@ -285,6 +294,7 @@ X-Panghu-Deployer-Token: 部署令牌
 注册、邀请码、创建 API Key、充值购买、推广返佣、代理中心和增值业务入口都属于胖虎AI网站、工具代理后端或服务端页面。客户端规则：
 
 - 优先通过 `pywebview` 在软件内打开服务端页面。
+- 未登录闸口允许客户填写代理邀请码或代理邀请链接；客户端只把它规范化为 `https://aitokenapi.cc/register?invite=<code>` 并通过内置浏览器打开注册页，不在本地保存邀请码、不本地绑定代理身份、不计算返佣。
 - WebView 必须使用 `private_mode=False` 和买家专属 `storage_path` 保存 cookie/localStorage，打开前优先桥接当前持久 cookie jar，让客户重启工具后不需要在系统浏览器里二次登录胖虎AI。
 - `pywebview` 不可用、cookie 桥接失败或运行环境阻止嵌入时，必须明确提示内置浏览器未完成/不可用；客户站点入口不得自动打开系统浏览器，也不得算完成内嵌网页闭环。
 - 入口 URL 必须使用 `https://aitokenapi.cc`。
@@ -494,7 +504,7 @@ Mac 包选择：
 进入仓库：
 
 ```powershell
-cd C:\Users\Administrator\Documents\codex\panghu-codex-installer
+cd C:\Users\Administrator\Documents\codex\胖虎AI客户端
 ```
 
 查看当前状态：
@@ -589,7 +599,7 @@ AI.Agent.-Windows.zip
 本地客户包应保留为：
 
 ```text
-release/胖虎AI-Windows.zip
+release/胖虎AI客户端-Windows.zip
 ```
 
 Windows 构建要求：
@@ -650,6 +660,8 @@ python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan
 
 报告里的 `non_codex_full_config_delivery_found` 必须为 `false`。该扫描用于防止 ClaudeCode、OpenClaw、Hermes 等 Agent 在未完成配置写入、启动检测、最小对话验证前，被主程序静态包装成无条件完整付费交付；Gemini / agy 未接入前也只能显示官方入口或待接入状态。真实交付状态必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准；矩阵未通过时必须 fail 配置会话、不扣次。
 
+报告里的 `communication_link_real_delivery_claim_found` 必须为 `false`。该扫描用于防止客户包主程序把连接通讯软件写成客户端可自行声明真实交付完成；连接通讯软件最终交付只能以服务端真实验收记录为准，本地状态、离线报告或 mock 守卫不能替代真实平台回调、Agent Runtime Adapter、支付和账本闭环。
+
 若报告为 `WARN`，需要人工确认警告项后再进入发版步骤；生产商业构建必须注入 `PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM`，否则商业清单保持拒绝状态是预期结果。
 
 ## 12. Mac 打包
@@ -664,8 +676,8 @@ scripts/build-mac-app.command
 输出：
 
 ```text
-release/胖虎AI-Mac-AppleSilicon.zip
-release/胖虎AI-Mac-Intel.zip
+release/胖虎AI客户端-Mac-AppleSilicon.zip
+release/胖虎AI客户端-Mac-Intel.zip
 ```
 
 这两个 Mac zip 也是本地客户交付物；即使本机是 Windows，清理项目时也必须从 GitHub Release 或统一下载入口补齐后再收尾。
@@ -870,7 +882,7 @@ unable to get local issuer certificate
 
 ## 17. 不允许做的事
 
-- 不要把本项目当成胖虎AI源码仓。
+- 不要把本项目当成胖虎AI中转站源码仓。
 - 不要把胖虎AI控制台、后端、支付、钱包逻辑写进本仓。
 - 不要把 OpenAI/Codex、ClaudeCode、OpenClaw、Hermes、Gemini / agy 本体提交进源码仓。
 - 不要使用内部域名作为客户默认接口。
@@ -883,7 +895,7 @@ unable to get local issuer certificate
 - 不要把注册、邀请码、创建 Key、充值购买、代理中心、返佣规则或套餐规则硬编码进客户端。
 - 不要把代理中心写成已完成业务闭环；没有服务端合同时只能显示待接入状态。
 - 不要把 `profile.json` 当成登录态或密码恢复来源；它只保存账号提示、API Key、模型和界面偏好。买家登录态恢复只来自独立会话 cookie 文件和内置浏览器 profile；可选记住密码只来自 `login_accounts.json` 中的系统加密 blob。
-- 不要把手机控制Agent写成基础 Agent 配置的一部分；它必须独立订单、独立配置会话、独立验收和独立收费。不要把客户断网、禁 Key、取消平台授权后的实时不可达自动解释为配置失败。
+- 不要把连接通讯软件写成基础 Agent 配置的一部分；它必须独立订单、独立配置会话、独立验收和独立收费。不要把客户断网、禁 Key、取消平台授权后的实时不可达自动解释为配置失败。
 - 不要把未完成真实客户闭环的状态写成最终交付完成。
 
 ## 18. 后续 Agent 接手顺序
@@ -899,8 +911,10 @@ unable to get local issuer certificate
 7. 读工具项目登记文件：
 
 ```text
-C:\Users\Administrator\Documents\codex\工具项目目录\projects\胖虎AI.md
+C:\Users\Administrator\Documents\codex\工具项目目录\projects\胖虎AI客户端.md
 ```
+
+`projects\胖虎AI.md` 和 `projects\多 Agent 一键配置工具.md` 只作为历史兼容入口说明，不作为当前接手权威登记。
 
 8. 查看 `git status --short`。
 9. 查看 `git diff`，不要覆盖已有未提交改动。

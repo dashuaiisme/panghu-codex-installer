@@ -72,6 +72,16 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertIn("Windows zip validation failed", text)
         self.assertIn("Move-Item -LiteralPath $tempZip -Destination $zip -Force", text)
 
+    def test_build_scripts_do_not_package_removed_webview_ui_shell(self) -> None:
+        windows = (ROOT / "scripts" / "build-windows-exe.ps1").read_text(encoding="utf-8")
+        mac = (ROOT / "scripts" / "build-mac-app.command").read_text(encoding="utf-8")
+
+        self.assertFalse((ROOT / "src" / "ui" / "index.html").exists())
+        self.assertNotIn("src\\ui", windows)
+        self.assertNotIn(";ui", windows)
+        self.assertNotIn("src/ui:ui", mac)
+        self.assertNotIn('cp -R "src/ui"', mac)
+
     def test_generated_public_key_module_is_not_tracked(self) -> None:
         text = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
@@ -110,9 +120,9 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertGreater(mac_job.index(final_zip_test), mac_job.index("Notarize app"))
         self.assertLess(mac_job.index(final_zip_test), mac_job.index(final_acceptance))
         self.assertLess(mac_job.index(final_zip_test), mac_job.index("Prepare release asset"))
-        self.assertIn('ZIP_PATH="release/胖虎AI-Mac-${{ matrix.package_suffix }}.zip"', mac_job)
+        self.assertIn('ZIP_PATH="release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip"', mac_job)
         self.assertIn("/usr/bin/ditto -x -k \"$ZIP_PATH\" \"$FINAL_ZIP_TEST_DIR\"", mac_job)
-        self.assertIn("\"$FINAL_ZIP_TEST_DIR/胖虎AI.app/Contents/MacOS/胖虎AI\" --self-test", mac_job)
+        self.assertIn("\"$FINAL_ZIP_TEST_DIR/胖虎AI客户端.app/Contents/MacOS/胖虎AI客户端\" --self-test", mac_job)
 
 
 if __name__ == "__main__":

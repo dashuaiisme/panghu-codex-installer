@@ -1,12 +1,15 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
 
 build/
 dist/
 release/
 artifacts/
 output/
+node_modules/
+scratch/
 *.spec
 
 .venv/

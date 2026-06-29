@@ -96,12 +96,12 @@ Agent 矩阵与 Gemini/agy：
 - 代理中心作为买家登录后的独立服务端权益模块，范围包括 token 返佣、下游客户激活返佣、付费安装 Agent 返佣等。
 - 客户端只展示服务端返回的代理身份、下游、佣金和状态，不在本地硬编码等级、比例、金额或上架状态。
 
-增值业务与 Mobile Control Agent：
+增值业务与 Communication Software Link Agent：
 
 - 删除“带配置服务/代配置服务”多余入口。
 - 保留 Plus 代充值、国外手机卡、短信接码等基础框架，状态以服务端为准。
-- 新增 Mobile Control Agent 后端合同、请求分发、订单/会话/验收/禁用链路框架。
-- Mobile Control Agent 是独立增值服务，不绑定当前基础 Agent 安装流程。
+- 新增 Communication Software Link Agent 后端合同、请求分发、订单/会话/验收/禁用链路框架。
+- Communication Software Link Agent 是独立增值服务，不绑定当前基础 Agent 安装流程。
 
 商业后端合同：
 
@@ -135,7 +135,7 @@ Agent 矩阵与 Gemini/agy：
 
 4. 代理中心客户端框架和服务端合同已做，但真实服务端字段和数据仍需 `aitokenapi.cc` 对接确认。
 
-5. Mobile Control Agent 目前是后端合同、客户端请求和 UI 入口框架。
+5. Communication Software Link Agent 目前是后端合同、客户端请求和 UI 入口框架。
    - 真实供应商/接码/移动端控制服务未在本窗口完整打通。
    - 不能作为完整交付功能宣传。
 
@@ -193,7 +193,7 @@ python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan
 4. 不要从任何旧 backend worktree 覆盖当前主树。
 5. 不要碰生产服务器、数据库、GitHub Release、下载页、`latest.json`。
 6. 不要删除 release 包、客户 zip、exe/app、本体文件和 `docs/superpowers/`。
-7. 提交说明里必须标明：Gemini/agy 配置待开发；Mobile Control Agent、代理中心、内置浏览器 SSO 仍需真实服务端/实机验证。
+7. 提交说明里必须标明：Gemini/agy 配置待开发；Communication Software Link Agent、代理中心、内置浏览器 SSO 仍需真实服务端/实机验证。
 
 ## 7. 新后端窗口启动提示
 
@@ -222,7 +222,7 @@ C:\Users\Administrator\Documents\codex\panghu-codex-installer
 - 核验 Agent 五维矩阵：Codex、ClaudeCode/CC、OpenClaw、Hermes、Gemini/agy；Gemini/agy 只保留安装入口，配置必须开发中。
 - 继续按官方文档/官方 GitHub/npm/CLI help 检查 ClaudeCode/CC、OpenClaw、Hermes、Gemini/agy，不要用本机残留配置当事实。
 - 核验代理中心是登录后的独立服务端权益模块，覆盖 token 返佣、下游激活返佣、付费安装 Agent 返佣，不等同于胖虎AI网站推广返佣页。
-- 核验 Mobile Control Agent 的后端合同、订单、会话、验收、禁用链路，不能包装成已完整打通。
+- 核验 Communication Software Link Agent 的后端合同、订单、会话、验收、禁用链路，不能包装成已完整打通。
 - 继续清理旧“登录前代理模式/买家模式分流”和旧“代理登录态”残留。
 - 所有商业权益、次数、有效期、设备数、价格、返佣比例、上架状态必须来自服务端或配置，不得硬编码。
 - API Key 不输出日志；不保存第三方账号密码、部署授权 token、订单号、权益 ID、配置会话 ID 到 profile.json。

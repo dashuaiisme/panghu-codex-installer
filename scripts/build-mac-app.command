@@ -20,7 +20,7 @@ Path("src/commercial_manifest_public_key.py").write_text(
     encoding="utf-8",
 )
 PY
-APP_NAME="胖虎AI"
+APP_NAME="胖虎AI客户端"
 APP_VERSION="${APP_VERSION:-$(.venv/bin/python - <<'PY'
 import ast
 from pathlib import Path
@@ -68,7 +68,6 @@ fi
   --icon "$ICON_PATH" \
   --osx-bundle-identifier "$BUNDLE_ID" \
   --collect-data certifi \
-  --add-data "src/ui:ui" \
   --add-data "assets:assets" \
   --distpath release \
   --workpath build \
@@ -79,7 +78,6 @@ ZIP_PATH="release/${APP_NAME}-Mac-${MAC_PACKAGE_SUFFIX}.zip"
 rm -rf "$APP_PATH/Contents/Resources/assets" "$APP_PATH/Contents/Resources/ui"
 mkdir -p "$APP_PATH/Contents/Resources"
 cp -R "$ASSETS" "$APP_PATH/Contents/Resources/assets"
-cp -R "src/ui" "$APP_PATH/Contents/Resources/ui"
 if [ -d "$APP_PATH" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_PATH/Contents/Info.plist" \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$APP_PATH/Contents/Info.plist"

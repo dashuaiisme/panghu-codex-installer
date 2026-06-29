@@ -16,6 +16,37 @@ if hasattr(sys.stdout, "reconfigure"):
 import panghu_codex_installer as installer  # noqa: E402
 
 
+DELIVERY_SCOPE_CHOICES = ("cli", "client", "both")
+
+
+def selected_scope_modes(delivery_scope: str) -> set[str]:
+    if delivery_scope == "cli":
+        return {"cli"}
+    if delivery_scope == "client":
+        return {"client"}
+    return {"cli", "client"}
+
+
+def parse_agent_selection(raw_agents: str) -> list[installer.AgentSpec]:
+    all_agents = {agent.id: agent for agent in installer.AGENTS}
+    if not raw_agents.strip():
+        return list(installer.AGENTS)
+    selected_ids = [item.strip() for item in raw_agents.split(",") if item.strip()]
+    if not selected_ids:
+        return list(installer.AGENTS)
+    unknown = [agent_id for agent_id in selected_ids if agent_id not in all_agents]
+    if unknown:
+        raise ValueError(f"未知 Agent：{', '.join(unknown)}")
+    seen: set[str] = set()
+    selected: list[installer.AgentSpec] = []
+    for agent_id in selected_ids:
+        if agent_id in seen:
+            continue
+        seen.add(agent_id)
+        selected.append(all_agents[agent_id])
+    return selected
+
+
 def configure_isolated_acceptance_env(api_key: str, model: str) -> tempfile.TemporaryDirectory | None:
     if not api_key.strip():
         return None
@@ -65,6 +96,24 @@ def agent_mode_summary(agent: installer.AgentSpec, mode: installer.AgentMode, cl
     }
 
 
+def initial_mode_statuses(agent_id: str, selected_modes: set[str], cli_ok: bool, client_ok: bool) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    if "cli" in selected_modes:
+        statuses["cli"] = "not_supported" if agent_id == "gemini_agy" else ("ready" if cli_ok else "not_detected")
+    if "client" in selected_modes:
+        statuses["client"] = "not_supported" if agent_id == "gemini_agy" else ("ready" if client_ok else "not_confirmed")
+    statuses["dialogue"] = "not_supported" if agent_id == "gemini_agy" else "not_run"
+    return statuses
+
+
+def agent_delivery_status(mode_statuses: dict[str, str]) -> str:
+    if any(status in {"not_supported", "not_detected", "not_confirmed", "not_run", "failed", "blocked"} for status in mode_statuses.values()):
+        return "blocked"
+    if mode_statuses.get("dialogue") == "pass":
+        return "ready"
+    return "offline_guarded"
+
+
 def run_agent_dialogue_probe_with_timeout(agent: installer.AgentSpec, mode_id: str, model: str, timeout: int) -> tuple[bool, str]:
     if agent.id == "gemini_agy":
         return installer.run_agent_dialogue_probe(agent, mode_id, model)
@@ -97,6 +146,17 @@ def run_codex_gateway_probe(api_key: str, model: str) -> tuple[bool, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inspect PanghuAI Agent delivery readiness without installing anything.")
     parser.add_argument(
+        "--delivery-scope",
+        choices=DELIVERY_SCOPE_CHOICES,
+        default="both",
+        help="Limit acceptance to CLI, client, or both. CLI and client are separate paid/delivery scopes.",
+    )
+    parser.add_argument(
+        "--agents",
+        default="",
+        help="Comma-separated Agent ids to evaluate. Default evaluates all configured agents.",
+    )
+    parser.add_argument(
         "--run-dialogue",
         action="store_true",
         help="Actually run non-Codex minimal dialogue commands. Default is read-only and does not call external agents.",
@@ -114,6 +174,11 @@ def main() -> int:
         help="When --run-dialogue is set, use PANGHU_AGENT_ACCEPTANCE_API_KEY to run Codex's minimal PanghuAI gateway task.",
     )
     args = parser.parse_args()
+    try:
+        selected_agents = parse_agent_selection(args.agents)
+    except ValueError as exc:
+        parser.error(str(exc))
+    selected_modes = selected_scope_modes(args.delivery_scope)
     temp_env = None
     api_key = os.environ.get("PANGHU_AGENT_ACCEPTANCE_API_KEY", "")
     if args.run_dialogue and args.isolated_config_from_env and api_key.strip():
@@ -123,19 +188,30 @@ def main() -> int:
         "public_domain": installer.DEFAULT_BASE_URL,
         "model": args.model,
         "system": installer.current_system_id(),
+        "delivery_scope": args.delivery_scope,
+        "selected_agent_ids": [agent.id for agent in selected_agents],
+        "selected_modes": sorted(selected_modes),
         "run_dialogue": bool(args.run_dialogue),
         "isolated_config": bool(temp_env),
         "agents": [],
         "blocking_gaps": [],
     }
 
-    for agent in installer.AGENTS:
+    for agent in selected_agents:
         cli_ok, cli_version = installer.version_for(agent.verify_command)
         client_ok, client_detail = installer.agent_client_status(agent)
         playbook = installer.agent_delivery_playbook(agent.id)
+        selected_agent_modes = [
+            mode for mode in agent.modes
+            if mode.id in selected_modes
+        ]
+        mode_statuses = initial_mode_statuses(agent.id, selected_modes, cli_ok, client_ok)
         item = {
             "id": agent.id,
             "name": agent.name,
+            "selected_modes": [mode.id for mode in selected_agent_modes],
+            "mode_statuses": mode_statuses,
+            "delivery_status": "blocked",
             "cli_detected": cli_ok,
             "cli_version": cli_version,
             "client_detected": client_ok,
@@ -147,12 +223,14 @@ def main() -> int:
             "dialogue_probe_command": installer.agent_dialogue_probe_command_text(agent, args.model),
             "dialogue_probe_status": "not_run",
             "dialogue_probe_output": "",
-            "modes": [agent_mode_summary(agent, mode, cli_ok, client_ok) for mode in agent.modes],
+            "modes": [agent_mode_summary(agent, mode, cli_ok, client_ok) for mode in selected_agent_modes],
         }
 
-        if not cli_ok:
+        if agent.id == "gemini_agy":
+            report["blocking_gaps"].append("Gemini / agy 配置待开发，只保留官方入口；当前不计入完整 CLI 或客户端交付。")
+        if "cli" in selected_modes and not cli_ok:
             report["blocking_gaps"].append(f"{agent.name} CLI 未检测到，不能确认安装/启动/对话链路。")
-        if not client_ok:
+        if "client" in selected_modes and not client_ok:
             report["blocking_gaps"].append(f"{agent.name} 客户端未确认：{client_detail}")
 
         if args.run_dialogue:
@@ -160,15 +238,18 @@ def main() -> int:
                 if args.run_codex_gateway_probe:
                     ok, output = run_codex_gateway_probe(api_key, args.model)
                     item["dialogue_probe_status"] = "pass" if ok else "failed"
+                    item["mode_statuses"]["dialogue"] = "pass" if ok else "failed"
                     item["dialogue_probe_output"] = output
                     if not ok:
                         report["blocking_gaps"].append("Codex 胖虎AI网关最小中文真实任务验收失败。")
                 else:
                     item["dialogue_probe_status"] = "manual_required"
+                    item["mode_statuses"]["dialogue"] = "not_run"
                     item["dialogue_probe_output"] = "Codex 真实对话验收需走胖虎AI网关任务；传入 --run-codex-gateway-probe 后才会执行。"
                     report["blocking_gaps"].append("Codex 最小中文真实任务验收未在本脚本执行。")
             elif dialogue_uses_untrusted_local_config(agent.id):
                 item["dialogue_probe_status"] = "isolated_config_required"
+                item["mode_statuses"]["dialogue"] = "blocked"
                 item["dialogue_probe_output"] = (
                     f"{agent.name} 对话验收会读取本机 Agent 配置；为避免使用残留配置，"
                     "请先由部署流程写入客户配置，或显式设置隔离配置/验收环境后再运行。"
@@ -176,22 +257,30 @@ def main() -> int:
                 report["blocking_gaps"].append(f"{agent.name} 最小中文对话未执行；缺少隔离配置或显式本机配置授权。")
             elif agent.id == "gemini_agy":
                 item["dialogue_probe_status"] = "not_supported"
+                item["mode_statuses"]["dialogue"] = "not_supported"
                 item["dialogue_probe_output"] = "Gemini / agy 配置待开发，本版只保留安装入口，不执行胖虎AI网关最小中文对话。"
-                report["blocking_gaps"].append("Gemini / agy 配置待开发，只能作为安装入口，不能计入完整交付。")
             elif cli_ok:
                 ok, output = run_agent_dialogue_probe_with_timeout(agent, "cli", args.model, max(5, args.dialogue_timeout))
                 item["dialogue_probe_status"] = "pass" if ok else "failed"
+                item["mode_statuses"]["dialogue"] = "pass" if ok else "failed"
                 item["dialogue_probe_output"] = installer.sanitize_log_text(output, api_key)
                 if not ok:
                     report["blocking_gaps"].append(f"{agent.name} 最小中文对话验收失败。")
             else:
                 item["dialogue_probe_status"] = "blocked"
+                item["mode_statuses"]["dialogue"] = "blocked"
                 item["dialogue_probe_output"] = "CLI 未检测到，无法运行最小对话。"
         else:
+            if agent.id == "gemini_agy":
+                item["dialogue_probe_status"] = "not_supported"
+                item["mode_statuses"]["dialogue"] = "not_supported"
+                item["dialogue_probe_output"] = "Gemini / agy 配置待开发，本版只保留官方入口，不执行胖虎AI网关最小中文对话。"
             report["blocking_gaps"].append(f"{agent.name} 最小中文对话未执行；默认只做只读安装状态检查。")
 
+        item["delivery_status"] = agent_delivery_status(item["mode_statuses"])
         report["agents"].append(item)
 
+    report["delivery_status"] = "blocked" if report["blocking_gaps"] else "ready"
     try:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 1 if report["blocking_gaps"] else 0

@@ -1,10 +1,16 @@
 # 后端当前窗口交接说明
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 1. 当前状态
 
-当前仓库分支是 `main`，本窗口的后端改动已经落在主工作树内；这里的“合并到主树”从文件位置上已经完成。后续主控提交时不要直接 `git add .`，因为工作树还混有前端、输出图片、构建依赖和其他窗口改动。
+当前仓库分支是 `main`。2026-06-27 复核时，HEAD 为：
+
+```text
+02d95e6 (HEAD -> main) feat: harden backend flows and rebrand client
+```
+
+本窗口前一轮后端成果文件已经不再显示为未提交脏项，说明主控已将该批后端成果提交或等价收口到主树。当前仍存在的未提交差异主要是 README、RUNBOOK、产品/技术文档、前端输出截图和预览脚本，不属于本后端窗口前一轮建议提交清单。后续主控如果继续提交，仍不要直接 `git add .`，因为工作树混有前端、输出图片、构建依赖和其他窗口改动。
 
 本窗口严格按后端范围推进。用户已明确要求“涉及前端先不要管”，因此不要在本窗口成果里纳入：
 
@@ -42,7 +48,7 @@ BACKEND_CURRENT_WINDOW_HANDOFF.md
 如果主控要分批提交，建议拆成三组：
 
 1. 登录账号与本地安全边界：`src/panghu_codex_installer.py`、`tests/test_installer_backend.py`。
-2. Mobile Control Agent 商业合同：`src/commercial_api.py`、`src/commercial_backend_contract.py`、`scripts/commercial_flow_acceptance.py`、相关商业测试和合同文档。
+2. Communication Software Link Agent 商业合同：`src/commercial_api.py`、`src/commercial_backend_contract.py`、`scripts/commercial_flow_acceptance.py`、相关商业测试和合同文档。
 3. Agent 真实验收脚本：`scripts/agent_delivery_acceptance.py`、`tests/test_agent_delivery_acceptance_script.py`、技术维护手册相关段落。
 
 ## 3. 已完成后端功能
@@ -57,15 +63,15 @@ BACKEND_CURRENT_WINDOW_HANDOFF.md
 - 退出当前账号只关闭该账号 `auto_login`，保留用户显式保存的本机加密密码。
 - 删除当前账号记录会同步清当前 cookie/session、`logged_in_user`、`deployer_auth`、`commercial_contexts`，并回到登录门禁。
 
-### Mobile Control Agent
+### Communication Software Link Agent
 
-- Mobile Control Agent 被建模为独立增值服务，不复用基础 Agent 配置订单、权益、配置会话或验收事件。
+- Communication Software Link Agent 被建模为独立增值服务，不复用基础 Agent 配置订单、权益、配置会话或验收事件。
 - `ContractServiceOrder` 增加 `payment_id`。
-- 新增 `mark_mobile_control_order_paid(order_id, payment_id)`。
-- 创建 Mobile Control 配置会话前，订单必须是 `paid` 或 `manual_review`，未支付订单会被阻断。
-- 客户端后端缓存订单支付/人工复核状态；未确认支付或人工复核前，阻止创建 Mobile Control 会话。
-- Mobile Control 验收必须形成入站平台消息、Agent 响应摘要、出站平台消息、证据 URL 和唯一 `source_event_id`。
-- 商业流离线验收脚本现在覆盖 Mobile Control：未支付阻断、支付后建会话、平台回调 accepted、验收后写入独立 `mobile_control_agent_delivered` 服务账本事件。
+- 新增 `mark_communication_software_link_order_paid(order_id, payment_id)`。
+- 创建 Communication Software Link 配置会话前，订单必须是 `paid` 或 `manual_review`，未支付订单会被阻断。
+- 客户端后端缓存订单支付/人工复核状态；未确认支付或人工复核前，阻止创建 Communication Software Link 会话。
+- Communication Software Link 验收必须形成入站平台消息、Agent 响应摘要、出站平台消息、证据 URL 和唯一 `source_event_id`。
+- 商业流离线验收脚本现在覆盖 Communication Software Link：未支付阻断、支付后建会话、平台回调 accepted、验收后写入独立 `communication_software_link_delivered` 服务账本事件。
 
 ### Agent 真实交付验收脚本
 
@@ -80,7 +86,7 @@ BACKEND_CURRENT_WINDOW_HANDOFF.md
 - 真实 WebView/SSO 仍需实机验证：必须是软件内置浏览器；`pywebview` 不可用或打开失败时应阻断，不能自动跳系统浏览器包装成完成。
 - Codex、ClaudeCode/CC、OpenClaw、Hermes 的“最小对话真实打通”还需要用真实买家 API Key 跑 `agent_delivery_acceptance.py`。
 - Gemini/agy 仍是配置待开发，只能算安装入口，不能算完整交付。
-- 真实服务端登录、支付、订单、权益、配置会话、Mobile Control 平台回调仍未接生产服务端验证。
+- 真实服务端登录、支付、订单、权益、配置会话、Communication Software Link 平台回调仍未接生产服务端验证。
 - release 验收仍是 `WARN`：客户包 stale，生产商业清单公钥未注入。此为打包/发布边界，本窗口未处理。
 - 前端文件和输出图存在脏项，本窗口按用户要求未处理。
 
@@ -148,5 +154,5 @@ python src\panghu_codex_installer.py --self-test
 提交信息建议：
 
 ```text
-feat: harden backend account sessions and mobile control contract
+feat: harden backend account sessions and communication software link contract
 ```

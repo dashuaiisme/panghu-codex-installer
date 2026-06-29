@@ -1,6 +1,6 @@
 # 商业版后端 API 合同
 
-本文是“胖虎AI”客户端商业服务端合同，覆盖 Agent 配置交付、胖虎AI中转站权益、充值购买、增值业务、手机号/短信接码、GPT 会员服务、手机控制 Agent、代理中心等服务端数据边界。客户端不得硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态、库存、履约状态或权益可售状态；这些值全部来自服务端。
+本文是“胖虎AI客户端”商业服务端合同，覆盖 Agent 配置交付、胖虎AI中转站权益、充值购买、增值业务、手机号/短信接码、GPT 会员服务、连接通讯软件、代理中心等服务端数据边界。客户端不得硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态、库存、履约状态或权益可售状态；这些值全部来自服务端。
 
 ## 1. 上下文模型
 
@@ -69,7 +69,7 @@
 
 ## 5. 支付回调
 
-支付宝支付和支付回调验签只在服务端完成。客户端只负责创建订单和轮询支付状态，不保存支付密钥。
+胖虎AI客户端是独立工具。这里的工具订单、商品、权益和扣次不从属于胖虎AI中转站订阅、充值、额度套餐或网站钱包体系；如果复用胖虎AI现有支付宝资料，只能复用支付宝商户配置、签名、通知地址、回调验签和下单参数等支付通道资料。支付宝支付和支付回调验签只在服务端完成，客户端只负责创建独立工具订单和轮询支付状态，不保存支付密钥，不把支付成功直接解释成胖虎AI站内订阅或充值完成。
 
 支付成功后服务端必须：
 
@@ -172,6 +172,7 @@
 
 - 代理等级 1 到 5 级
 - 新买家通过邀请码或邀请链接绑定代理
+- 桌面客户端未登录闸口只负责把客户填写的邀请码或邀请链接带到胖虎AI网站注册页，例如 `https://aitokenapi.cc/register?invite=<code>`；最终注册绑定、邀请码校验和上级防覆盖由服务端完成
 - 已有上级邀请人不能被新代理覆盖
 - 第 N 级代理最多拿往下 N 层的返佣
 - 代理升级价格后台配置
@@ -268,6 +269,14 @@
 
 服务端商品、代理话术、客户端按钮和成功页必须绑定 `delivery_scope`。
 
+`delivery_scope` 只允许以下值：
+
+- `cli`：只销售和验收官方 CLI 配置交付。
+- `client`：只销售和验收官方客户端或独立客户端形态交付。
+- `both`：CLI 与客户端都销售并分别验收。
+
+服务端商品、订单、权益、配置会话和交付报告必须携带同一个 `delivery_scope`。CLI 和客户端是独立付费、独立交付范围；`delivery_scope=cli` 时，客户端未确认不得阻断 CLI 交付成功；`delivery_scope=client` 或 `both` 时，客户端启动、配置、最小任务和交付报告必须单独通过。
+
 `ClaudeCode`、`OpenClaw`、`Hermes` 在没有完成 Agent Playbook、API 接入、重启验证和最小真实任务验证前，只能设置为：
 
 - hidden
@@ -278,9 +287,11 @@
 
 `Gemini / agy` 当前只保留官方入口和待接入状态。未完成胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得作为付费完整配置交付。
 
-## 15. 手机控制Agent独立服务合同
+## 15. 连接通讯软件独立服务合同
 
-手机控制Agent是独立增值服务，固定 `service_type=mobile_control_agent`。它用于把已可用 Agent 接入 QQ、微信、飞书、钉钉、企业微信等手机通讯或办公通道。
+连接通讯软件是独立增值服务，固定 `service_type=communication_software_link`。它用于把已可用 Agent 接入 QQ、微信、飞书、钉钉、企业微信等通讯软件或办公协同通道。
+
+命名规则：接口、数据表、账本事件、客户文案、产品手册、验收说明和界面统一使用“连接通讯软件”口径；技术 slug 统一为 `communication-software-link` / `communication_software_link`。
 
 它不得与基础 Agent 配置共用：
 
@@ -292,55 +303,55 @@
 - 扣费事件
 - 返佣事件
 
-基础 Agent 配置交付事件建议继续使用 `agent_install_delivered`。手机控制Agent交付事件必须单独使用 `mobile_control_agent_delivered`。
+基础 Agent 配置交付事件建议继续使用 `agent_install_delivered`。连接通讯软件交付事件必须单独使用 `communication_software_link_delivered`。
 
 服务端数据模型至少应覆盖：
 
 - `service_products`: `service_type`、名称、价格、状态、支持的 Agent、支持的平台通道、介绍文案和最低客户端版本。
 - `service_orders`: 买家、服务商品、Agent、通道、订单状态、收费状态、支付 ID、创建时间、交付时间和取消时间。
-- `mobile_control_sessions`: 订单、买家、Agent、通道、平台账号、聊天对象、网关模式、状态、最近探测时间和验收时间。
-- `mobile_control_acceptance_records`: 入站平台消息 ID、出站平台消息 ID、测试提示词、Agent 响应摘要、证据链接、验收人、验收时间和唯一 `source_event_id`。
+- `communication_software_link_sessions`: 订单、买家、Agent、通道、平台账号、聊天对象、网关模式、状态、最近探测时间和验收时间。
+- `communication_software_link_acceptance_records`: 入站平台消息 ID、出站平台消息 ID、测试提示词、Agent 响应摘要、证据链接、验收人、验收时间和唯一 `source_event_id`。
 - `service_ledger_events`: `service_type`、订单、买家、金额、状态和唯一 `source_event_id`。
 
 Agent 来源不能只限定为“本工具本次基础配置会话已完成”。服务端必须支持：
 
 - 当前订单刚完成基础 Agent 交付。
 - 买家历史订单已有基础 Agent 交付。
-- 买家电脑本来已有可用 Agent，客户端检测或人工复核后进入手机控制Agent。
+- 买家电脑本来已有可用 Agent，客户端检测或人工复核后进入连接通讯软件。
 - 无法自动确认时进入 `manual_review`，而不是直接隐藏入口。
 
 建议接口：
 
-- `GET /api/mobile-control/offering`
-- `POST /api/mobile-control/orders`
-- `GET /api/mobile-control/orders/:id`
-- `POST /api/mobile-control/sessions`
-- `GET /api/mobile-control/sessions/:id`
-- `POST /api/mobile-control/sessions/:id/test`
-- `POST /api/mobile-control/sessions/:id/acceptance`
-- `POST /api/mobile-control/sessions/:id/disable`
-- `POST /api/mobile-control/callbacks/qq-bot`
-- `POST /api/mobile-control/callbacks/feishu`
-- `POST /api/mobile-control/callbacks/dingtalk`
-- `POST /api/mobile-control/callbacks/wecom`
-- `POST /api/mobile-control/callbacks/weixin`
-- `GET/PUT /api/admin/mobile-control/products`
-- `GET/PUT /api/admin/mobile-control/channel-policies`
-- `GET /api/admin/mobile-control/sessions`
-- `POST /api/admin/mobile-control/sessions/:id/freeze`
-- `POST /api/admin/mobile-control/sessions/:id/release`
-- `POST /api/admin/mobile-control/orders/:id/refund`
-- `POST /api/admin/mobile-control/orders/:id/manual-review`
+- `GET /api/communication-software-link/offering`
+- `POST /api/communication-software-link/orders`
+- `GET /api/communication-software-link/orders/:id`
+- `POST /api/communication-software-link/sessions`
+- `GET /api/communication-software-link/sessions/:id`
+- `POST /api/communication-software-link/sessions/:id/test`
+- `POST /api/communication-software-link/sessions/:id/acceptance`
+- `POST /api/communication-software-link/sessions/:id/disable`
+- `POST /api/communication-software-link/callbacks/qq-bot`
+- `POST /api/communication-software-link/callbacks/feishu`
+- `POST /api/communication-software-link/callbacks/dingtalk`
+- `POST /api/communication-software-link/callbacks/wecom`
+- `POST /api/communication-software-link/callbacks/weixin`
+- `GET/PUT /api/admin/communication-software-link/products`
+- `GET/PUT /api/admin/communication-software-link/channel-policies`
+- `GET /api/admin/communication-software-link/sessions`
+- `POST /api/admin/communication-software-link/sessions/:id/freeze`
+- `POST /api/admin/communication-software-link/sessions/:id/release`
+- `POST /api/admin/communication-software-link/orders/:id/refund`
+- `POST /api/admin/communication-software-link/orders/:id/manual-review`
 
 验收与扣费规则：
 
-- `POST /api/mobile-control/sessions` 前，订单必须已支付，或明确进入后台人工预售/人工复核状态；未支付订单不得创建配置会话、不得写入平台账号或聊天对象。
-- 手机控制Agent必须记录入站平台消息、Agent 执行证据和出站平台回复证据。
-- 未形成上述证据时，不得标记 `mobile_control_agent_delivered`。
+- `POST /api/communication-software-link/sessions` 前，订单必须已支付，或明确进入后台人工预售/人工复核状态；未支付订单不得创建配置会话、不得写入平台账号或聊天对象。
+- 连接通讯软件必须记录入站平台消息、Agent 执行证据和出站平台回复证据。
+- 未形成上述证据时，不得标记 `communication_software_link_delivered`。
 - 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，只能进入暂停、重试或人工复核，不得自动判定为配置失败、自动退款或取消收费。
 - 收费、返佣和结算必须基于不可重复的 `source_event_id` 幂等处理。
-- 手机控制Agent退款、失败或人工复核不得自动撤销基础 Agent 配置交付。
-- 如果手机控制Agent未来参与代理返佣，返佣事件也必须使用独立 `mobile_control_agent_delivered`，不得复用 `agent_install_delivered`。
+- 连接通讯软件退款、失败或人工复核不得自动撤销基础 Agent 配置交付。
+- 如果连接通讯软件未来参与代理返佣，返佣事件也必须使用独立 `communication_software_link_delivered`，不得复用 `agent_install_delivered`。
 
 ## 16. 后端验收清单
 
@@ -355,11 +366,11 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - 后台可通过 `diagnostic_code` 查到完整链路。
 - 代理返佣比例、代理等级升级价格和展示开关全部由后台配置。
 - 代理中心必须区分 token 返佣、下游付费激活返佣和付费安装 Agent 返佣，不能把三者混成一个普通推广返佣字段。
-- 手机控制Agent必须作为独立 `service_type=mobile_control_agent` 处理，不能复用基础 Agent 配置的订单、权益、配置会话、验收记录或扣费事件。
-- 手机控制Agent入口不能被“本工具本次基础配置会话是否完成”硬锁死；已有可用 Agent、历史交付或人工复核必须能进入单独配置链路。
-- 手机控制Agent交付不能只以实时消息是否还能回传为准；验收证据已形成后，客户断网、禁 Key、取消平台授权或阻断回调不得自动免单。
+- 连接通讯软件必须作为独立 `service_type=communication_software_link` 处理，不能复用基础 Agent 配置的订单、权益、配置会话、验收记录或扣费事件。
+- 连接通讯软件入口不能被“本工具本次基础配置会话是否完成”硬锁死；已有可用 Agent、历史交付或人工复核必须能进入单独配置链路。
+- 连接通讯软件交付不能只以实时消息是否还能回传为准；验收证据已形成后，客户断网、禁 Key、取消平台授权或阻断回调不得自动免单。
 - 后端或客户端商业合同变更后，必须先运行 `python scripts/commercial_flow_acceptance.py --json`，离线验收订单、支付、权益、配置会话、设备超限不扣次、失败不扣次、成功扣次和佣金冲正主链路。
-- 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作。
+- 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作；其中 `communication_link_real_delivery_claim_found` 必须为 `false`，防止客户端把连接通讯软件写成可自行声明真实交付完成。
 
 ## 17. 代理业务管理
 
@@ -375,7 +386,7 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - `agent_chain_snapshots`: 每次订单、token 消费、激活或安装交付事件保存当时 1-5 级上级链路。
 - `commission_policies`: 佣金政策主表，只允许后台启用、停用和发布新版本。
 - `commission_policy_rules`: 按 `event_type + receiver_level + depth` 配置 `rate_bps`，只影响新事件，历史订单使用历史快照。
-- `commission_events`: 基础事件类型限定为 `token_usage_settled`、`activation_paid`、`agent_install_delivered`；手机控制Agent如参与返佣，必须使用独立 `mobile_control_agent_delivered`。每个事件必须有唯一 `source_event_id` 防止重复返佣。
+- `commission_events`: 基础事件类型限定为 `tool_order_paid`、`token_usage_settled`、`activation_paid`、`agent_install_delivered`；连接通讯软件如参与返佣，必须使用独立 `communication_software_link_delivered`。每个事件必须有唯一 `source_event_id` 防止重复返佣。
 - `commission_ledger`: 佣金账本状态为 `pending`、`frozen`、`available`、`settled`、`reversed`、`manual_review`，金额字段统一使用 `commission_cents`。
 - `settlement_requests`: 提现和结算申请表，记录申请金额、关联佣金、状态、审核人、放款流水和失败原因。
 - `agent_marketing_content`: 招募页、FAQ、素材、话术、等级说明和风险边界。

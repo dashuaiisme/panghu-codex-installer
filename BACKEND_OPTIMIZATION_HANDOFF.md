@@ -269,16 +269,16 @@ tests\test_commercial_flow_acceptance.py
 tests\test_commercial_backend_contract_docs.py
 ```
 
-### N-BE-08 手机控制Agent独立增值服务
+### N-BE-08 连接通讯软件独立增值服务
 
-手机控制Agent是“配置Agent”模块内的独立增值服务，不是基础 Agent 配置的子状态，也不是代理中心能力。
+连接通讯软件是“配置Agent”模块内的独立增值服务，不是基础 Agent 配置的子状态，也不是代理中心能力。
 
 必须保持：
 
-- 独立 `service_type=mobile_control_agent`。
+- 独立 `service_type=communication_software_link`。
 - 独立商品、订单、配置会话、验收记录、扣费事件和返佣事件。
-- 基础 Agent 配置交付事件与 `mobile_control_agent_delivered` 分开。
-- 入口不能被“本工具本次基础配置会话已完成”硬锁死；已有可用 Agent、历史交付或人工复核都可以进入手机控制Agent链路。
+- 基础 Agent 配置交付事件与 `communication_software_link_delivered` 分开。
+- 入口不能被“本工具本次基础配置会话已完成”硬锁死；已有可用 Agent、历史交付或人工复核都可以进入连接通讯软件链路。
 - 验收必须记录入站平台消息、Agent 调用证据、出站平台回复、响应摘要和唯一 `source_event_id`。
 - 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，不能自动判定为配置失败、退款或不收费，应进入暂停、重试或人工复核。
 
@@ -290,7 +290,7 @@ docs\COMMERCIAL_BACKEND_API_CONTRACT.md
 docs\TECHNICAL_MAINTENANCE_MANUAL.md
 ACCEPTANCE.md
 SAFETY.md
-BACKEND_MOBILE_CONTROL_AGENT_HANDOFF.md
+BACKEND_COMMUNICATION_SOFTWARE_LINK_HANDOFF.md
 ```
 
 ## 6. 架构优化建议
