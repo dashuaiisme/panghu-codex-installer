@@ -2507,6 +2507,52 @@
       const responseDigest = s.agentResponseDigest || "";
       const outboundId = s.outboundPlatformMessageId || "";
       const evidence = s.evidenceUrl || "";
+      const officialRobotPages = [
+        ["飞书开发者后台", "https://open.feishu.cn/app?lang=zh-CN"],
+        ["飞书开放平台", "https://open.feishu.cn/?lang=zh-CN"],
+        ["钉钉自定义机器人", "https://open.dingtalk.com/document/robots/custom-robot-access"],
+        ["钉钉开放平台", "https://open.dingtalk.com/"],
+        ["QQ 机器人文档", "https://bot.qq.com/"],
+        ["QQ 开放平台", "https://q.qq.com/"],
+        ["企业微信官网", "https://work.weixin.qq.com/"]
+      ];
+      const officialRobotGuide = `
+        <div class="gm-canvas-card gm-hud-corners" style="margin-bottom: 16px; padding: 16px; background: rgba(138, 180, 248, 0.025); border-color: rgba(138, 180, 248, 0.16);">
+          <div style="display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px;">
+            <div>
+              <b style="color: var(--g-primary);">机器人创建/注册引导</b>
+              <p style="font-size: 12px; color: var(--g-text-muted); line-height: 1.6; margin-top: 6px;">
+                打开官方页面创建/配置机器人，复制机器人 ID、群聊/会话 ID、验签密钥或回调设置回到本客户端。
+              </p>
+            </div>
+            <span class="gm-chip warn" style="border-radius: 6px; white-space: nowrap;">不读取官方账号密码</span>
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+            ${officialRobotPages.map(([label, url]) => `
+              <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${url}')" style="min-height: 32px; padding: 0 10px; font-size: 11px;">${label}</button>
+            `).join("")}
+          </div>
+
+          <div class="gm-canvas-grid" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px;">
+            <div class="gm-form-field">
+              <label>platform_account_id</label>
+              <small>机器人 ID / 应用 ID / Bot AppID，从官方控制台复制。</small>
+            </div>
+            <div class="gm-form-field">
+              <label>platform_chat_id</label>
+              <small>群聊、会话、频道或企业内部 Chat ID。</small>
+            </div>
+            <div class="gm-form-field">
+              <label>gateway_mode</label>
+              <small>选择官方机器人、客户自有机器人或人工桥接。</small>
+            </div>
+          </div>
+
+          <div class="gm-chip info" style="width: 100%; border-radius: 6px; padding: 8px 12px; display: block; height: auto; text-transform: none; font-weight: normal; line-height: 1.5;">
+            前置条件：在官方平台完成回调地址、验签密钥或签名设置；敏感信息只发送给服务端。不要在本客户端输入官方账号密码，本地不会硬编码真实接入成功，最终状态以真实平台回调与服务端验收记录为准。
+          </div>
+        </div>`;
 
       if (step === "10") {
         return `
@@ -2531,8 +2577,8 @@
             </div>
 
             <div class="gm-canvas-card">
-              <b>选择通讯通道</b>
-              <small>选择需要接入的目标通讯工具，通道可用性受云端授权状态约束。</small>
+              <b>选择平台/通讯通道</b>
+              <small>先选平台，再打开官方页面创建或配置机器人；通道可用性受云端授权状态约束。</small>
               <select class="gm-select" id="cslChannel" onchange="updateCSLPayload()" style="margin-top: 8px;">
                 <option value="feishu" ${channel === "feishu" ? "selected" : ""}>飞书 / Feishu</option>
                 <option value="qq_bot" ${channel === "qq_bot" ? "selected" : ""}>QQ 机器人</option>
@@ -2542,6 +2588,8 @@
               </select>
             </div>
           </div>
+
+          ${officialRobotGuide}
 
           <div class="gm-canvas-grid" style="margin-bottom: 16px;">
             <div class="gm-form-field">
@@ -2557,15 +2605,15 @@
               <input class="gm-input" id="cslSessionId" placeholder="创建会话后自动回填，也可手动填入" value="${sessionId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>平台账号 / 机器人 ID</label>
+              <label>平台账号 / 机器人 ID (platform_account_id)</label>
               <input class="gm-input" id="cslPlatformAccountId" placeholder="如飞书机器人、QQ Bot、企业微信应用 ID" value="${platformAccountId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>手机/聊天/群组标识</label>
+              <label>聊天/群组/会话 ID (platform_chat_id)</label>
               <input class="gm-input" id="cslPlatformChatId" placeholder="手机会话、群组、好友、企业或内部 Chat ID" value="${chatTarget}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>连接方式</label>
+              <label>连接方式 (gateway_mode)</label>
               <select class="gm-select" id="cslGatewayMode" onchange="updateCSLPayload()">
                 <option value="official_bot" ${gatewayMode === "official_bot" ? "selected" : ""}>官方机器人 / 应用</option>
                 <option value="customer_bot" ${gatewayMode === "customer_bot" ? "selected" : ""}>客户自有机器人</option>

@@ -39,6 +39,14 @@ rg -n "48 人|2000|350|50\.00|downstream_count: 48|available_settlement_cents: 2
 
 ## 3. 本轮验证记录
 
+### 2026-07-03 R5 买家机器人创建/注册/凭证填写引导
+
+- `tests/test_panghu_commercial_manifest.py` 机器人创建/注册/凭证填写引导 focused 验证：`28 passed, 74 deselected`；覆盖 `src/ui/index.html` 引导卡片、官方入口、`platform_account_id`、`platform_chat_id`、`gateway_mode`、回调地址和验签密钥说明的防回归断言。
+- `python -m pytest -q`：`338 passed, 187 subtests passed`。
+- `python scripts\commercial_release_acceptance.py --json`：仍为 `WARN`；阻塞仍是三端客户包缺失、商业清单生产公钥未注入。
+
+本轮 R5 验证只覆盖客户端 UI 前置引导和测试防回归，不代表真实平台回调、Runtime Adapter 生产接入或服务端验收闭环完成。
+
 ### 2026-07-03 团队模式代码推进轮
 
 本轮修正 `src/ui/index.html` 客户运行资产中的演示态污染和假成功态，并新增静态守卫测试。已执行：
@@ -84,6 +92,8 @@ rg -n "48 人|2000|350|50\.00|downstream_count: 48|available_settlement_cents: 2
 | 旧 focused 记录 | 旧前端删除 / 商业 manifest / 发布脚本 focused pytest | `98 passed, 11 subtests passed` | 历史记录，需复验 |
 | 旧 focused 记录 | 商业后端 focused pytest | `158 passed, 11 subtests passed` | 历史记录，需复验 |
 | 后续整理记录 | `python -m pytest -q` | `pytest`: `320 passed, 185 subtests passed` | 历史记录，需复验 |
+| 2026-07-03 R5 买家机器人引导 focused 验证 | `tests/test_panghu_commercial_manifest.py` 相关 focused 回归 | `28 passed, 74 deselected` | 覆盖机器人创建/注册/凭证填写引导；不代表真实平台回调或服务端验收闭环 |
+| 2026-07-03 R5 全量回归 | `python -m pytest -q` | `pytest`: `338 passed, 187 subtests passed` | 当前最新本地复验；release acceptance 仍 WARN |
 | 2026-07-03 团队模式代码推进轮 | `python -m pytest -q` | `pytest`: `330 passed, 187 subtests passed` | 当前本地复验 |
 | 2026-07-03 R3 focused 验证 | `python -m pytest tests\test_commercial_backend_contract.py tests\test_installer_backend.py -q -k "communication_software_link" -p no:cacheprovider` | `24 passed, 54 deselected` | 覆盖跨会话/入站消息匹配守卫和服务端 `False` 覆盖旧 `True`；不代表生产真实闭环 |
 | 最近记录（原 `TASKS.md`，已并入 `FINAL_REPORT.md`） | `python -m pytest -q` | `pytest`: `329 passed, 187 subtests passed` | 历史记录，已被本轮 `330 passed` 覆盖 |

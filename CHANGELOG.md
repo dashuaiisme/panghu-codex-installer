@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-07-03（R5-DOCS-ROBOT-GUIDE-01 文档收尾）
+
+- 记录买家机器人创建/注册/凭证填写引导：客户端 UI `src/ui/index.html` 新增引导卡片，提供官方入口，并提示需要回填 `platform_account_id`、`platform_chat_id`、`gateway_mode`、回调地址和验签密钥。
+- 记录防回归范围：`tests/test_panghu_commercial_manifest.py` 增加对应客户 UI 断言，防止后续窗口把引导卡片误删或改成真实接通声明。
+- 记录验证结果：focused `28 passed, 74 deselected`；全量 `338 passed, 187 subtests passed`；release acceptance 仍为 `WARN`，阻塞仍是三端包缺失和生产公钥未注入。
+- 保留边界：这只是连接通讯软件真实接入前置条件和买家填表链路，不代表真实平台回调、Runtime Adapter 或服务端验收闭环已完成。
+
 ## 2026-07-03（R3-DOCS-01 文档收尾）
 
 - 记录 R3 连接通讯软件守卫完成项：服务端合同新增平台回调跨会话隔离和入站消息匹配守卫，防止其它会话或不匹配消息污染验收。

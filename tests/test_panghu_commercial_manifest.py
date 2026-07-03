@@ -1663,6 +1663,25 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("platformAccountId:", html)
         self.assertIn("testPrompt:", html)
 
+    def test_webview_communication_software_link_guides_buyer_robot_setup_without_completion_claim(self) -> None:
+        html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("打开官方页面创建/配置机器人，复制机器人 ID、群聊/会话 ID、验签密钥或回调设置回到本客户端", html)
+        self.assertIn("https://open.feishu.cn/app?lang=zh-CN", html)
+        self.assertIn("https://open.dingtalk.com/document/robots/custom-robot-access", html)
+        self.assertIn("https://bot.qq.com/", html)
+        self.assertIn("https://work.weixin.qq.com/", html)
+        self.assertIn("platform_account_id", html)
+        self.assertIn("platform_chat_id", html)
+        self.assertIn("gateway_mode", html)
+        self.assertIn("回调地址", html)
+        self.assertIn("验签密钥", html)
+        self.assertIn("敏感信息只发送给服务端", html)
+        self.assertIn("不要在本客户端输入官方账号密码", html)
+        self.assertIn("本地不会硬编码真实接入成功", html)
+        self.assertNotIn("真实接入已完成", html)
+        self.assertNotIn("可提交服务端真实验收", html)
+
     def test_webview_customer_asset_does_not_ship_demo_accounts_or_fake_agent_center_sync(self) -> None:
         html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
 

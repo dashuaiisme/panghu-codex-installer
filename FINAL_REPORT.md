@@ -42,6 +42,7 @@
 - `agent_center` 已纳入商业 manifest 签名控制字段，避免收益和结算快照绕过服务端签名保护。
 - 产品手册和商业后端合同已同步：胖虎AI管理员后台需要“代理业务管理”，公开招商页固定为 `/agent/join`。
 - 连接通讯软件已完成文档合同口径收束，并补齐本地合同/客户端边界：定位为“配置Agent”模块内的独立增值服务，必须独立订单、独立配置会话、独立验收、独立收费；客户端一键连接只创建订单/会话、发起测试并生成本地预检字段，不自动提交真实验收。R3 已补齐服务端合同守卫：平台回调必须隔离跨会话污染，入站消息必须匹配当前会话；客户端刷新服务端状态时会用服务端返回的 `False` 覆盖本地旧 `True`，避免旧完成态残留。离线合同层已要求验收必须绑定服务端已接受的平台回调、Agent Runtime Adapter 成功结果和唯一 `source_event_id`；客户端可展示服务端真实闭环字段，但默认不得本地声明完成。真实服务端闭环仍未完成，见第 5 节。
+- R5 已补齐买家机器人创建/注册/凭证填写引导：`src/ui/index.html` 新增引导卡片，提供官方入口，并说明需要回填 `platform_account_id`、`platform_chat_id`、`gateway_mode`、回调地址和验签密钥；`tests/test_panghu_commercial_manifest.py` 增加防回归断言。该项只是连接通讯软件真实接入前置条件和买家填表链路，不代表真实平台回调、Runtime Adapter 或服务端验收闭环已完成。
 - 客户端主从关系已统一：胖虎AI客户端是主产品和统一入口；中转站只写作 API 网关分支。
 - 跨项目增值业务集成图已建立（见 `INTEGRATION.md`）；客户端已具备 `value_added_services` 服务目录底座：签名控制、敏感字段过滤、WebView 目录同步；没有服务端目录时继续使用当前过渡入口。
 - 自动化测试基线可运行；内置网站入口映射和 WebView 前提脚本可运行。
@@ -83,6 +84,7 @@
 - `agent_delivery_acceptance.py` 默认只读检查为 `blocked`：未执行最小中文对话，多个客户端 scope 未确认，Gemini / agy 配置待开发。
 - 轻量发布前检查仍为 `WARN`，阻塞为三端客户包缺失和商业清单生产公钥未注入。
 - R3 focused 验证记录：`python -m pytest tests\test_commercial_backend_contract.py tests\test_installer_backend.py -q -k "communication_software_link" -p no:cacheprovider` -> `24 passed, 54 deselected`。
+- R5 验证记录：机器人创建/注册/凭证填写引导 focused `28 passed, 74 deselected`；全量 `338 passed, 187 subtests passed`；`commercial_release_acceptance.py --json` 仍为 `WARN`。
 - 项目文件审计仍有文档结构 warning，主要来自文档合并后旧审计脚本仍查找独立 `TASKS.md`、`DEPLOYMENT.md` 等文件。
 
 具体命令、结果和当前可用性见 `TESTING.md`。
@@ -103,7 +105,7 @@
 - Gemini / agy 配置链路待开发；当前只入口 / 待接入。
 - Codex 三模式在真实客户机器上分别完成重开 Codex 后的最小对话验收。
 - 代理中心真实服务端实现和数据闭环（token 返佣、下游付费激活返佣、付费安装 Agent 返佣、下游客户归因、结算状态、管理员后台“代理业务管理”）。当前只完成离线合同、请求构造、文档合同和测试守卫。
-- 连接通讯软件真实平台、Runtime Adapter 生产接入、支付/账本生产记录和生产端到端闭环仍未完成；当前只完成本地合同状态机、API 请求/解析、跨会话/入站消息匹配守卫、客户端订单/会话/测试/本地预检和服务端状态展示边界，不代表真实平台已接通。
+- 连接通讯软件真实平台、Runtime Adapter 生产接入、支付/账本生产记录和生产端到端闭环仍未完成；当前只完成本地合同状态机、API 请求/解析、跨会话/入站消息匹配守卫、客户端订单/会话/测试/本地预检、买家机器人创建/注册/凭证填写引导和服务端状态展示边界，不代表真实平台已接通。
 - 手机号接码控制中心与本客户端的生产打通（`sim` 子域名和 HTTPS 收尾由接码项目窗口负责）。
 - Plus session.脚本工具生产打通：`license.aitokenapi.cc` 激活服务、支付后发码、履约队列、真实 Plus 自动化、日志回写、退款/失败重试和人工复核闭环。
 - 三端客户包重新打包、Release、下载页和 `latest.json` 更新。
@@ -116,7 +118,7 @@
 
 - 后端合同与主程序实现还未做完逐项对照。
 - 代理中心真实服务端和管理员后台尚未验收，不能把代理中心写成已完成业务闭环。
-- 连接通讯软件仍需完成真实平台、Runtime Adapter 生产接入、支付/账本生产记录和生产验收链路；R3 守卫只覆盖合同、状态刷新和本地 focused 验证范围。
+- 连接通讯软件仍需完成真实平台、Runtime Adapter 生产接入、支付/账本生产记录和生产验收链路；R3 守卫只覆盖合同、状态刷新和本地 focused 验证范围，R5 机器人引导只覆盖买家填表前置链路。
 - 跨项目增值业务仍需胖虎AI服务端真实提供 `value_added_services` 服务目录和摘要接口；客户端底座已准备好，真实生产目录未接入。
 - 轻量发布前检查最近记录为 `WARN`，不能作为进入客户分发或生产下载入口更新的依据。
 - 当前系统 Python 未加载 `pywebview`，网站入口验收脚本会阻断内置网站闭环；需要重建含 `pywebview` 的 `.venv` 后复验。
