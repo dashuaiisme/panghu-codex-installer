@@ -134,6 +134,29 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, text)
 
+    def test_backend_contract_doc_covers_value_added_service_catalog(self) -> None:
+        path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
+        text = path.read_text(encoding="utf-8")
+
+        required_terms = [
+            "增值业务服务目录合同",
+            "`value_added_services`",
+            "`gpt_plus`",
+            "`phone_card`",
+            "`sms_code`",
+            "`communication_software_link`",
+            "Plus session.脚本工具",
+            "手机号接码控制中心",
+            "Plus Session Token",
+            "接码设备 token",
+            "https://sim.aitokenapi.cc",
+            "`status=pending_production`",
+            "`unverified_reason`",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, text)
+
     def test_backend_contract_doc_covers_legacy_profile_pollution_cleanup(self) -> None:
         path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
         text = path.read_text(encoding="utf-8")

@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-import panghu_codex_installer as installer  # noqa: E402
+import panghu_ai_client as installer  # noqa: E402
 
 
 CUSTOMER_WEB_FLOW_MODULES = {

@@ -2,6 +2,8 @@
 
 本文是“胖虎AI客户端”商业服务端合同，覆盖 Agent 配置交付、胖虎AI中转站权益、充值购买、增值业务、手机号/短信接码、GPT 会员服务、连接通讯软件、代理中心等服务端数据边界。客户端不得硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态、库存、履约状态或权益可售状态；这些值全部来自服务端。
 
+产品主从口径：胖虎AI客户端是主产品和客户统一入口；胖虎AI中转站、手机接码、Plus 充值 / Plus 订阅、连接通讯软件和代理中心都作为客户端功能区或分支服务承接。胖虎AI中转站只对应 API 网关、API Token、余额扣费、模型调用、用量记录、模型价格、网关侧充值记账和必要 token 返佣，不作为胖虎AI平台主后台、胖虎AI客户端后台或整个平台后台。账号、订单、支付、权益、代理、服务目录、运营配置和跨服务编排由独立胖虎AI后台管理系统负责。
+
 ## 1. 上下文模型
 
 当前客户端只保留统一胖虎AI账号登录。商业接口必须围绕登录后的账号身份和真实买家权益工作：
@@ -287,7 +289,71 @@
 
 `Gemini / agy` 当前只保留官方入口和待接入状态。未完成胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得作为付费完整配置交付。
 
-## 15. 连接通讯软件独立服务合同
+## 15. 增值业务服务目录合同
+
+胖虎AI服务端必须为客户端提供统一 `value_added_services` 服务目录，用于承接 Plus 订阅、手机卡/云号码、接码控制台、连接通讯软件和后续其他增值业务。客户端只展示服务端返回的入口、权益和状态，不本地计算价格、库存、号码分配、卡密发放或履约结论。
+
+建议返回字段：
+
+- `service_id`：稳定服务 ID，例如 `gpt_plus`、`phone_card`、`sms_code`、`communication_software_link`。
+- `title`：客户可见名称。
+- `target_project`：关联履约项目，例如“Plus session.脚本工具”或“手机号接码控制中心”。
+- `status`：服务端状态，例如 `available`、`paused`、`pending_production`、`manual_review`。
+- `entry_url`：客户端 WebView 要打开的服务端入口。
+- `purchase_url`：未购买时的购买入口；可与 `entry_url` 相同。
+- `entitlement_status`：当前买家权益状态，例如 `not_purchased`、`active`、`pending_activation`、`manual_review`。
+- `requires_webview_session`：是否必须桥接当前胖虎AI买家会话。
+- `summary_url`：客户可读摘要接口。
+- `unverified_reason`：服务未完成生产验收时的原因。
+
+服务端返回样例：
+
+```json
+{
+  "value_added_services": [
+    {
+      "service_id": "gpt_plus",
+      "title": "Plus 订阅",
+      "target_project": "Plus session.脚本工具",
+      "status": "available",
+      "entry_url": "https://aitokenapi.cc/value-added/gpt-plus",
+      "purchase_url": "https://aitokenapi.cc/value-added/gpt-plus",
+      "entitlement_status": "not_purchased",
+      "requires_webview_session": true,
+      "summary_url": "https://aitokenapi.cc/api/value-added/gpt-plus/summary",
+      "unverified_reason": null
+    },
+    {
+      "service_id": "sms_code",
+      "title": "接码控制台",
+      "target_project": "手机号接码控制中心",
+      "status": "pending_production",
+      "entry_url": "https://sim.aitokenapi.cc",
+      "purchase_url": "https://aitokenapi.cc/value-added/phone-card",
+      "entitlement_status": "unknown",
+      "requires_webview_session": true,
+      "summary_url": "https://aitokenapi.cc/api/value-added/sms-code/summary",
+      "unverified_reason": "生产 DNS、正式 AGENT_TOKEN、真实设备和数据库尚未验收"
+    }
+  ]
+}
+```
+
+Plus 订阅边界：
+
+- 支付、发码、激活码兑换、Session Token 处理、续费取消、自动化履约、失败重试、人工复核和日志回写由服务端与 Plus session.脚本工具承担。
+- 客户端不得保存、输出或转储 Plus Session Token、激活服务管理 token、执行器后台密钥或客户第三方账号密码。
+- 客户端只能打开购买页或履约入口，并展示服务端摘要状态。
+
+接码边界：
+
+- 手机卡、云号码、号码托管、短信回传、设备 Agent、平台会话、真实数据库、多手机/白卡绑定和审计由手机号接码控制中心承担。
+- 客户端不得保存短信全文、号码分配规则、接码设备 token、平台会话密钥或短信网关密钥。
+- 客户端只能打开 `sim` 子域名或服务端下发入口，并展示客户可读摘要。
+
+生产验收前，服务端必须用 `status=pending_production` 或 `unverified_reason` 明确标识，客户端不得把该服务展示成已完成交付。
+
+## 16. 连接通讯软件独立服务合同
 
 连接通讯软件是独立增值服务，固定 `service_type=communication_software_link`。它用于把已可用 Agent 接入 QQ、微信、飞书、钉钉、企业微信等通讯软件或办公协同通道。
 
@@ -310,6 +376,7 @@
 - `service_products`: `service_type`、名称、价格、状态、支持的 Agent、支持的平台通道、介绍文案和最低客户端版本。
 - `service_orders`: 买家、服务商品、Agent、通道、订单状态、收费状态、支付 ID、创建时间、交付时间和取消时间。
 - `communication_software_link_sessions`: 订单、买家、Agent、通道、平台账号、聊天对象、网关模式、状态、最近探测时间和验收时间。
+- `communication_software_link_platform_auth_sessions`: 订单、买家、Agent、通道、网关模式、授权 URL/二维码、平台授权状态、平台账号、聊天对象、过期时间和失败原因。
 - `communication_software_link_acceptance_records`: 入站平台消息 ID、出站平台消息 ID、测试提示词、Agent 响应摘要、证据链接、验收人、验收时间和唯一 `source_event_id`。
 - `service_ledger_events`: `service_type`、订单、买家、金额、状态和唯一 `source_event_id`。
 
@@ -325,6 +392,8 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - `GET /api/communication-software-link/offering`
 - `POST /api/communication-software-link/orders`
 - `GET /api/communication-software-link/orders/:id`
+- `POST /api/communication-software-link/platform-auth`
+- `GET /api/communication-software-link/platform-auth/:id`
 - `POST /api/communication-software-link/sessions`
 - `GET /api/communication-software-link/sessions/:id`
 - `POST /api/communication-software-link/sessions/:id/test`
@@ -346,6 +415,8 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 验收与扣费规则：
 
 - `POST /api/communication-software-link/sessions` 前，订单必须已支付，或明确进入后台人工预售/人工复核状态；未支付订单不得创建配置会话、不得写入平台账号或聊天对象。
+- 如果客户端没有平台账号或聊天对象，必须先通过 `POST /api/communication-software-link/platform-auth` 创建平台授权会话；服务端返回 `auth_session_id`、`authorization_url` 或 `qr_code_url`，客户端打开给买家扫码/授权，并通过 `GET /api/communication-software-link/platform-auth/:id` 轮询，拿到 `platform_account_id`、`platform_chat_id` 和 `gateway_mode` 后才能继续创建配置会话。
+- 服务端不得要求买家在客户端手填机器人密钥、个人微信密码、平台 access token 或长期授权密钥；这些敏感凭据只能在平台官方授权页、服务端安全回调或人工复核链路中处理。
 - 连接通讯软件必须记录入站平台消息、Agent 执行证据和出站平台回复证据。
 - 未形成上述证据时，不得标记 `communication_software_link_delivered`。
 - 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，只能进入暂停、重试或人工复核，不得自动判定为配置失败、自动退款或取消收费。
@@ -353,7 +424,7 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - 连接通讯软件退款、失败或人工复核不得自动撤销基础 Agent 配置交付。
 - 如果连接通讯软件未来参与代理返佣，返佣事件也必须使用独立 `communication_software_link_delivered`，不得复用 `agent_install_delivered`。
 
-## 16. 后端验收清单
+## 17. 后端验收清单
 
 - 商品配置由后台控制，客户端不写死价格、次数、有效期、设备数或上架状态。
 - 商业部署清单必须返回 `manifest_signature`、`manifest_issued_at`、`manifest_signature_algorithm` 和 `manifest_key_id`，且能通过客户端内置 Ed25519 公钥验签；缺失或验签失败时客户端拒绝商业配置。
@@ -366,13 +437,15 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - 后台可通过 `diagnostic_code` 查到完整链路。
 - 代理返佣比例、代理等级升级价格和展示开关全部由后台配置。
 - 代理中心必须区分 token 返佣、下游付费激活返佣和付费安装 Agent 返佣，不能把三者混成一个普通推广返佣字段。
+- 增值业务服务目录必须由服务端下发，覆盖 Plus 订阅、手机卡/云号码、接码控制台、连接通讯软件等入口、状态、权益和未验收原因。
+- Plus 订阅不得让客户端保存 Session Token、激活服务密钥或履约密钥；接码服务不得让客户端保存短信内容、设备 token 或号码分配规则。
 - 连接通讯软件必须作为独立 `service_type=communication_software_link` 处理，不能复用基础 Agent 配置的订单、权益、配置会话、验收记录或扣费事件。
 - 连接通讯软件入口不能被“本工具本次基础配置会话是否完成”硬锁死；已有可用 Agent、历史交付或人工复核必须能进入单独配置链路。
 - 连接通讯软件交付不能只以实时消息是否还能回传为准；验收证据已形成后，客户断网、禁 Key、取消平台授权或阻断回调不得自动免单。
 - 后端或客户端商业合同变更后，必须先运行 `python scripts/commercial_flow_acceptance.py --json`，离线验收订单、支付、权益、配置会话、设备超限不扣次、失败不扣次、成功扣次和佣金冲正主链路。
 - 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作；其中 `communication_link_real_delivery_claim_found` 必须为 `false`，防止客户端把连接通讯软件写成可自行声明真实交付完成。
 
-## 17. 代理业务管理
+## 18. 代理业务管理
 
 胖虎AI管理员账号必须新增一级菜单“代理业务管理”。该菜单是代理业务的唯一运营配置入口，至少包含：代理产品介绍、五级费用设置、返佣规则、代理审核、下游客户、佣金账本、结算提现、推广素材、风控冻结。桌面客户端不得复制这些配置规则，只能展示服务端快照和入口。
 

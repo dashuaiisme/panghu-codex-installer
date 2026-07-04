@@ -40,6 +40,8 @@ from commercial_api import (  # noqa: E402
     build_communication_software_link_session_create_request,
     build_communication_software_link_session_disable_request,
     build_communication_software_link_session_get_request,
+    build_communication_software_link_platform_auth_create_request,
+    build_communication_software_link_platform_auth_get_request,
     build_communication_software_link_session_test_request,
     build_order_create_request,
     build_payment_poll_request,
@@ -57,12 +59,13 @@ from commercial_api import (  # noqa: E402
     parse_api_envelope,
     sanitize_commercial_text,
     sanitize_commercial_api_payload,
+    sanitize_commercial_api_url,
     stable_config_reserve_idempotency_key,
     stable_config_session_idempotency_key,
     stable_agent_business_idempotency_key,
     stable_communication_software_link_idempotency_key,
 )
-import panghu_codex_installer as installer  # noqa: E402
+import panghu_ai_client as installer  # noqa: E402
 
 
 class CommercialApiContractTests(unittest.TestCase):
@@ -114,6 +117,11 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(
             self.contract.communication_software_link_session_disable_url("csl-1"),
             "https://aitokenapi.cc/api/communication-software-link/sessions/csl-1/disable",
+        )
+        self.assertEqual(self.contract.communication_software_link_platform_auth_url, "https://aitokenapi.cc/api/communication-software-link/platform-auth")
+        self.assertEqual(
+            self.contract.communication_software_link_platform_auth_session_url("pauth-1"),
+            "https://aitokenapi.cc/api/communication-software-link/platform-auth/pauth-1",
         )
         self.assertEqual(self.contract.communication_software_link_callback_url("qq_bot"), "https://aitokenapi.cc/api/communication-software-link/callbacks/qq-bot")
         self.assertEqual(self.contract.communication_software_link_callback_url("feishu"), "https://aitokenapi.cc/api/communication-software-link/callbacks/feishu")
@@ -243,6 +251,16 @@ class CommercialApiContractTests(unittest.TestCase):
             idempotency_key="csl-session-1",
         )
         session_get = build_communication_software_link_session_get_request(self.contract, "csl-1")
+        platform_auth = build_communication_software_link_platform_auth_create_request(
+            self.contract,
+            order_id="svc-ord-1",
+            agent_id="hermes",
+            channel="feishu",
+            gateway_mode="official_bot",
+            platform_chat_hint="chat-hint",
+            idempotency_key="csl-platform-auth-1",
+        )
+        platform_auth_get = build_communication_software_link_platform_auth_get_request(self.contract, "pauth-1")
         test = build_communication_software_link_session_test_request(
             self.contract,
             session_id="csl-1",
@@ -278,6 +296,13 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(session.body["order_id"], "svc-ord-1")
         self.assertEqual(session.body["platform_chat_id"], "chat-1")
         self.assertTrue(session_get.url.endswith("/api/communication-software-link/sessions/csl-1"))
+        self.assertEqual(platform_auth.url, self.contract.communication_software_link_platform_auth_url)
+        self.assertEqual(platform_auth.headers["Idempotency-Key"], "csl-platform-auth-1")
+        self.assertEqual(platform_auth.body["order_id"], "svc-ord-1")
+        self.assertEqual(platform_auth.body["channel"], "feishu")
+        self.assertEqual(platform_auth.body["platform_chat_hint"], "chat-hint")
+        self.assertEqual(platform_auth_get.method, "GET")
+        self.assertTrue(platform_auth_get.url.endswith("/api/communication-software-link/platform-auth/pauth-1"))
         self.assertTrue(test.url.endswith("/api/communication-software-link/sessions/csl-1/test"))
         self.assertEqual(test.body["test_prompt"], "请回复连接通讯软件验收成功")
         self.assertTrue(acceptance.url.endswith("/api/communication-software-link/sessions/csl-1/acceptance"))
@@ -322,6 +347,8 @@ class CommercialApiContractTests(unittest.TestCase):
         )
 
         self.assertEqual(callback.url, "https://aitokenapi.cc/api/communication-software-link/callbacks/qq-bot")
+        self.assertTrue(callback.headers["Idempotency-Key"].startswith("csl-callback-"))
+        self.assertNotIn("evt-msg-1", callback.headers["Idempotency-Key"])
         self.assertTrue(callback.body["mentioned_bot"])
         self.assertEqual(callback.body["source_event_id"], "evt-msg-1")
         self.assertEqual(admin_product.method, "PUT")
@@ -370,6 +397,18 @@ class CommercialApiContractTests(unittest.TestCase):
         safe_payload = sanitize_commercial_api_payload({"headers": request.headers})
         self.assertNotIn("secret-operator-token", str(safe_payload))
 
+    def test_api_url_summary_masks_business_ids_in_path_and_query(self) -> None:
+        safe_url = sanitize_commercial_api_url(
+            "https://aitokenapi.cc/api/communication-software-link/sessions/csl-1/test?order_id=svc-ord-1"
+        )
+
+        self.assertEqual(
+            safe_url,
+            "https://aitokenapi.cc/api/communication-software-link/sessions/[redacted]/test?[redacted-query]",
+        )
+        self.assertNotIn("csl-1", safe_url)
+        self.assertNotIn("svc-ord-1", safe_url)
+
     def test_entitlement_order_payment_and_config_session_requests_carry_required_context(self) -> None:
         entitlement = build_entitlement_query_request(self.contract, buyer_user_id="buyer-1", operator_user_id="buyer-1")
         order = build_order_create_request(
@@ -394,9 +433,11 @@ class CommercialApiContractTests(unittest.TestCase):
 
         self.assertEqual(entitlement.query["buyer_user_id"], "buyer-1")
         self.assertEqual(order.body["target_buyer_user_id"], "buyer-1")
+        self.assertEqual(order.body["delivery_scope"], "codex_agent_config")
         self.assertEqual(order.headers["Idempotency-Key"], "idem-1")
         self.assertEqual(payment.query["order_id"], "order-1")
         self.assertEqual(config.body["diagnostic_code"], "PH-CFG-1")
+        self.assertEqual(config.body["delivery_scope"], "codex_agent_config")
         self.assertEqual(config.headers["Idempotency-Key"], "idem-2")
 
     def test_api_key_owner_verify_request_targets_buyer_without_logging_raw_key(self) -> None:
@@ -743,7 +784,7 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(pending["entitlement_status_report"], "unpaid")
         self.assertEqual(paid_without_entitlement["order_status_report"], "entitlement_pending")
         self.assertEqual(paid_without_entitlement["entitlement_status_report"], "paid_unconfirmed")
-        self.assertEqual(ready["order_status_report"], "delivery_ready")
+        self.assertEqual(ready["order_status_report"], "local_session_completed_pending_real_delivery")
         self.assertEqual(ready["entitlement_status_report"], "authorized")
         self.assertIn("本地配置会话完成不代表客户真实交付完成", "\n".join(ready["blocking_gaps"]))
         self.assertEqual(reversed_status["order_status_report"], "local_reversed")
@@ -795,6 +836,36 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(parsed["outbound_platform_message_id"], "out-msg-1")
         self.assertEqual(parsed["agent_response_digest"], "sha256:reply")
         self.assertEqual(parsed["evidence_url"], "https://aitokenapi.cc/evidence/evt-1")
+
+    def test_parse_communication_software_link_state_fields_keeps_real_acceptance_separate_from_local_precheck(self) -> None:
+        parsed = parse_communication_software_link_state_fields(
+            {
+                "order_id": "svc-ord-1",
+                "session_id": "csl-1",
+                "real_service_state": "delivered",
+                "platform_callback_state": "accepted",
+                "adapter_status": "local_precheck_passed",
+                "real_acceptance_status": "verified",
+                "client_may_claim_delivery_complete": "true",
+            }
+        )
+        defaulted = parse_communication_software_link_state_fields(
+            {
+                "order_id": "svc-ord-2",
+                "session_id": "csl-2",
+                "real_service_status": "delivered",
+                "platform_callback_status": "accepted",
+                "runtime_adapter_status": "local_precheck_passed",
+                "acceptance_status": "verified",
+            }
+        )
+
+        self.assertEqual(parsed["real_service_status"], "delivered")
+        self.assertEqual(parsed["platform_callback_status"], "accepted")
+        self.assertEqual(parsed["runtime_adapter_status"], "local_precheck_passed")
+        self.assertEqual(parsed["acceptance_status"], "verified")
+        self.assertTrue(parsed["client_may_claim_delivery_complete"])
+        self.assertFalse(defaulted["client_may_claim_delivery_complete"])
 
     def test_parse_communication_software_link_state_fields_does_not_reuse_generic_id_for_order_and_session(self) -> None:
         parsed = parse_communication_software_link_state_fields({"id": "generic-id-1", "status": "ready"})

@@ -17,6 +17,7 @@ class ContractOrder:
     operator_user_id: str
     agent_chain: list[str]
     diagnostic_code: str
+    delivery_scope: str = "codex_agent_config"
     status: str = "created"
     entitlement_id: str = ""
 
@@ -31,6 +32,7 @@ class ContractEntitlement:
     remaining_uses: int = 1
     status: str = "active"
     source: str = "paid"
+    delivery_scope: str = "codex_agent_config"
     is_unlimited: bool = False
     device_limit: int = 1
     bound_device_ids: set[str] | None = None
@@ -46,6 +48,7 @@ class ContractConfigSession:
     mode_key: str
     device_id: str
     diagnostic_code: str
+    delivery_scope: str = "codex_agent_config"
     status: str = "reserved"
     deducted: bool = False
 
@@ -247,6 +250,15 @@ class ContractCommunicationSoftwareLinkRuntimeResult:
     error_message: str = ""
 
 
+@dataclass
+class ContractCommunicationSoftwareLinkDeliveryResult:
+    status: str
+    decision: ContractCommunicationSoftwareLinkCallbackDecision
+    runtime_result: ContractCommunicationSoftwareLinkRuntimeResult | None = None
+    acceptance_record: ContractCommunicationSoftwareLinkAcceptanceRecord | None = None
+    reason: str = ""
+
+
 # 连接通讯软件使用统一服务类型、账本事件和验收记录。
 COMMUNICATION_SOFTWARE_LINK_SERVICE_TYPE = "communication_software_link"
 AGENT_INSTALL_SERVICE_TYPE = "agent_install_delivery"
@@ -301,6 +313,8 @@ class CommercialLedgerContract:
         self.agent_applications: list[ContractAgentApplication] = []
         self.invite_codes: dict[str, str] = {}
         self.referral_bindings: dict[str, ContractReferralBinding] = {}
+        self.referral_binding_idempotency: dict[str, str] = {}
+        self.referral_binding_payloads: dict[str, tuple[object, ...]] = {}
         self.agent_chain_snapshots: list[ContractAgentChainSnapshot] = []
         self.agent_marketing_content: dict[str, object] = {
             "page_title": "胖虎AI代理招募",
@@ -327,6 +341,7 @@ class CommercialLedgerContract:
         self.communication_software_link_acceptance_payloads: dict[str, tuple[object, ...]] = {}
         self.communication_software_link_acceptance_by_source_event: dict[str, str] = {}
         self.communication_software_link_callback_source_events: dict[str, tuple[object, ...]] = {}
+        self.communication_software_link_accepted_callback_source_events: set[str] = set()
         self.communication_software_link_runtime_results: dict[str, ContractCommunicationSoftwareLinkRuntimeResult] = {}
         self.service_ledger_events: dict[str, ContractServiceLedgerEvent] = {}
         self.service_ledger_events_by_source_event: dict[str, str] = {}
@@ -572,6 +587,36 @@ class CommercialLedgerContract:
             application.status = "rejected"
             profile.status = "rejected"
         return application
+
+    def bind_referral_request(
+        self,
+        idempotency_key: str,
+        buyer_user_id: str,
+        invite_code: str,
+    ) -> ContractReferralBinding:
+        normalized_idempotency_key = str(idempotency_key or "").strip()
+        normalized_buyer_user_id = str(buyer_user_id or "").strip()
+        normalized_invite_code = str(invite_code or "").strip()
+        if not normalized_idempotency_key:
+            raise ValueError("代理绑定幂等键为空。")
+        payload = (normalized_buyer_user_id, normalized_invite_code)
+        if normalized_idempotency_key in self.referral_binding_idempotency:
+            if self.referral_binding_payloads[normalized_idempotency_key] != payload:
+                raise ValueError("代理绑定幂等键请求参数不一致。")
+            bound_buyer_user_id = self.referral_binding_idempotency[normalized_idempotency_key]
+            return self.referral_bindings[bound_buyer_user_id]
+        agent_user_id = self.invite_codes.get(normalized_invite_code)
+        if not agent_user_id:
+            raise ValueError("邀请码无效。")
+        if normalized_buyer_user_id == agent_user_id:
+            raise ValueError("代理不能绑定自己。")
+        profile = self.agent_profiles.get(agent_user_id)
+        if profile is None or profile.status != "active":
+            raise ValueError("代理账号未激活，不能绑定返佣关系。")
+        binding = self.bind_referral(normalized_buyer_user_id, normalized_invite_code)
+        self.referral_binding_idempotency[normalized_idempotency_key] = binding.buyer_user_id
+        self.referral_binding_payloads[normalized_idempotency_key] = payload
+        return binding
 
     def bind_referral(self, buyer_user_id: str, invite_code: str) -> ContractReferralBinding:
         if buyer_user_id in self.referral_bindings:
@@ -969,9 +1014,12 @@ class CommercialLedgerContract:
         source_event_id: str = "",
     ) -> ContractCommunicationSoftwareLinkCallbackDecision:
         session = self.communication_software_link_sessions[session_id]
+        order = self.service_orders[session.order_id]
         source_event_id = str(source_event_id or platform_message_id or "").strip()
         if session.channel != channel:
             return ContractCommunicationSoftwareLinkCallbackDecision(False, "rejected", "平台通道与会话不一致。", source_event_id)
+        if session.status == "acceptance_passed" or order.status == "delivered":
+            return ContractCommunicationSoftwareLinkCallbackDecision(False, "already_delivered", "连接通讯软件已完成验收交付，新的平台回调不会再次交付。", source_event_id)
         if session.status not in {"connected", "test_pending", "acceptance_passed"}:
             return ContractCommunicationSoftwareLinkCallbackDecision(False, "ignored", "连接通讯软件会话尚未连接。", source_event_id)
         authorized = set(authorized_sender_ids or [])
@@ -995,6 +1043,7 @@ class CommercialLedgerContract:
                 return ContractCommunicationSoftwareLinkCallbackDecision(False, "replayed", "重复平台回调已忽略。", source_event_id)
             return ContractCommunicationSoftwareLinkCallbackDecision(False, "replayed", "重复 source_event_id 参数不一致，已阻断。", source_event_id)
         self.communication_software_link_callback_source_events[source_event_id] = payload
+        self.communication_software_link_accepted_callback_source_events.add(source_event_id)
         session.status = "test_pending"
         session.last_probe_at = "day-0"
         return ContractCommunicationSoftwareLinkCallbackDecision(True, "accepted", "消息可进入 Agent Runtime Adapter。", source_event_id)
@@ -1076,6 +1125,14 @@ class CommercialLedgerContract:
         ]
         if any(not str(item or "").strip() for item in required_evidence):
             raise ValueError("连接通讯软件缺少闭环验收证据。")
+        if source_event_id not in self.communication_software_link_accepted_callback_source_events:
+            raise ValueError("连接通讯软件验收缺少已 accepted 的平台回调记录。")
+        callback_payload = self.communication_software_link_callback_source_events.get(source_event_id)
+        if callback_payload is None:
+            raise ValueError("连接通讯软件验收缺少平台回调记录。")
+        callback_session_id, _, callback_inbound_platform_message_id, *_ = callback_payload
+        if callback_session_id != session_id or callback_inbound_platform_message_id != inbound_platform_message_id:
+            raise ValueError("连接通讯软件验收平台回调与当前会话不匹配。")
         runtime_result = self.communication_software_link_runtime_results.get(source_event_id)
         if runtime_result is None or runtime_result.status != "success":
             raise ValueError("连接通讯软件缺少 Agent Runtime Adapter 成功结果，不能验收。")
@@ -1124,6 +1181,81 @@ class CommercialLedgerContract:
                 amount_cents=product.price_cents,
             )
         return record
+
+    def process_communication_software_link_callback_delivery(
+        self,
+        session_id: str,
+        channel: str,
+        platform_message_id: str,
+        sender_id: str,
+        text: str,
+        outbound_platform_message_id: str,
+        agent_response_digest: str,
+        evidence_url: str,
+        accepted_by: str,
+        mentioned_bot: bool = False,
+        wake_word_matched: bool = False,
+        authorized_sender_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+        require_wake_signal: bool = True,
+        source_event_id: str = "",
+    ) -> ContractCommunicationSoftwareLinkDeliveryResult:
+        normalized_source_event_id = str(source_event_id or platform_message_id or "").strip()
+        existing_acceptance = self.communication_software_link_acceptance_by_source_event.get(normalized_source_event_id)
+        existing_result = self.communication_software_link_runtime_results.get(normalized_source_event_id)
+        if existing_acceptance:
+            decision = ContractCommunicationSoftwareLinkCallbackDecision(
+                should_invoke_agent=False,
+                status="replayed",
+                reason="重复平台回调已返回已有验收记录。",
+                source_event_id=normalized_source_event_id,
+            )
+            return ContractCommunicationSoftwareLinkDeliveryResult(
+                status="replayed",
+                decision=decision,
+                runtime_result=existing_result,
+                acceptance_record=self.communication_software_link_acceptance_records[existing_acceptance],
+                reason=decision.reason,
+            )
+
+        decision = self.evaluate_communication_software_link_callback(
+            session_id=session_id,
+            channel=channel,
+            platform_message_id=platform_message_id,
+            sender_id=sender_id,
+            text=text,
+            mentioned_bot=mentioned_bot,
+            wake_word_matched=wake_word_matched,
+            authorized_sender_ids=authorized_sender_ids,
+            require_wake_signal=require_wake_signal,
+            source_event_id=normalized_source_event_id,
+        )
+        if not decision.should_invoke_agent:
+            return ContractCommunicationSoftwareLinkDeliveryResult(status=decision.status, decision=decision, reason=decision.reason)
+
+        runtime_result = self.record_communication_software_link_runtime_result(
+            session_id=session_id,
+            source_event_id=decision.source_event_id,
+            inbound_platform_message_id=platform_message_id,
+            outbound_platform_message_id=outbound_platform_message_id,
+            agent_response_digest=agent_response_digest,
+            status="success",
+        )
+        acceptance_record = self.record_communication_software_link_acceptance(
+            session_id=session_id,
+            source_event_id=decision.source_event_id,
+            inbound_platform_message_id=platform_message_id,
+            outbound_platform_message_id=outbound_platform_message_id,
+            test_prompt=text,
+            agent_response_digest=agent_response_digest,
+            evidence_url=evidence_url,
+            accepted_by=accepted_by,
+        )
+        return ContractCommunicationSoftwareLinkDeliveryResult(
+            status="delivered",
+            decision=decision,
+            runtime_result=runtime_result,
+            acceptance_record=acceptance_record,
+        )
 
     def record_service_ledger_event(
         self,
@@ -1250,6 +1382,7 @@ class CommercialLedgerContract:
         operator_user_id: str,
         agent_chain: list[str],
         diagnostic_code: str,
+        delivery_scope: str = "codex_agent_config",
     ) -> ContractOrder:
         _require_current_buyer_operator(buyer_user_id, operator_user_id)
         payload = (
@@ -1258,6 +1391,7 @@ class CommercialLedgerContract:
             operator_user_id,
             tuple(agent_chain),
             diagnostic_code,
+            delivery_scope,
         )
         if idempotency_key in self.order_idempotency:
             if self.order_idempotency_payloads[idempotency_key] != payload:
@@ -1272,6 +1406,7 @@ class CommercialLedgerContract:
             operator_user_id=operator_user_id,
             agent_chain=list(agent_chain),
             diagnostic_code=diagnostic_code,
+            delivery_scope=delivery_scope,
         )
         self.orders[order_id] = order
         self.order_idempotency[idempotency_key] = order_id
@@ -1297,6 +1432,7 @@ class CommercialLedgerContract:
             order_id=order_id,
             buyer_user_id=order.buyer_user_id,
             remaining_uses=0 if is_unlimited else 1,
+            delivery_scope=order.delivery_scope,
             is_unlimited=bool(is_unlimited),
         )
         order.status = "paid"
@@ -1358,6 +1494,7 @@ class CommercialLedgerContract:
             mode_key=mode_key,
             remaining_uses=remaining_uses,
             source="trial",
+            delivery_scope="trial",
         )
         self.entitlements[entitlement_id] = entitlement
         self.trial_idempotency[idempotency_key] = entitlement_id
@@ -1374,8 +1511,10 @@ class CommercialLedgerContract:
         mode_key: str,
         device_id: str,
         diagnostic_code: str,
+        delivery_scope: str = "",
     ) -> ContractConfigSession:
         entitlement = self.entitlements[entitlement_id]
+        effective_delivery_scope = str(delivery_scope or entitlement.delivery_scope or "codex_agent_config")
         _require_current_buyer_operator(entitlement.buyer_user_id, operator_user_id)
         payload = (
             entitlement_id,
@@ -1384,6 +1523,7 @@ class CommercialLedgerContract:
             mode_key,
             device_id,
             diagnostic_code,
+            effective_delivery_scope,
         )
         if idempotency_key in self.session_idempotency:
             if self.session_idempotency_payloads[idempotency_key] != payload:
@@ -1416,6 +1556,7 @@ class CommercialLedgerContract:
             mode_key=mode_key,
             device_id=device_id,
             diagnostic_code=diagnostic_code,
+            delivery_scope=effective_delivery_scope,
         )
         self.config_sessions[session_id] = session
         self.session_idempotency[idempotency_key] = session_id
@@ -1508,7 +1649,7 @@ class CommercialLedgerContract:
             blocking_gaps.append("服务端权益未确认，不能进入客户交付完成。")
         elif order.status == "paid":
             if any(session.status == "completed" for session in sessions.values()):
-                order_status_report = "delivery_ready"
+                order_status_report = "local_session_completed_pending_real_delivery"
                 blocking_gaps.append("本地配置会话完成不代表客户真实交付完成。")
             else:
                 order_status_report = "paid_unconfirmed"
@@ -1531,6 +1672,7 @@ class CommercialLedgerContract:
             "order_id": order.order_id,
             "order_status": order.status,
             "order_status_report": order_status_report,
+            "delivery_scope": order.delivery_scope,
             "entitlement_id": order.entitlement_id,
             "entitlement_status_report": entitlement_status_report,
             "config_session_statuses": {

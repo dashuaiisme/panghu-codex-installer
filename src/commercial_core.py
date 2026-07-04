@@ -167,6 +167,24 @@ class CommercialProduct:
 
 
 @dataclass(frozen=True)
+class ValueAddedServiceEntry:
+    service_id: str
+    title: str
+    target_project: str
+    status: str
+    entry_url: str
+    purchase_url: str
+    entitlement_status: str
+    requires_webview_session: bool
+    summary_url: str = ""
+    unverified_reason: str = ""
+
+    @property
+    def is_available(self) -> bool:
+        return self.status == "available" and not self.unverified_reason
+
+
+@dataclass(frozen=True)
 class EntitlementContract:
     entitlement_id: str
     buyer_user_id: str
@@ -653,6 +671,102 @@ def build_customer_purchase_product_lines(products: list[CommercialProduct]) -> 
     return lines
 
 
+VALUE_ADDED_SERVICE_STATUS_LABELS: dict[str, str] = {
+    "available": "已开放",
+    "paused": "已暂停",
+    "pending_production": "待生产验收",
+    "manual_review": "人工复核",
+}
+
+VALUE_ADDED_ENTITLEMENT_STATUS_LABELS: dict[str, str] = {
+    "not_purchased": "未购买",
+    "active": "已开通",
+    "pending_activation": "待激活",
+    "manual_review": "人工复核",
+    "unknown": "待服务端确认",
+}
+
+VALUE_ADDED_FORBIDDEN_KEYS: frozenset[str] = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "activation_service_token",
+        "agent_token",
+        "session_token",
+        "plus_session_token",
+        "sms_text",
+        "sms_code",
+        "phone_number",
+        "device_token",
+        "payment_secret",
+        "private_key",
+    }
+)
+
+
+def build_value_added_service_catalog(manifest: dict[str, Any]) -> list[ValueAddedServiceEntry]:
+    services = manifest.get("value_added_services") or []
+    if not isinstance(services, list):
+        return []
+
+    catalog: list[ValueAddedServiceEntry] = []
+    for item in services:
+        if not isinstance(item, dict):
+            continue
+        if any(key in item and item.get(key) for key in VALUE_ADDED_FORBIDDEN_KEYS):
+            continue
+        service_id = str(item.get("service_id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        target_project = str(item.get("target_project") or "").strip()
+        status = str(item.get("status") or "").strip()
+        entry_url = str(item.get("entry_url") or "").strip()
+        entitlement_status = str(item.get("entitlement_status") or "").strip()
+        if not all((service_id, title, target_project, status, entry_url, entitlement_status)):
+            continue
+        if status not in VALUE_ADDED_SERVICE_STATUS_LABELS:
+            continue
+        purchase_url = str(item.get("purchase_url") or entry_url).strip()
+        requires_webview_session = item.get("requires_webview_session")
+        if not isinstance(requires_webview_session, bool):
+            continue
+        catalog.append(
+            ValueAddedServiceEntry(
+                service_id=service_id,
+                title=title,
+                target_project=target_project,
+                status=status,
+                entry_url=entry_url,
+                purchase_url=purchase_url,
+                entitlement_status=entitlement_status,
+                requires_webview_session=requires_webview_session,
+                summary_url=str(item.get("summary_url") or "").strip(),
+                unverified_reason=str(item.get("unverified_reason") or "").strip(),
+            )
+        )
+    return catalog
+
+
+def build_value_added_service_summary_lines(services: list[ValueAddedServiceEntry]) -> list[str]:
+    if not services:
+        return ["增值业务：服务端暂未下发目录，请以网站后台开关为准。"]
+
+    lines = ["增值业务：服务端目录已同步"]
+    for service in services:
+        status_label = VALUE_ADDED_SERVICE_STATUS_LABELS.get(service.status, service.status)
+        entitlement_label = VALUE_ADDED_ENTITLEMENT_STATUS_LABELS.get(
+            service.entitlement_status,
+            service.entitlement_status or "待服务端确认",
+        )
+        bridge_label = "需要客户端登录会话" if service.requires_webview_session else "普通服务端入口"
+        line = f"{service.title}：{status_label} / {entitlement_label} / {bridge_label}"
+        if service.unverified_reason:
+            line += f" / {service.unverified_reason}"
+        lines.append(line)
+    return lines
+
+
 def build_agent_center_summary_lines(manifest: dict[str, Any]) -> list[str]:
     center = manifest.get("agent_center")
     if not isinstance(center, dict) or not center.get("enabled"):
@@ -884,7 +998,7 @@ def validate_commercial_manifest_trust(
 ) -> CommercialManifestTrustDecision:
     has_commercial_controls = any(
         key in manifest
-        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center")
+        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center", "value_added_services")
     )
     if not has_commercial_controls:
         return CommercialManifestTrustDecision(

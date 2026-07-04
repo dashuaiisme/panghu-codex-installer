@@ -1,0 +1,3192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>胖虎AI客户端</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Share+Tech+Mono&display=swap');
+
+    :root {
+      /* Gemini Dark Console Design System - Route F AI Analytics / SaaS Admin Cockpit */
+      --g-bg-deep: #04060a;
+      --g-bg: #070b12;
+      --g-console-bg: #030508;
+      --g-surface: #0b101a;
+      --g-surface-2: #111726;
+      --g-surface-3: #1a2338;
+      --g-line: rgba(0, 242, 196, 0.05);
+      --g-line-strong: rgba(255, 255, 255, 0.08);
+
+      /* New Audit/Premium Design System Tokens */
+      --g-line-glow: rgba(0, 242, 196, 0.15);
+      --g-panel-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%);
+      --g-hairline: 1px solid rgba(255, 255, 255, 0.03);
+      --g-scanline: linear-gradient(to bottom, rgba(0, 242, 196, 0.03) 50%, transparent 50%);
+
+      --g-text: #f3f4f6;
+      --g-text-inverse: #04060a;
+      --g-text-muted: #9ca3af;
+      --g-text-subtle: #6b7280;
+
+      --g-primary: #00f2c4; /* Teal-green focus */
+      --g-primary-strong: #00b894;
+      --g-secondary: #8ab4f8; /* Soft blue support */
+      --g-warm: #f6aea9;
+      --g-success: #00f2a9;
+      --g-warning: #fdd663;
+      --g-danger: #f28b82;
+
+      --g-aura: linear-gradient(135deg, #00f2c4 0%, #8ab4f8 52%, #c58af9 100%);
+      --g-aura-teal: linear-gradient(135deg, #00f2c4 0%, #00b894 100%);
+      --g-shadow-soft: 0 16px 48px rgba(0, 0, 0, 0.7);
+      --g-shadow-glow: 0 0 20px rgba(0, 242, 196, 0.12);
+
+      --g-radius-control: 8px;
+      --g-radius-card: 12px;
+      --g-radius-panel: 16px;
+
+      --g-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --g-mono: 'Share Tech Mono', Consolas, Monaco, monospace;
+
+      --g-sidebar-width: 250px;
+      --g-drawer-height: 290px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      color: var(--g-text);
+      font-family: var(--g-font);
+      background-color: var(--g-bg);
+      position: relative;
+    }
+
+    /* Ambient Space Grid (Minimal AI Environment) */
+    .gm-space-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background-color: var(--g-bg-deep);
+      background-image:
+        radial-gradient(circle at 10% 10%, rgba(0, 242, 196, 0.05), transparent 45%),
+        radial-gradient(circle at 90% 90%, rgba(138, 180, 248, 0.04), transparent 50%),
+        radial-gradient(circle at 50% 30%, rgba(197, 138, 249, 0.03), transparent 60%);
+      pointer-events: none;
+    }
+
+    .gm-space-bg::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+      background-size: 24px 24px;
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    .gm-space-bg::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0, 242, 196, 0.008) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 242, 196, 0.008) 1px, transparent 1px);
+      background-size: 80px 80px;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.6;
+    }
+
+    /* Buttons */
+    .gm-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      border: 1px solid var(--g-line-strong);
+      border-radius: var(--g-radius-control);
+      padding: 0 16px;
+      color: var(--g-text);
+      background: var(--g-surface-2);
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: pointer;
+      gap: 8px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    }
+
+    .gm-btn:hover {
+      border-color: var(--g-primary);
+      background: var(--g-surface-3);
+      box-shadow: 0 0 12px rgba(0, 242, 196, 0.15);
+    }
+
+    .gm-btn:active {
+      transform: translateY(0.5px);
+    }
+
+    .gm-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      border-color: var(--g-line);
+      background: var(--g-surface);
+      box-shadow: none;
+    }
+
+    .gm-btn-primary {
+      border: none;
+      color: var(--g-text-inverse);
+      background: var(--g-aura-teal);
+      font-weight: 600;
+      box-shadow: var(--g-shadow-glow);
+    }
+
+    .gm-btn-primary:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 0 20px rgba(0, 242, 196, 0.35);
+    }
+
+    .gm-glow-btn {
+      border: none !important;
+      color: var(--g-text-inverse) !important;
+      background: var(--g-aura-teal) !important;
+      font-weight: 700 !important;
+      box-shadow: 0 0 16px rgba(0, 242, 196, 0.3) !important;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .gm-glow-btn::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.8s ease;
+    }
+
+    .gm-glow-btn:hover::after {
+      transform: translateX(100%);
+    }
+
+    .gm-glow-btn:hover {
+      box-shadow: 0 0 24px rgba(0, 242, 196, 0.5), 0 0 8px rgba(0, 242, 196, 0.2) !important;
+      filter: brightness(1.1);
+    }
+
+    .gm-btn-secondary {
+      border-color: rgba(0, 242, 196, 0.2);
+      color: var(--g-primary);
+      background: rgba(0, 242, 196, 0.03);
+    }
+
+    .gm-btn-secondary:hover {
+      border-color: var(--g-primary);
+      background: rgba(0, 242, 196, 0.08);
+    }
+
+    .gm-btn-danger {
+      border-color: rgba(242, 139, 130, 0.3);
+      color: var(--g-danger);
+      background: rgba(242, 139, 130, 0.04);
+    }
+
+    .gm-btn-danger:hover {
+      border-color: var(--g-danger);
+      background: rgba(242, 139, 130, 0.08);
+    }
+
+    /* Inputs & Selects */
+    .gm-input, .gm-select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--g-line-strong);
+      border-radius: var(--g-radius-control);
+      padding: 0 14px;
+      color: var(--g-text);
+      background: var(--g-surface-2);
+      font-size: 13px;
+      outline: none;
+      transition: all 0.2s ease;
+      font-family: inherit;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .gm-input:focus, .gm-select:focus {
+      border-color: var(--g-primary);
+      box-shadow: 0 0 8px rgba(0, 242, 196, 0.2);
+      background: var(--g-surface-3);
+    }
+
+    .gm-input::placeholder {
+      color: var(--g-text-subtle);
+    }
+
+    /* Chips */
+    .gm-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--g-text-muted);
+      background: var(--g-surface-2);
+      border: 1px solid var(--g-line);
+    }
+
+    .gm-chip.ok { color: var(--g-success); border-color: rgba(0, 242, 169, 0.25); background: rgba(0, 242, 169, 0.06); }
+    .gm-chip.warn { color: var(--g-warning); border-color: rgba(253, 214, 99, 0.25); background: rgba(253, 214, 99, 0.06); }
+    .gm-chip.info { color: var(--g-secondary); border-color: rgba(138, 180, 248, 0.25); background: rgba(138, 180, 248, 0.06); }
+    .gm-chip.danger { color: var(--g-danger); border-color: rgba(242, 139, 130, 0.25); background: rgba(242, 139, 130, 0.06); }
+
+    /* Login Gate Layout */
+    .gm-login-portal {
+      position: relative;
+      z-index: 10;
+      display: none; /* Controlled by JS */
+      width: 100%;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .gm-login-card {
+      width: min(980px, 95vw);
+      min-height: 560px;
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      border-radius: var(--g-radius-panel);
+      border: 1px solid var(--g-line);
+      border-top: 1px solid var(--g-line-strong);
+      background: linear-gradient(135deg, rgba(11, 16, 26, 0.96) 0%, rgba(7, 11, 18, 0.98) 100%);
+      box-shadow: var(--g-shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(30px);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .gm-login-deco {
+      padding: 48px;
+      border-right: 1px solid var(--g-line);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: radial-gradient(circle at 20% 20%, rgba(0, 242, 196, 0.08), transparent 50%),
+                  radial-gradient(circle at 80% 80%, rgba(138, 180, 248, 0.06), transparent 50%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Premium AI Orbit and Aura node */
+    .gm-login-aura-core {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 320px;
+      height: 320px;
+      pointer-events: none;
+      z-index: 1;
+      opacity: 0.85;
+    }
+    .gm-login-aura-core .orbit {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      border: 1px dashed rgba(0, 242, 196, 0.08);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      animation: rotateOrbit 20s linear infinite;
+    }
+    .gm-login-aura-core .orbit.o1 { width: 260px; height: 260px; animation-duration: 25s; }
+    .gm-login-aura-core .orbit.o2 { width: 180px; height: 180px; animation-duration: 15s; animation-direction: reverse; }
+    .gm-login-aura-core .orbit.o3 { width: 100px; height: 100px; animation-duration: 8s; }
+
+    .gm-login-aura-core .core-glow {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 70px;
+      height: 70px;
+      background: var(--g-aura);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      filter: blur(25px);
+      opacity: 0.45;
+      animation: pulseCore 4s ease-in-out infinite alternate;
+    }
+
+    @keyframes rotateOrbit {
+      100% { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+    @keyframes pulseCore {
+      0% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.35; }
+      100% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.65; }
+    }
+
+    .gm-brand-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .gm-logo-spark {
+      width: 24px;
+      height: 24px;
+      background: var(--g-aura);
+      clip-path: polygon(50% 0%, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0% 50%, 39% 39%);
+      animation: rotateSpark 12s linear infinite;
+    }
+
+    @keyframes rotateSpark {
+      100% { transform: rotate(360deg); }
+    }
+
+    .gm-brand-group h2 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      background: linear-gradient(to right, var(--g-text), var(--g-text-muted));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .gm-login-desc {
+      margin-top: 32px;
+      margin-bottom: 32px;
+    }
+
+    .gm-login-desc h1 {
+      font-size: 26px;
+      font-weight: 800;
+      line-height: 1.3;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+      background: var(--g-aura);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .gm-login-desc p {
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--g-text-muted);
+    }
+
+    .gm-login-features {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: auto;
+    }
+
+    .gm-feature-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11.5px;
+      color: var(--g-text-muted);
+      background: rgba(255, 255, 255, 0.02);
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.01);
+      transition: all 0.2s ease;
+    }
+
+    .gm-feature-item:hover {
+      background: rgba(0, 242, 196, 0.02);
+      border-color: rgba(0, 242, 196, 0.1);
+      color: var(--g-text);
+    }
+
+    .gm-feature-item svg {
+      width: 14px;
+      height: 14px;
+      color: var(--g-primary);
+      filter: drop-shadow(0 0 3px rgba(0, 242, 196, 0.3));
+    }
+
+    .gm-login-form {
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    .gm-form-header {
+      margin-bottom: 4px;
+    }
+
+    .gm-form-header h2 {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .gm-form-header p {
+      font-size: 12px;
+      color: var(--g-text-subtle);
+      margin-top: 2px;
+    }
+
+    .gm-form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .gm-form-field label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--g-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .gm-account-input-wrapper {
+      display: grid;
+      grid-template-columns: 1fr 40px;
+      gap: 6px;
+    }
+
+    .gm-saved-list {
+      display: none;
+      position: absolute;
+      width: calc(50% - 50px);
+      right: 40px;
+      top: 200px;
+      border: 1px solid var(--g-line);
+      border-radius: var(--g-radius-control);
+      background: var(--g-surface-2);
+      z-index: 50;
+      max-height: 140px;
+      overflow-y: auto;
+      box-shadow: var(--g-shadow-soft);
+    }
+
+    .gm-saved-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--g-line);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .gm-saved-row:hover {
+      background: var(--g-surface-3);
+    }
+
+    .gm-saved-row span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--g-text-muted);
+    }
+
+    .gm-saved-row span:hover {
+      color: var(--g-text);
+    }
+
+    .gm-saved-row button {
+      background: transparent;
+      border: none;
+      color: var(--g-danger);
+      font-size: 10px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .gm-form-checkboxes {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .gm-form-checkboxes label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--g-text-muted);
+      cursor: pointer;
+    }
+
+    .gm-form-checkboxes input[type="checkbox"] {
+      accent-color: var(--g-primary);
+    }
+
+    .gm-btn:focus-visible,
+    .gm-input:focus-visible,
+    .gm-select:focus-visible,
+    .gm-dock-btn:focus-visible,
+    .gm-sidebar-item:focus-visible,
+    .gm-saved-row button:focus-visible,
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--g-primary);
+      outline-offset: 3px;
+      box-shadow: 0 0 0 4px rgba(0, 242, 196, 0.12);
+    }
+
+    .gm-login-links {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+
+    .gm-login-links a {
+      color: var(--g-primary);
+      text-decoration: none;
+      transition: color 0.2s;
+      cursor: pointer;
+    }
+
+    .gm-login-links a:hover {
+      color: var(--g-secondary);
+    }
+
+    /* Core Application Window Layout (P1: Top-Primary Module Navigation) */
+    .gm-cockpit {
+      position: relative;
+      z-index: 10;
+      display: none; /* Controlled by JS */
+      width: 100vw;
+      height: 100vh;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--g-bg);
+    }
+
+    /* Top Primary Navigation Header */
+    .gm-primary-header {
+      height: 64px;
+      background: rgba(4, 6, 10, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 24px;
+      z-index: 20;
+      flex-shrink: 0;
+    }
+
+    .gm-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 180px;
+    }
+
+    .gm-header-left h2 {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      background: var(--g-aura);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .gm-primary-nav {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      height: 100%;
+    }
+
+    .gm-dock-btn {
+      height: 100%;
+      padding: 0 20px;
+      border: none;
+      background: transparent;
+      color: var(--g-text-muted);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .gm-dock-btn:hover {
+      color: var(--g-text);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .gm-dock-btn.active {
+      color: var(--g-primary);
+      background: linear-gradient(180deg, rgba(0, 242, 196, 0.03) 0%, transparent 100%);
+    }
+
+    .gm-dock-btn::before {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 15%;
+      width: 70%;
+      height: 2px;
+      background: var(--g-aura-teal);
+      opacity: 0;
+      transition: all 0.2s ease;
+      border-radius: 99px;
+      box-shadow: 0 0 10px var(--g-primary);
+    }
+
+    .gm-dock-btn.active::before {
+      opacity: 1;
+    }
+
+    .gm-dock-btn span:first-child {
+      font-size: 13px;
+      font-weight: 700;
+      display: block;
+      text-align: center;
+      letter-spacing: -0.01em;
+    }
+
+    .gm-dock-btn span:last-child {
+      font-size: 8px;
+      opacity: 0.5;
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: block;
+      text-align: center;
+    }
+
+    .gm-header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 180px;
+      justify-content: flex-end;
+    }
+
+    /* P1: Modern Status Hub Component in Top Header */
+    .gm-status-hub {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 99px;
+      padding: 4px 18px;
+      height: 38px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    }
+
+    .gm-status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--g-text-muted);
+    }
+
+    .gm-status-pill strong {
+      color: var(--g-text);
+      font-weight: 600;
+      font-family: var(--g-mono);
+    }
+
+    .gm-status-label {
+      color: var(--g-text-subtle);
+      font-weight: 500;
+    }
+
+    .gm-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--g-success);
+      box-shadow: 0 0 8px var(--g-success);
+    }
+
+    .gm-status-dot.unsynced {
+      background: var(--g-warning);
+      box-shadow: 0 0 8px var(--g-warning);
+    }
+
+    /* Body Area of Cockpit Layout */
+    .gm-cockpit-body {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+    }
+
+    /* Contextual Sidebar Navigation (二级子菜单) */
+    .gm-context-sidebar {
+      width: var(--g-sidebar-width);
+      background: var(--g-bg-deep);
+      border-right: 1px solid rgba(255, 255, 255, 0.03);
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      z-index: 15;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    .gm-sidebar-subnav-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--g-text-subtle);
+      margin-bottom: 16px;
+      padding-left: 8px;
+    }
+
+    /* Right Main Viewport */
+    .gm-main-viewport {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-width: 0;
+      flex: 1;
+      width: auto;
+      background: var(--g-bg);
+    }
+
+    .gm-viewport-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      background: var(--g-bg-deep);
+    }
+
+    .gm-viewport-header h1 {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .gm-viewport-header p {
+      font-size: 11px;
+      color: var(--g-text-subtle);
+      margin-top: 2px;
+    }
+
+    /* Stepper segment bar - Kept hidden for contract compatibility */
+    .gm-stepper-container {
+      display: none !important;
+    }
+
+    /* Vertical Contextual Subnav List inside Sidebar */
+    .gm-subnav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: 100%;
+      position: relative;
+    }
+
+    .gm-subnav-list::before {
+      content: "";
+      position: absolute;
+      left: 27px;
+      top: 18px;
+      bottom: 18px;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.04);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .gm-timeline-node {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      width: 100%;
+      border-radius: var(--g-radius-control);
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--g-text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: left;
+      outline: none;
+    }
+
+    .gm-timeline-node:hover {
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--g-text);
+    }
+
+    .gm-timeline-node.active {
+      background: linear-gradient(90deg, rgba(0, 242, 196, 0.04) 0%, transparent 100%), var(--g-surface-2);
+      border-color: rgba(0, 242, 196, 0.1);
+      color: var(--g-text);
+      box-shadow: inset 2px 0 0 var(--g-primary);
+    }
+
+    .gm-node-dot {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid var(--g-line-strong);
+      display: grid;
+      place-items: center;
+      font-size: 10px;
+      font-weight: bold;
+      transition: all 0.2s;
+      background: var(--g-bg-deep);
+      flex-shrink: 0;
+      z-index: 2;
+    }
+
+    .gm-timeline-node.active .gm-node-dot {
+      border-color: var(--g-primary);
+      background: var(--g-primary);
+      color: var(--g-bg-deep);
+      box-shadow: var(--g-shadow-glow);
+    }
+
+    .gm-timeline-node.done .gm-node-dot {
+      border-color: var(--g-success);
+      background: rgba(0, 242, 169, 0.1);
+      color: var(--g-success);
+    }
+
+    .gm-node-label {
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--g-text-muted);
+    }
+
+    .gm-timeline-node.active .gm-node-label {
+      color: var(--g-text);
+      font-weight: 700;
+    }
+
+    .gm-timeline-sep {
+      display: none !important;
+    }
+
+    /* Bottom collapsible diagnostic drawer workspace layout (P1: Modern HUD style) */
+    .gm-workspace-container {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    .gm-workspace-container.collapsed .gm-diagnostics-drawer {
+      height: 0px;
+      border-top: none;
+    }
+
+    .gm-content-pane {
+      padding: 24px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      width: 100%;
+      max-width: none;
+      height: 100%;
+    }
+
+    /* Core visual command card */
+    .gm-mission-card {
+      background: var(--g-surface);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-radius: var(--g-radius-panel);
+      padding: 28px;
+      box-shadow: var(--g-shadow-soft);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      max-width: none;
+      flex: 1;
+      min-height: 520px;
+    }
+
+    .gm-mission-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+      background: var(--g-aura-teal);
+    }
+
+    .gm-mission-header {
+      margin-bottom: 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      padding-bottom: 16px;
+    }
+
+    .gm-canvas-meta {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--g-primary);
+      background: rgba(0, 242, 196, 0.08);
+      padding: 2px 8px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+
+    .gm-mission-header h2 {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-top: 4px;
+    }
+
+    .gm-canvas-desc {
+      font-size: 12.5px;
+      color: var(--g-text-muted);
+      line-height: 1.5;
+      margin-top: 6px;
+    }
+
+    .gm-mission-body {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    /* Diagnostics Collapsible Drawer - Restructured to Bottom Command Panel */
+    .gm-diagnostics-drawer {
+      background: var(--g-surface);
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      border-left: none;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      height: var(--g-drawer-height);
+      transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 10;
+    }
+
+    .gm-drawer-tabs {
+      display: flex;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      background: var(--g-bg-deep);
+    }
+
+    .gm-drawer-tab {
+      flex: 1;
+      padding: 12px;
+      background: transparent;
+      border: none;
+      color: var(--g-text-subtle);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .gm-drawer-tab:hover {
+      color: var(--g-text);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .gm-drawer-tab.active {
+      color: var(--g-primary);
+      border-bottom-color: var(--g-primary);
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    .gm-drawer-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .gm-drawer-content.scrollable {
+      overflow-y: auto;
+    }
+
+    .gm-drawer-content.hidden {
+      display: none !important;
+    }
+
+    /* Diagnostics Area Style (P1: Modern Asymmetric Grid) */
+    #deliveryInspector {
+      padding: 20px 24px;
+      display: grid;
+      grid-template-columns: 1.2fr 2fr 1.5fr;
+      gap: 24px;
+    }
+
+    .gm-inspector-col {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .gm-inspector-col h3 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--g-text-subtle);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      padding-bottom: 6px;
+      margin-bottom: 8px;
+    }
+
+    .gm-inspector-kv {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .gm-inspector-kv div {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.01);
+      font-family: var(--g-mono);
+    }
+
+    .gm-inspector-kv span:first-child {
+      color: var(--g-text-subtle);
+    }
+
+    .gm-inspector-kv span:last-child {
+      font-weight: 500;
+      color: var(--g-text-muted);
+    }
+
+    .gm-matrix {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .gm-matrix-header {
+      display: grid;
+      grid-template-columns: 90px repeat(5, 1fr);
+      font-size: 9px;
+      font-weight: bold;
+      color: var(--g-text-subtle);
+      text-align: center;
+      margin-bottom: 2px;
+    }
+
+    .gm-matrix-header span:first-child {
+      text-align: left;
+    }
+
+    .gm-matrix-row {
+      display: grid;
+      grid-template-columns: 90px repeat(5, 1fr);
+      align-items: center;
+      gap: 4px;
+    }
+
+    .gm-matrix-row strong {
+      font-size: 11px;
+      color: var(--g-text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .gm-matrix-pill {
+      height: 18px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: bold;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--g-text-subtle);
+      background: rgba(255, 255, 255, 0.01);
+      font-family: var(--g-mono);
+    }
+
+    .gm-matrix-pill.ok {
+      color: var(--g-success);
+      background: rgba(0, 242, 169, 0.06);
+      border-color: rgba(0, 242, 169, 0.15);
+    }
+
+    .gm-matrix-pill.warn {
+      color: var(--g-warning);
+      background: rgba(253, 214, 99, 0.06);
+      border-color: rgba(253, 214, 99, 0.15);
+    }
+
+    .gm-matrix-pill.bad {
+      color: var(--g-danger);
+      background: rgba(242, 139, 130, 0.06);
+      border-color: rgba(242, 139, 130, 0.15);
+    }
+
+    .gm-inspector-rule {
+      display: flex;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--g-text-subtle);
+      line-height: 1.4;
+    }
+
+    .gm-inspector-rule::before {
+      content: "✦";
+      color: var(--g-primary);
+    }
+
+    /* Logs Viewport Screen */
+    .gm-console-screen {
+      border: none;
+      background: var(--g-console-bg);
+      padding: 12px;
+      overflow-y: auto;
+      font-family: var(--g-mono);
+      font-size: 11px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+    }
+
+    .gm-log-row {
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .gm-log-row.success { color: var(--g-success); }
+    .gm-log-row.running { color: var(--g-warning); }
+    .gm-log-row.failed { color: var(--g-danger); }
+    .gm-log-row.muted { color: var(--g-text-subtle); }
+
+    /* Precision Elements & Premium Cockpit Utilities */
+    .gm-hud-corners {
+      position: relative;
+      border-radius: var(--g-radius-card) !important;
+      transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+      border: 1px solid rgba(255, 255, 255, 0.03) !important;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    .gm-hud-corners::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(0, 242, 196, 0.15) 0%, rgba(138, 180, 248, 0.03) 50%, rgba(0, 242, 196, 0.1) 100%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      opacity: 0.5;
+      transition: opacity 0.25s ease, background 0.25s ease;
+    }
+
+    .gm-hud-corners:hover::before {
+      background: linear-gradient(135deg, rgba(0, 242, 196, 0.25) 0%, rgba(138, 180, 248, 0.1) 50%, rgba(0, 242, 196, 0.2) 100%);
+      opacity: 1;
+    }
+
+    .gm-led {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--g-text-subtle);
+      transition: background 0.3s, box-shadow 0.3s;
+      flex-shrink: 0;
+    }
+
+    .gm-led.ok {
+      background: var(--g-success);
+      box-shadow: 0 0 8px var(--g-success), 0 0 2px var(--g-success);
+      animation: ledPulse 2s infinite ease-in-out;
+    }
+
+    .gm-led.warn {
+      background: var(--g-warning);
+      box-shadow: 0 0 8px var(--g-warning), 0 0 2px var(--g-warning);
+      animation: ledPulse 2s infinite ease-in-out;
+    }
+
+    .gm-led.danger {
+      background: var(--g-danger);
+      box-shadow: 0 0 8px var(--g-danger), 0 0 2px var(--g-danger);
+      animation: ledFlash 0.8s infinite steps(2);
+    }
+
+    @keyframes ledPulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+
+    @keyframes ledFlash {
+      0% { opacity: 0.2; }
+      100% { opacity: 1; }
+    }
+
+    .gm-status-lock {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--g-mono);
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--g-primary);
+      background: linear-gradient(135deg, rgba(0, 242, 196, 0.1) 0%, rgba(138, 180, 248, 0.03) 100%);
+      padding: 2px 8px;
+      border-radius: 99px;
+      border: 1px solid rgba(0, 242, 196, 0.2);
+      box-shadow: 0 0 6px rgba(0, 242, 196, 0.06);
+    }
+
+    .gm-signal-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--g-mono);
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--g-text-muted);
+    }
+
+    .gm-handshake-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+      padding: 8px 0;
+      font-family: var(--g-mono);
+      font-size: 11px;
+    }
+
+    .gm-handshake-row:last-child {
+      border-bottom: none;
+    }
+
+    .gm-scanline {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .gm-scanline::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(to bottom, transparent, rgba(0, 242, 196, 0.015) 50%, transparent 100%);
+      background-size: 100% 4px;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .gm-tech-num {
+      font-family: var(--g-mono);
+      letter-spacing: 0.02em;
+    }
+
+    /* Canvas forms & layouts */
+    .gm-canvas-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+      width: 100%;
+    }
+
+    @media (min-width: 1500px) {
+      .gm-canvas-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+    }
+
+    .gm-canvas-card {
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-top: 1px solid var(--g-line-strong);
+      border-radius: var(--g-radius-card);
+      padding: 16px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0.005) 100%), var(--g-surface-2);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .gm-canvas-card:hover {
+      border-color: rgba(0, 242, 196, 0.2);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    .gm-canvas-card b {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .gm-canvas-card small {
+      font-size: 11px;
+      color: var(--g-text-muted);
+      line-height: 1.4;
+    }
+
+    .gm-canvas-card p {
+      font-size: 11px;
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .gm-canvas-card input[type="checkbox"] {
+      accent-color: var(--g-primary);
+    }
+
+    .gm-empty-state-banner {
+      padding: 24px;
+      text-align: center;
+      border: 1px dashed rgba(255, 255, 255, 0.05);
+      border-radius: var(--g-radius-card);
+      background: rgba(255, 255, 255, 0.01);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Reusable Premium Cockpit/Workbench Components */
+    .gm-workbench {
+      display: grid;
+      grid-template-columns: 1.65fr 1fr;
+      gap: 24px;
+      width: 100%;
+      flex: 1;
+    }
+
+    @media (max-width: 1366px) {
+      .gm-workbench {
+        grid-template-columns: 1.35fr 1fr;
+        gap: 16px;
+      }
+    }
+
+    @media (max-height: 800px) {
+      .gm-mission-card {
+        min-height: 440px;
+        padding: 16px 20px;
+      }
+      .gm-mission-header {
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+      }
+      .gm-content-pane {
+        padding: 16px;
+      }
+      .gm-viewport-header {
+        padding: 12px 24px;
+      }
+      .gm-primary-header {
+        height: 56px;
+      }
+    }
+
+    .gm-workbench-main {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+
+    .gm-workbench-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+
+    .gm-workbench-sidebar b {
+      font-size: 13px;
+      color: var(--g-primary);
+      letter-spacing: -0.01em;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      padding-bottom: 6px;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .gm-status-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      color: var(--g-text-muted);
+    }
+
+    .gm-status-table td {
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+    }
+
+    .gm-status-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .gm-status-table td:last-child {
+      text-align: right;
+      font-weight: 700;
+      color: var(--g-text);
+    }
+
+    .gm-status-table td.ok { color: var(--g-success); }
+    .gm-status-table td.warn { color: var(--g-warning); }
+
+    .gm-activity-strip {
+      background: rgba(255, 255, 255, 0.01);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: var(--g-radius-control);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 11px;
+      margin-top: 12px;
+      width: 100%;
+    }
+
+    .gm-activity-badge {
+      font-size: 9px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(0, 242, 196, 0.1);
+      color: var(--g-primary);
+    }
+
+    .gm-activity-text {
+      color: var(--g-text-subtle);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .gm-activity-time {
+      font-family: var(--g-mono);
+      color: var(--g-text-muted);
+      font-size: 10px;
+    }
+
+    /* Scrollbars customization */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--g-bg-deep);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--g-surface-3);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--g-line-strong);
+    }
+
+    /* Asymmetric grid inside command surface step 2 */
+    .gm-command-deck {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .gm-command-deck-status {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      background: var(--g-surface-2);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-radius: var(--g-radius-card);
+    }
+
+    .gm-command-deck-status span {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11.5px;
+    }
+
+    .gm-command-deck-status label {
+      color: var(--g-text-subtle);
+    }
+
+    /* Agent Center and dynamic split layouts */
+    .gm-canvas-split {
+      display: grid;
+      grid-template-columns: 1.65fr 1fr;
+      gap: 24px;
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+    }
+
+    @media (max-width: 1366px) {
+      .gm-canvas-split {
+        grid-template-columns: 1.35fr 1fr;
+        gap: 16px;
+      }
+      :root {
+        --g-sidebar-width: 210px !important;
+      }
+      .gm-context-sidebar {
+        padding: 16px 12px !important;
+      }
+      .gm-btn {
+        min-height: 34px !important;
+        padding: 0 12px !important;
+        font-size: 11px !important;
+      }
+      .gm-primary-nav {
+        gap: 10px !important;
+      }
+      .gm-primary-nav .nav-item {
+        padding: 6px 10px !important;
+        font-size: 12px !important;
+      }
+      .gm-status-hub {
+        gap: 6px !important;
+      }
+      .gm-status-pill {
+        padding: 2px 8px !important;
+        font-size: 10px !important;
+      }
+    }
+
+    .gm-canvas-main-col {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+
+    .gm-canvas-sidebar-col {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+
+    /* Skeleton animations for waiting states */
+    .gm-skeleton-text {
+      height: 12px;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0.02) 25%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.02) 75%);
+      background-size: 200% 100%;
+      animation: gm-shimmer 1.5s infinite;
+      border-radius: 4px;
+      display: inline-block;
+    }
+    .gm-skeleton-bar {
+      height: 20px;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0.02) 25%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.02) 75%);
+      background-size: 200% 100%;
+      animation: gm-shimmer 1.5s infinite;
+      border-radius: 6px;
+      width: 100%;
+    }
+    @keyframes gm-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* Tunnel flow animation */
+    @keyframes gm-tunnel-flow {
+      0% { left: -100%; }
+      100% { left: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="gm-space-bg"></div>
+
+  <!-- Login Gate -->
+  <section class="gm-login-portal" id="loginGate">
+    <div class="gm-login-card">
+      <div class="gm-login-deco">
+        <!-- AI Aura background orbits -->
+        <div class="gm-login-aura-core">
+          <div class="orbit o1"></div>
+          <div class="orbit o2"></div>
+          <div class="orbit o3"></div>
+          <div class="core-glow"></div>
+        </div>
+
+        <div style="z-index: 2; position: relative; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
+          <div class="gm-brand-group">
+            <div class="gm-logo-spark"></div>
+            <h2>胖虎AI协同工作台</h2>
+          </div>
+          <div class="gm-login-desc" style="margin-top: 40px; margin-bottom: 40px;">
+            <h1>智能体协同及同步工作台</h1>
+            <p>整合第三方智能体运行环境部署、增值服务桥接与协同同步状态，确权以云端快照为准。</p>
+          </div>
+          <div class="gm-login-features">
+            <div class="gm-feature-item">
+              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;"><path fill-rule="evenodd" d="M2.166 4.9L10 1.154 17.834 4.9A2 2 0 0119 6.74v5.35a2 2 0 01-1.166 1.84l-7.834 3.748L2.166 13.93A2 2 0 011 12.09V6.74a2 2 0 011.166-1.84zM10 3.32L3 6.662v5.428l7 3.35 7-3.35V6.662L10 3.32z" clip-rule="evenodd"/></svg>
+              <span>本地依赖探针与智能体运行边界校验</span>
+            </div>
+            <div class="gm-feature-item">
+              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+              <span>云端同步快照以防接口归因混淆</span>
+            </div>
+            <div class="gm-feature-item">
+              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/></svg>
+              <span>协同接入云端系统以服务端数据为准</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="gm-login-form">
+        <div class="gm-form-header">
+          <h2>身份凭证验证</h2>
+          <p>使用您的胖虎AI授权账号登录面板</p>
+        </div>
+
+        <div class="gm-form-field">
+          <label>账号 / Username</label>
+          <div class="gm-account-input-wrapper">
+            <input class="gm-input" id="loginUser" placeholder="手机号或已注册邮箱">
+            <button class="gm-btn" onclick="toggleSavedAccountsList(event)">▾</button>
+          </div>
+          <div class="gm-saved-list" id="savedAccountsList"></div>
+        </div>
+
+        <div class="gm-form-field">
+          <label>密码 / Password</label>
+          <input class="gm-input" id="loginPass" type="password" placeholder="请输入账户登录密码">
+        </div>
+
+        <div class="gm-form-field">
+          <label>代理渠道邀请码 (选填)</label>
+          <input class="gm-input" id="inviteCode" placeholder="绑定下游代理客户标识">
+        </div>
+
+        <div class="gm-form-checkboxes">
+          <label><input type="checkbox" id="saveAccount" checked onchange="onSaveAccountChange()"> 记忆账号</label>
+          <label><input type="checkbox" id="rememberPwd" checked onchange="onRememberPwdChange()"> 记住密码</label>
+          <label><input type="checkbox" id="autoLogin" onchange="onAutoLoginChange()"> 自动连接</label>
+        </div>
+
+        <button class="gm-btn gm-btn-primary" onclick="submitLogin()">登录胖虎AI客户端</button>
+
+        <div class="gm-login-links">
+          <a onclick="window.pywebview.api.open_url('https://aitokenapi.cc/forgot')">忘记凭证?</a>
+          <a onclick="openRegister()">注册新账号</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Console Layout -->
+  <section class="gm-cockpit" id="consoleLayout">
+    <!-- Top Primary Header (一级菜单) -->
+    <header class="gm-primary-header">
+      <div class="gm-header-left">
+        <div class="gm-logo-spark"></div>
+        <h2>胖虎AI工作台</h2>
+      </div>
+
+      <!-- Top primary module navigation (一级菜单) -->
+      <nav class="gm-primary-nav" id="moduleDock">
+        <!-- Renders dynamically: 配置Agent, 胖虎AI网站, 增值业务, 代理中心 -->
+      </nav>
+
+      <div class="gm-header-right">
+        <!-- Centralized Modern Status Hub -->
+        <div class="gm-status-hub">
+          <div class="gm-status-pill">
+            <span class="gm-status-dot" id="cslStatusDot"></span>
+            <span class="gm-status-label">连接:</span>
+            <strong id="userChip">未同步</strong>
+          </div>
+          <div class="gm-status-pill">
+            <span class="gm-status-label">算力:</span>
+            <strong id="quotaChip">-</strong>
+          </div>
+          <div class="gm-status-pill">
+            <span class="gm-status-label">确权:</span>
+            <span class="gm-chip ok" id="editionChip">等待确权</span>
+          </div>
+        </div>
+
+        <div class="gm-header-actions" style="display: flex; gap: 8px;">
+          <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.start_update_check()" style="min-height: 32px; padding: 0 12px; font-size: 11px;">
+            检查更新
+          </button>
+          <button class="gm-btn" id="toggleDrawerBtn" onclick="toggleDiagnosticsDrawer()" style="min-height: 32px; padding: 0 12px; font-size: 11px;">
+            显示诊断
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Below Header Main Area: Contextual Sidebar + Main Workspace -->
+    <div class="gm-cockpit-body">
+      <!-- Contextual Sidebar Navigation (二级子菜单) -->
+      <aside class="gm-context-sidebar">
+        <div class="gm-sidebar-subnav-title">工作流 / 功能导航</div>
+        <nav class="gm-subnav-list" id="taskRail">
+          <!-- Renders dynamically -->
+        </nav>
+      </aside>
+
+      <!-- Workspace viewport -->
+      <main class="gm-main-viewport">
+        <!-- Inner Header for Context Details -->
+        <header class="gm-viewport-header">
+          <div>
+            <h1 id="viewportTitle">配置Agent</h1>
+            <p id="viewportDesc">载入中，请稍候...</p>
+          </div>
+        </header>
+
+        <!-- Hidden compat stepper timeline container (Preserves timelineWrapper DOM node for JS) -->
+        <div id="timelineWrapper" class="gm-stepper-container gm-hidden" style="display: none !important;"></div>
+
+        <!-- Main workspace grid with collapsible drawer -->
+        <div class="gm-workspace-container collapsed" id="workspaceContainer">
+        <!-- Central workspace canvas -->
+        <section class="gm-content-pane">
+          <div class="gm-mission-card">
+            <div class="gm-mission-header">
+              <span class="gm-canvas-meta" id="canvasKicker">TASK STEP</span>
+              <h2 id="canvasTitle">加载中...</h2>
+              <p class="gm-canvas-desc" id="canvasDesc">加载中，请稍候...</p>
+            </div>
+            <div class="gm-mission-body" id="workCanvas">
+              <!-- Action forms injected here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Drawer: 5D Matrix + Logs Viewport -->
+        <section class="gm-diagnostics-drawer" id="diagnosticsDrawer">
+          <div class="gm-drawer-tabs">
+            <button class="gm-drawer-tab active" id="tab-matrix" onclick="switchDrawerTab('matrix')">交付状态</button>
+            <button class="gm-drawer-tab" id="tab-logs" onclick="switchDrawerTab('logs')">运行日志</button>
+          </div>
+
+          <div class="gm-drawer-content scrollable" id="drawer-matrix-content">
+            <div id="deliveryInspector">
+              <!-- Rendered Dynamically -->
+            </div>
+          </div>
+
+          <div class="gm-drawer-content hidden" id="drawer-logs-content">
+            <div class="gm-telemetry-header" style="padding: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); background: var(--g-bg-deep);">
+              <span style="font-size: 10px; font-weight: bold; color: var(--g-text-subtle);">DIAGNOSTIC TRACE</span>
+              <button class="gm-btn" onclick="window.pywebview.api.copy_logs()" style="min-height: 22px; padding: 0 8px; font-size: 10px; border-radius: 4px;">复制日志</button>
+            </div>
+            <div class="gm-console-screen" id="logViewport" style="flex: 1; min-height: 200px;"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </section>
+
+  <script>
+    const isBrowser = !window.pywebview;
+    const noopPromise = (value = { success: true }) => Promise.resolve(value);
+    const serviceBase = "https://aitokenapi.cc";
+
+    // P0: Initial state contains absolutely NO hardcoded figures (prices, count, device limit, frozen cent, downstream count).
+    // Safe boundary default: hasSynced is false, all metadata set to null/empty.
+    let state = {
+      isLogged: false,
+      activeModule: "agent",
+      activeSubnav: "2",
+      loginUsername: "",
+      loginPassword: "",
+      remainingUses: null,
+      validUntil: null,
+      deviceLimit: null,
+      versionLabel: null,
+      apiKeyPresent: false,
+      environmentOk: false,
+      loginAccounts: [],
+      selectedAgents: { codex: true, claude_code: true, openclaw: true, hermes: true, gemini_agy: false },
+      agentMode: { codex: "cli", claude_code: "cli", openclaw: "cli", hermes: "cli", gemini_agy: "cli" },
+      agentMatrix: {
+        codex: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+        claude_code: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+        openclaw: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+        hermes: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+        gemini_agy: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" }
+      },
+      agentCenter: {
+        enabled: false,
+        current_level: "",
+        last_synced_at: "",
+        summary: null // Initial state summary must be null.
+      },
+      valueAddedServices: [],
+      communicationSoftwareLink: {},
+      hasSynced: false // Handshake tracking variable. Set to true once Python updates state.
+    };
+
+    let logsData = {
+      1: ["[19:40:01] 等待客户粘贴 API Key，日志不会输出完整 Key。"],
+      2: ["[19:40:05] 正在执行系统 PATH 检测...", "[19:40:06] Python 3.10.2 ✓ OK", "[19:40:07] AI 协同端口冲突排查 ✓ 正常"],
+      3: ["[19:40:08] Codex / ClaudeCode / OpenClaw / Hermes 已进入选择队列。"],
+      10: ["[19:40:11] 连接通讯软件为独立增值服务，验收记录由服务端生成。"]
+    };
+
+    if (isBrowser) {
+      window.pywebview = {
+        api: {
+          get_initial_state: () => noopPromise(buildPreviewState()),
+          login: (u) => { state.isLogged = true; state.loginUsername = u; state.hasSynced = true; refreshAll(); return noopPromise({ success: true }); },
+          select_login_account: () => noopPromise(),
+          remove_login_account: () => noopPromise(),
+          start_update_check: () => noopPromise(),
+          copy_logs: () => noopPromise(),
+          switch_module: (m) => { state.activeModule = m; state.activeSubnav = defaultSubnav(m); refreshAll(); return noopPromise(); },
+          switch_subnav: (s) => { state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
+          go_to_step: (s) => { state.activeModule = "agent"; state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
+          save_key: () => { state.apiKeyPresent = true; appendPythonLog("API Key 已保存，等待服务端归属校验。"); return noopPromise(); },
+          run_env_check: () => { state.environmentOk = true; appendPythonLog("环境检测通过。", "success"); return noopPromise({ success: true }); },
+          toggle_agent: (id, checked) => { state.selectedAgents[id] = checked; return noopPromise(); },
+          set_agent_mode: () => noopPromise(),
+          start_deploy: () => { appendPythonLog("开始执行 Agent 安装与配置。", "running"); return noopPromise(); },
+          start_config_only: () => noopPromise(),
+          start_dual_state_config: () => noopPromise(),
+          start_official_chatgpt_config: () => noopPromise(),
+          restore_backups: () => noopPromise(),
+          open_workspace: () => noopPromise(),
+          open_config_dir: () => noopPromise(),
+          open_url: (url) => { appendPythonLog("请求打开内置网站页面：" + url, "running"); return noopPromise(); },
+          refresh_agent_center_detail: () => {
+            appendPythonLog("已请求刷新代理中心服务端快照。", "running");
+            state.agentCenter.summary = null;
+            state.hasSynced = false;
+            setTimeout(() => {
+              appendPythonLog("已请求代理中心服务端快照；本地预览不生成业务数据", "success");
+              refreshAll();
+            }, 600);
+            return noopPromise();
+          },
+          communication_software_link_create_order: () => noopPromise(),
+          communication_software_link_create_session: () => noopPromise(),
+          communication_software_link_disable: () => noopPromise(),
+          communication_software_link_test: () => noopPromise(),
+          communication_software_link_run_local_runtime_test: () => noopPromise(),
+          communication_software_link_one_click_connect: () => noopPromise(),
+          communication_software_link_acceptance: () => noopPromise()
+        }
+      };
+    }
+
+    function buildPreviewState() {
+      const params = new URLSearchParams(window.location.search);
+      const preview = params.get("preview") === "agent";
+      if (!preview) {
+        return {
+          ...state,
+          isLogged: false,
+          loginUsername: "",
+          loginAccounts: []
+        };
+      }
+      return {
+        ...state,
+        isLogged: true,
+        activeModule: params.get("module") || "agent",
+        activeSubnav: params.get("subnav") || params.get("step") || "2",
+        loginUsername: "本地预览账号",
+        apiKeyPresent: false,
+        hasSynced: false,
+        versionLabel: null,
+        remainingUses: null,
+        validUntil: null,
+        deviceLimit: null,
+        agentMatrix: {
+          codex: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+          claude_code: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+          openclaw: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+          hermes: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
+          gemini_agy: { install: "●", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" }
+        },
+        agentCenter: {
+          enabled: true,
+          current_level: "等待服务端确权",
+          last_synced_at: "未同步",
+          summary: null
+        }
+      };
+    }
+
+    const modules = [
+      ["agent", "配置Agent", "DEPLOY / WIZARD"],
+      ["site", "胖虎AI网站", "SITE CONSOLE"],
+      ["value_added", "增值业务", "VALUE-ADDED SERVICES"],
+      ["courses", "代理中心", "PROXY CENTER"]
+    ];
+
+    const agentSteps = [
+      [1, "API Key 校验", "归属校验"],
+      [2, "系统环境检测", "依赖侦测"],
+      [3, "选择交付对象", "Agent 筛选"],
+      [4, "执行部署安装", "环境拉取"],
+      [5, "写入网络配置", "网关连接"],
+      [6, "通道启动检测", "入口探活"],
+      [7, "中文对话测试", "语言连通"],
+      [8, "功能验收矩阵", "系统测试"],
+      [9, "交付快照存档", "基础交付"],
+      [10, "三方软件互联", "通讯桥接"],
+      [11, "互联数据验收", "最终交付"]
+    ];
+
+    const subnav = {
+      site: [["account","控制台"],["key","令牌管理"],["recharge","充值购买"],["register","推广返佣"]],
+      value_added: [["gpt_plus","Plus 订阅"],["phone_card","手机卡/云号码"],["sms_code","接码控制台"],["comm_link","连接通讯软件"]],
+      courses: [["agent_home","代理总览"],["agent_customers","下游客户"],["agent_token_comm","token 返佣"],["agent_activation_comm","激活返佣"],["agent_install_comm","安装返佣"],["agent_proxy","工具代理后端"],["agent_join","招商介绍"],["agent_rules","代理规则"]]
+    };
+
+    const pageMeta = {
+      site: {
+        account: ["胖虎AI控制台", `${serviceBase}/console`, "通过内置 WebView 打开服务端控制台；客户端本地仅作入口展示，业务规则均以服务端为准。"],
+        key: ["令牌管理", `${serviceBase}/console/keys`, "内置访问令牌管理页；创建、复制与校验均需在服务端完成，本地不保存敏感凭证。"],
+        recharge: ["充值购买", `${serviceBase}/buy`, "打开云端充值购买页；价格、商品、套餐及支付结果完全由服务端规则判定。"],
+        register: ["推广返佣", `${serviceBase}/affiliate`, "打开云端推广返佣页；返佣账本及下游客户归因完全托管在网站服务端。"]
+      },
+      value_added: {
+        gpt_plus: ["Plus 订阅", `${serviceBase}/value-added/gpt-plus`, "打开 Plus 订阅购买或履约入口；支付、激活码发放、Session Token 处理与履约日志以云端服务端和 Plus 执行器为准。"],
+        phone_card: ["手机卡/云号码", `${serviceBase}/value-added/phone-card`, "打开手机卡与云号码服务页；价格、号码分配、激活状态与库存由云端服务端和接码控制中心控制。"],
+        sms_code: ["接码控制台", "https://sim.aitokenapi.cc", "打开接码控制台；号码分配、平台会话、短信回传与设备 Agent 状态完全依赖云端服务端。"],
+        comm_link: ["连接通讯软件", `${serviceBase}/value-added/communication-software-link`, "打开连接通讯软件服务介绍；配置、端口分配与测试验收需在[配置Agent]中进行。"]
+      },
+      courses: {
+        agent_home: ["代理总览", `${serviceBase}/agent-center`, "展示服务端代理中心快照，不在本地计算返佣。"],
+        agent_customers: ["下游客户", `${serviceBase}/agent-center/customers`, "客户归因、绑定 and 结算以后台账本为准。"],
+        agent_token_comm: ["token 返佣", `${serviceBase}/agent-center/token-commission`, "Token/API 消费返佣来自服务端。"],
+        agent_activation_comm: ["激活返佣", `${serviceBase}/agent-center/activation-commission`, "下游付费激活返佣来自服务端。"],
+        agent_install_comm: ["安装返佣", `${serviceBase}/agent-center/install-commission`, "安装返佣来自服务端交付事件。"],
+        agent_proxy: ["工具代理后端", `${serviceBase}/agent-center/proxy-backend`, "代理经营配置入口在服务端。"],
+        agent_join: ["招商介绍", `${serviceBase}/agent/join`, "公开招商页由服务端维护。"],
+        agent_rules: ["代理规则", `${serviceBase}/agent-center/rules`, "等级、费用、结算、冻结和冲正规则以后台为准。"]
+      }
+    };
+
+    const agents = [
+      ["codex", "Codex"],
+      ["claude_code", "ClaudeCode"],
+      ["openclaw", "OpenClaw"],
+      ["hermes", "Hermes"],
+      ["gemini_agy", "Gemini / agy"]
+    ];
+
+    const agentModeOptions = {
+      codex: [["cli", "CLI"], ["client", "客户端"]],
+      claude_code: [["cli", "CLI"], ["client", "客户端"]],
+      openclaw: [["cli", "CLI"], ["client", "客户端"]],
+      hermes: [["cli", "CLI"], ["client", "客户端"]],
+      gemini_agy: [["cli", "CLI"], ["client", "官方入口"]]
+    };
+
+    function defaultSubnav(mod) { return mod === "agent" ? "2" : (subnav[mod] && subnav[mod][0][0]) || "2"; }
+
+    function valueAddedServiceMap() {
+      const result = {};
+      (state.valueAddedServices || []).forEach(service => {
+        if (!service || !service.service_id || !service.title || !service.entry_url) return;
+        result[service.service_id] = service;
+      });
+      return result;
+    }
+
+    function currentSubnavItems(mod) {
+      if (mod !== "value_added") return subnav[mod] || [];
+      const services = state.valueAddedServices || [];
+      if (!services.length) return subnav.value_added;
+      return services.map(service => [service.service_id, service.title || service.service_id]);
+    }
+
+    function currentPageMeta(mod, key) {
+      if (mod === "value_added") {
+        const service = valueAddedServiceMap()[key];
+        if (service) {
+          const status = service.unverified_reason ? `待生产验收：${service.unverified_reason}` : `服务状态：${service.status || "以服务端为准"}`;
+          const url = service.entry_url || service.purchase_url || serviceBase;
+          return [
+            service.title || "增值业务",
+            url,
+            `${status}；关联项目：${service.target_project || "以服务端为准"}。客户端只打开服务端入口，不保存短信、Session Token 或履约密钥。`
+          ];
+        }
+      }
+      return (pageMeta[mod] && pageMeta[mod][key]) || ["云端控制台", serviceBase, "一切服务端业务处理与结算确权以云端系统为准。"];
+    }
+
+    function initApp() {
+      window.pywebview.api.get_initial_state().then(data => {
+        // Safe backend merging. Force hasSynced on actual successful API bridge return.
+        state = { ...state, ...data, hasSynced: true };
+        refreshAll();
+      }).catch(() => {
+        state = buildPreviewState();
+        refreshAll();
+      });
+    }
+
+    window.addEventListener("pywebviewready", initApp);
+    document.addEventListener("DOMContentLoaded", () => { if (isBrowser) initApp(); });
+
+    function toggleDiagnosticsDrawer() {
+      const container = document.getElementById("workspaceContainer");
+      const btn = document.getElementById("toggleDrawerBtn");
+      if (container.classList.contains("collapsed")) {
+        container.classList.remove("collapsed");
+        btn.classList.add("active");
+        btn.innerText = "隐藏诊断";
+      } else {
+        container.classList.add("collapsed");
+        btn.classList.remove("active");
+        btn.innerText = "显示诊断";
+      }
+    }
+
+    function switchDrawerTab(tab) {
+      const matrixTab = document.getElementById("tab-matrix");
+      const logsTab = document.getElementById("tab-logs");
+      const matrixContent = document.getElementById("drawer-matrix-content");
+      const logsContent = document.getElementById("drawer-logs-content");
+
+      if (tab === 'matrix') {
+        matrixTab.classList.add('active');
+        logsTab.classList.remove('active');
+        matrixContent.classList.remove('hidden');
+        logsContent.classList.add('hidden');
+      } else {
+        matrixTab.classList.remove('active');
+        logsTab.classList.add('active');
+        matrixContent.classList.add('hidden');
+        logsContent.classList.remove('hidden');
+      }
+    }
+
+    function refreshAll() {
+      const loginGate = document.getElementById("loginGate");
+      const consoleLayout = document.getElementById("consoleLayout");
+      const moduleDock = document.getElementById("moduleDock");
+
+      if (!loginGate || !consoleLayout) return;
+
+      if (!state.isLogged) {
+        loginGate.style.display = "flex";
+        consoleLayout.style.display = "none";
+        document.getElementById("loginUser").value = state.loginUsername || "";
+        populateSavedAccounts();
+        return;
+      }
+
+      loginGate.style.display = "none";
+      consoleLayout.style.display = "flex";
+
+      renderModules();
+      renderRail();
+      renderCanvas();
+      renderInspector();
+      renderLogs();
+
+      // Safety boundaries status chips rendering
+      const cslStatusDot = document.getElementById("cslStatusDot");
+      if (!state.hasSynced) {
+        document.getElementById("editionChip").innerText = "等待确权";
+        document.getElementById("userChip").innerText = "未同步 / 以服务端为准";
+        document.getElementById("quotaChip").innerText = "未同步";
+        if (cslStatusDot) cslStatusDot.className = "gm-status-dot unsynced";
+      } else {
+        document.getElementById("editionChip").innerText = state.versionLabel || "商业版";
+        document.getElementById("userChip").innerText = state.loginUsername ? state.loginUsername : "未连接";
+        document.getElementById("quotaChip").innerText = state.remainingUses || "-";
+        if (cslStatusDot) cslStatusDot.className = "gm-status-dot";
+      }
+
+      // Title header syncing
+      const actMod = modules.find(m => m[0] === state.activeModule);
+      document.getElementById("viewportTitle").innerText = actMod ? actMod[1] : "工作台";
+      document.getElementById("viewportDesc").innerText = actMod ? actMod[2] : "";
+
+      // Configuration specific stepper rail panel toggle
+      const stepRailWrapper = document.getElementById("timelineWrapper");
+      if (state.activeModule === "agent") {
+        stepRailWrapper.classList.remove("gm-hidden");
+      } else {
+        stepRailWrapper.classList.add("gm-hidden");
+      }
+    }
+
+    window.updatePythonState = function(data) {
+      // Mark as synced upon state updates from python script.
+      state = { ...state, ...data, hasSynced: true };
+      if (state.activeModule === "value_added") {
+        const items = currentSubnavItems("value_added");
+        if (items.length && !items.some(item => String(item[0]) === String(state.activeSubnav))) {
+          state.activeSubnav = String(items[0][0]);
+        }
+      }
+      refreshAll();
+    };
+
+    function renderModules() {
+      const dock = document.getElementById("moduleDock");
+      dock.innerHTML = "";
+      modules.forEach(([id, title, desc]) => {
+        const btn = document.createElement("button");
+        btn.className = `gm-dock-btn ${state.activeModule === id ? "active" : ""}`;
+        btn.innerHTML = `<span>${title}</span><span>${desc}</span>`;
+        btn.onclick = () => window.pywebview.api.switch_module(id);
+        dock.appendChild(btn);
+      });
+    }
+
+    function renderRail() {
+      const rail = document.getElementById("taskRail");
+      rail.innerHTML = "";
+      const mod = state.activeModule || "agent";
+
+      const items = mod === "agent" ? agentSteps.map(s => [String(s[0]), s[1], s[2]]) : currentSubnavItems(mod).map(s => [s[0], s[1], "CLOUD"]);
+
+      items.forEach((item, idx) => {
+        const active = String(state.activeSubnav) === String(item[0]);
+        const done = mod === "agent" && Number(item[0]) < Number(state.activeSubnav || 1);
+
+        if (idx > 0) {
+          const sep = document.createElement("div");
+          sep.className = `gm-timeline-sep ${done ? "done" : ""}`;
+          rail.appendChild(sep);
+        }
+
+        const btn = document.createElement("button");
+        btn.className = `gm-timeline-node ${active ? "active" : ""} ${done ? "done" : ""}`;
+        btn.innerHTML = `
+          <div class="gm-node-dot">${done ? "✓" : idx + 1}</div>
+          <div class="gm-node-label">${item[1]}</div>
+        `;
+        btn.onclick = () => window.pywebview.api.switch_subnav(String(item[0]));
+        rail.appendChild(btn);
+      });
+    }
+
+    function renderCanvas() {
+      if (state.activeModule === "agent") return renderAgentCanvas();
+      return renderServiceCanvas();
+    }
+
+    function renderAgentCanvas() {
+      const step = String(state.activeSubnav || "2");
+      const meta = agentSteps.find(s => String(s[0]) === step) || agentSteps[1];
+      const canvas = document.getElementById("workCanvas");
+
+      document.getElementById("canvasKicker").innerText = `STEP ${meta[0]}`;
+      document.getElementById("canvasTitle").innerText = meta[1];
+      document.getElementById("canvasDesc").innerText = `${meta[2]}。本次交付由胖虎AI服务端运行规则统筹，交付矩阵五维确认后生效。`;
+
+      let stepBody = "";
+      if (step === "1") {
+        stepBody = `
+          <div style="display: flex; flex-direction: column; gap: 16px; width: 100%;">
+            <div class="gm-form-field">
+              <label>胖虎AI API Key</label>
+              <div style="display: grid; grid-template-columns: 1fr 100px; gap: 10px;">
+                <input id="apiKeyVal" class="gm-input" type="password" placeholder="sk-...">
+                <button class="gm-btn" onclick="toggleShowKey()">显示</button>
+              </div>
+            </div>
+            <label class="gm-chip warn gm-tech-num" style="margin-top: 4px; padding: 8px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="skipKeyTest">
+              <span>跳过连通测试（仅用于内部网络测试）</span>
+            </label>
+            <div style="display: flex; gap: 12px; margin-top: 10px;">
+              <button class="gm-btn gm-btn-primary" onclick="saveApiKey()">保存并验证 Key</button>
+              <button class="gm-btn" onclick="window.pywebview.api.open_url('${serviceBase}/console/keys')">在网页打开</button>
+            </div>
+          </div>`;
+      } else if (step === "2") {
+        const checkText = (ok, t) => ok ? `<span class="gm-led ok"></span> <span class="gm-tech-num" style="color: var(--g-success); font-weight: bold;">${t}</span>` : `<span class="gm-led warn"></span> <span class="gm-tech-num" style="color: var(--g-warning); font-weight: bold;">等待检测</span>`;
+
+        stepBody = `
+          <div class="gm-canvas-card gm-hud-corners" style="background: linear-gradient(180deg, rgba(138, 180, 248, 0.03) 0%, transparent 100%), var(--g-surface-2); border-color: rgba(138, 180, 248, 0.15); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px;">
+              <div>
+                <b style="font-size: 15px; color: var(--g-primary);">AI 环境诊断与协同控制舱</b>
+                <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">检测本机依赖项及协同并发状态</div>
+              </div>
+              <span class="gm-status-lock">诊断</span>
+            </div>
+
+            <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 0;">
+              <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
+                <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">系统环境依赖</b>
+                <span><label>运行平台</label><strong class="gm-tech-num">Windows x64</strong></span>
+                <span><label>Python 编译器</label><strong class="gm-tech-num">${state.environmentOk ? "3.10.2 ✓ OK" : "3.10+ Target"}</strong></span>
+                <span><label>Node.js 引擎</label><strong class="gm-tech-num">${state.environmentOk ? "16.14+ ✓ OK" : "16.0+ Target"}</strong></span>
+              </div>
+              <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
+                <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">协同环境排查</b>
+                <span><label>进程冲突扫描</label><strong>${state.environmentOk ? "无冲突 ✓" : "未扫描"}</strong></span>
+                <span><label>路由端口状态</label><strong>${state.environmentOk ? "端口闲置 ✓" : "待探活"}</strong></span>
+                <span><label>AI 协同通道</label><strong>${state.environmentOk ? "隧道已建立 ✓" : "未就绪"}</strong></span>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
+              <div style="font-size: 11px; color: var(--g-text-muted);">
+                诊断结果: ${state.environmentOk ? '<span style="color: var(--g-success); font-weight: bold;">环境及运行规则通过校验，可启动部署。</span>' : '等待用户触发本地探针检测指令。'}
+              </div>
+              <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="runDiagnosticsCheck()" style="min-width: 160px; height: 38px;">
+                执行环境与协同诊断
+              </button>
+            </div>
+          </div>
+
+          <div class="gm-canvas-card gm-hud-corners" style="padding: 16px; background: rgba(255,255,255,0.01); display: flex; flex-direction: column; gap: 10px;">
+            <b style="font-size: 11px; color: var(--g-text); text-transform: uppercase; letter-spacing: 0.05em;">交付矩阵与执行队列诊断状态</b>
+            <div class="gm-canvas-grid" style="grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 0;">
+              <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
+                <b style="font-size: 10.5px;">依赖项探针结论</b>
+                <small style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
+                  ${checkText(state.environmentOk, "环境诊断通过")}
+                </small>
+              </div>
+              <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
+                <b style="font-size: 10.5px;">AI 协同冲突排查</b>
+                <small style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
+                  ${checkText(state.environmentOk, "无多开/并发冲突")}
+                </small>
+              </div>
+              <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
+                <b style="font-size: 10.5px;">云端确权鉴权</b>
+                <small style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
+                  ${state.environmentOk ? `<span class="gm-led ok"></span> <span class="gm-tech-num" style="color: var(--g-success); font-weight: bold;">就绪 / 等待运行测试</span>` : `<span class="gm-led warn"></span> <span class="gm-tech-num" style="color: var(--g-warning); font-weight: bold;">等待本地诊断</span>`}
+                </small>
+              </div>
+            </div>
+          </div>`;
+      } else if (step === "3") {
+        const isAgentEnabled = (id) => {
+          if (state.agentEnabled && state.agentEnabled[id] !== undefined) {
+            return state.agentEnabled[id];
+          }
+          return state.selectedAgents && state.selectedAgents[id];
+        };
+        const agentModeValue = (id) => {
+          if (state.agentMode && state.agentMode[id]) return state.agentMode[id];
+          return "cli";
+        };
+        stepBody = `
+          <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
+            ${agents.map(([id, name]) => `
+              <div class="gm-canvas-card gm-hud-corners" style="min-height: 110px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
+                  <b>${name}</b>
+                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.02); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--g-line);">
+                    <input type="checkbox" ${isAgentEnabled(id) ? "checked" : ""} onchange="toggleAgentEnabled('${id}', this.checked)">
+                    <span style="font-size: 11px; font-weight: bold;">选入队列</span>
+                  </label>
+                </div>
+                <select class="gm-select" onchange="setAgentMode('${id}', this.value)" style="margin-top: 12px;">
+                  ${(agentModeOptions[id] || [["cli", "CLI"]]).map(([mode, label]) => `
+                    <option value="${mode}" ${agentModeValue(id) === mode ? "selected" : ""}>${label}</option>
+                  `).join("")}
+                </select>
+                <small style="margin-top: auto; display: block; line-height: 1.4;">
+                  ${id === "gemini_agy" ? "当前只保留官方入口，暂不计入完整配置交付。" : "CLI 可自动配置并验收；客户端范围需要独立启动和真实任务验收。"}
+                </small>
+              </div>
+            `).join("")}
+          </div>
+          <div style="display: flex; gap: 12px; margin-top: 16px;">
+            <button class="gm-btn gm-btn-primary" onclick="window.pywebview.api.go_to_step(4)">确认选择并部署</button>
+          </div>`;
+      } else if (step === "10" || step === "11") {
+        stepBody = renderCommunicationLink(step);
+      } else {
+        const actionMap = {
+          "4": [["开始部署与配置","start_deploy"],["仅写入配置文件","start_config_only"],["双态混合模式配置","start_dual_state_config"],["官方直登配置","start_official_chatgpt_config"],["恢复备份快照","restore_backups"]],
+          "5": [["查看配置目录","open_config_dir"],["载入备份快照","restore_backups"]],
+          "6": [["打开 Agent 工作空间","open_workspace"],["打开配置目录","open_config_dir"]],
+          "7": [["运行连通测试","start_deploy"]],
+          "8": [["打开验收矩阵页","open_url"]],
+          "9": [["复制日志存档","copy_logs"]]
+        };
+        const actions = actionMap[step] || [["继续下一步","start_deploy"]];
+        stepBody = `
+          <div class="gm-canvas-grid" style="grid-template-columns: 1fr; gap: 12px; margin-bottom: 20px;">
+            <div class="gm-canvas-card gm-hud-corners">
+              <b>当前流程任务</b>
+              <small>此步骤直接由胖虎AI客户端执行。请根据日志调试并配置，注意保存任何必要的本地参数。</small>
+            </div>
+            <div class="gm-canvas-card gm-hud-corners">
+              <b>环境备份保障</b>
+              <small>本地任何配置文件被修改前均已备份，您可以随时点击“恢复备份快照”撤销更改。</small>
+            </div>
+          </div>
+          <div style="display: flex; gap: 12px;">
+            ${actions.map(([label, api]) => `
+              <button class="gm-btn ${api === "start_deploy" ? "gm-btn-primary" : ""}"
+                onclick="${api === "open_url" ? `window.pywebview.api.open_url('${serviceBase}/matrix')` : `window.pywebview.api.${api}()`}">
+                ${label}
+              </button>
+            `).join("")}
+          </div>`;
+      }
+
+      let rightPanelContent = "";
+      if (step === "1") {
+        rightPanelContent = `
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
+            <b>授权与确权规则</b>
+            <table class="gm-status-table">
+              <tr class="gm-handshake-row"><td>API 协议版本</td><td><span class="gm-tech-num">服务端协议 / 待同步</span></td></tr>
+              <tr class="gm-handshake-row"><td>授权验证模式</td><td><span class="gm-tech-num">云端签名确权 / 待返回</span></td></tr>
+              <tr class="gm-handshake-row"><td>本地连接通道</td><td class="warn"><span class="gm-led warn"></span> <span class="gm-tech-num">待检测</span></td></tr>
+              <tr class="gm-handshake-row"><td>云端确权握手</td><td class="warn"><span class="gm-led warn"></span> <span class="gm-tech-num">等待验证</span></td></tr>
+            </table>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
+            <b>业务边界提示</b>
+            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+              API Key 仅用于本地客户端与云端做连通性鉴权。注册、购买、结算和数据规则完全以服务端页面为准。
+            </p>
+          </div>`;
+      } else if (step === "2") {
+        rightPanelContent = `
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
+            <b style="color: var(--g-primary);">交付依赖状态矩阵</b>
+            <table class="gm-status-table" style="margin-top: 6px;">
+              <tr class="gm-handshake-row"><td>Python 3.10+</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">检测通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>Node.js 16+</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">检测通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>端口冲突扫描</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">无占用</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待扫描</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>AI 协同同步</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">通道活跃</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">待侦测</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>确权鉴权握手</td><td>${state.apiKeyPresent ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">Key已就绪</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待确权</span>'}</td></tr>
+            </table>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
+            <b>五维交付验收指引</b>
+            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+              本地诊断通过后，将正式拉取所选智能体。交付全流程需依次经历 [部署] -> [拉起] -> [中文连通] -> [验收] -> [确权] 五维校验，以云端账本最终签名为准。
+            </p>
+          </div>`;
+      } else if (step === "3") {
+        rightPanelContent = `
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
+            <b>交付队列与策略</b>
+            <table class="gm-status-table">
+              <tr class="gm-handshake-row"><td>本地部署实例</td><td class="ok"><span class="gm-led ok"></span> <span class="gm-tech-num">已就绪</span></td></tr>
+              <tr class="gm-handshake-row"><td>网络代理中转</td><td><span class="gm-tech-num">本地网关</span></td></tr>
+              <tr class="gm-handshake-row"><td>确权链路追踪</td><td class="warn"><span class="gm-led warn"></span> <span class="gm-tech-num">等待绑定</span></td></tr>
+            </table>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
+            <b>智能体多开说明</b>
+            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+              系统支持选入多个交付智能体，在多实例模式下，各进程分配独立端口，确保测试互不干扰。
+            </p>
+          </div>`;
+      } else {
+        rightPanelContent = `
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
+            <b>当前智能体状态</b>
+            <table class="gm-status-table">
+              <tr class="gm-handshake-row"><td>进程拉活监视</td><td class="ok"><span class="gm-led ok"></span> <span class="gm-tech-num">监视中</span></td></tr>
+              <tr class="gm-handshake-row"><td>本地配置文件</td><td class="ok"><span class="gm-led ok"></span> <span class="gm-tech-num">已自动备份</span></td></tr>
+              <tr class="gm-handshake-row"><td>确权哈希签名</td><td class="warn"><span class="gm-led warn"></span> <span class="gm-tech-num">等待测试</span></td></tr>
+            </table>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
+            <b>下一步操作指引</b>
+            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+              请密切关注底部日志与诊断状态。本地预检不能替代通讯软件平台回调；真实入站、Agent 调用和出站回复证据齐全后，再提交验收证据。
+            </p>
+          </div>`;
+      }
+
+      // We wrap the body in a two-column desktop cockpit view:
+      const finalBody = `
+        <div class="gm-workbench">
+          <div class="gm-workbench-main">
+            ${stepBody}
+          </div>
+
+          <div class="gm-workbench-sidebar">
+            ${rightPanelContent}
+            <div class="gm-canvas-card gm-hud-corners" style="background: rgba(138, 180, 248, 0.02); border: 1px dashed rgba(138, 180, 248, 0.2); padding: 12px; margin-top: auto;">
+              <small style="color: var(--g-primary); line-height: 1.4; display: block;" class="gm-tech-num">
+                ✦ 本机沙箱边界规则待检测。一切服务端业务处理与结算确权以云端网关签名校验为准。
+              </small>
+            </div>
+          </div>
+        </div>
+
+        <div class="gm-activity-strip gm-scanline" style="margin-top: auto;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="gm-activity-badge gm-tech-num">检查点</span>
+            <span class="gm-activity-text gm-tech-num">当前步骤 [${meta[1]}] 已加载，等待本地指令验证。</span>
+          </div>
+          <span class="gm-activity-time gm-tech-num">待命</span>
+        </div>`;
+
+      canvas.innerHTML = finalBody;
+    }
+
+    function renderCommunicationLink(step) {
+      const c = state.communicationSoftwareLink || {};
+      const serviceProductId = c.serviceProductId || "";
+      const agentId = c.agentId || "codex";
+      const channel = c.channel || "feishu";
+      const source = c.agentSource || "existing_local_agent";
+      const orderId = c.orderId || "";
+      const sessionId = c.sessionId || "";
+      const platformAccountId = c.platformAccountId || "";
+      const chatTarget = c.platformChatId || "";
+      const gatewayMode = c.gatewayMode || "official_bot";
+      const testPrompt = c.testPrompt || "请回复连接通讯软件验收成功";
+
+      const s = c.state || {};
+      const sourceEventId = s.sourceEventId || "";
+      const inboundId = s.inboundPlatformMessageId || "";
+      const responseDigest = s.agentResponseDigest || "";
+      const outboundId = s.outboundPlatformMessageId || "";
+      const evidence = s.evidenceUrl || "";
+
+      if (step === "10") {
+        return `
+          <div class="gm-canvas-grid">
+            <div class="gm-canvas-card">
+              <b>关联智能体来源</b>
+              <small>选择哪一个部署成功的智能体进行通讯桥接。</small>
+              <select class="gm-select" id="cslAgentSource" onchange="updateCSLPayload()" style="margin-top: 8px;">
+                <option value="existing_local_agent" ${source === "existing_local_agent" ? "selected" : ""}>本机已有 Agent</option>
+                <option value="current_delivery" ${source === "current_delivery" ? "selected" : ""}>本次基础交付</option>
+                <option value="historical_delivery" ${source === "historical_delivery" ? "selected" : ""}>历史交付归属</option>
+                <option value="manual_review" ${source === "manual_review" ? "selected" : ""}>人工复核归属</option>
+              </select>
+            </div>
+
+            <div class="gm-canvas-card">
+              <b>选择要连接的 Agent</b>
+              <small>手机或通讯软件收到消息后，由这里选中的 Agent 处理并回复。</small>
+              <select class="gm-select" id="cslAgentId" onchange="updateCSLPayload()" style="margin-top: 8px;">
+                ${agents.map(([id, name]) => `<option value="${id}" ${agentId === id ? "selected" : ""}>${name}</option>`).join("")}
+              </select>
+            </div>
+
+            <div class="gm-canvas-card">
+              <b>选择通讯通道</b>
+              <small>选择需要接入的目标通讯工具，通道可用性受云端授权状态约束。</small>
+              <select class="gm-select" id="cslChannel" onchange="updateCSLPayload()" style="margin-top: 8px;">
+                <option value="feishu" ${channel === "feishu" ? "selected" : ""}>飞书 / Feishu</option>
+                <option value="qq_bot" ${channel === "qq_bot" ? "selected" : ""}>QQ 机器人</option>
+                <option value="dingtalk" ${channel === "dingtalk" ? "selected" : ""}>钉钉 / DingTalk</option>
+                <option value="wecom" ${channel === "wecom" ? "selected" : ""}>企业微信</option>
+                <option value="weixin" ${channel === "weixin" ? "selected" : ""}>微信公众号/客服</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="gm-canvas-grid" style="margin-bottom: 16px;">
+            <div class="gm-form-field">
+              <label>服务商品 ID</label>
+              <input class="gm-input" id="cslServiceProductId" placeholder="服务端下发的连接通讯软件商品 ID" value="${serviceProductId}" onchange="updateCSLPayload()">
+            </div>
+            <div class="gm-form-field">
+              <label>云端增值订单 ID</label>
+              <input class="gm-input" id="cslOrderId" placeholder="请输入服务端订单 ID" value="${orderId}" onchange="updateCSLPayload()">
+            </div>
+            <div class="gm-form-field">
+              <label>配置会话 ID</label>
+              <input class="gm-input" id="cslSessionId" placeholder="创建会话后自动回填，也可手动填入" value="${sessionId}" onchange="updateCSLPayload()">
+            </div>
+            <div class="gm-form-field">
+              <label>平台账号 / 机器人 ID</label>
+              <input class="gm-input" id="cslPlatformAccountId" placeholder="如飞书机器人、QQ Bot、企业微信应用 ID" value="${platformAccountId}" onchange="updateCSLPayload()">
+            </div>
+            <div class="gm-form-field">
+              <label>手机/聊天/群组标识</label>
+              <input class="gm-input" id="cslPlatformChatId" placeholder="手机会话、群组、好友、企业或内部 Chat ID" value="${chatTarget}" onchange="updateCSLPayload()">
+            </div>
+            <div class="gm-form-field">
+              <label>连接方式</label>
+              <select class="gm-select" id="cslGatewayMode" onchange="updateCSLPayload()">
+                <option value="official_bot" ${gatewayMode === "official_bot" ? "selected" : ""}>官方机器人 / 应用</option>
+                <option value="customer_bot" ${gatewayMode === "customer_bot" ? "selected" : ""}>客户自有机器人</option>
+                <option value="manual_bridge" ${gatewayMode === "manual_bridge" ? "selected" : ""}>人工桥接/人工复核</option>
+              </select>
+            </div>
+            <div class="gm-form-field" style="grid-column: 1 / -1;">
+              <label>验收测试消息</label>
+              <input class="gm-input" id="cslTestPrompt" placeholder="发到手机/通讯软件里的测试消息" value="${testPrompt}" onchange="updateCSLPayload()">
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button class="gm-btn" onclick="submitCSLCreateOrder()">创建连接订单</button>
+            <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
+            <button class="gm-btn gm-btn-primary" onclick="submitCSLCreateSession()">建立桥接通信会话</button>
+            <button class="gm-btn" onclick="submitCSLDisable()">注销通信会话</button>
+          </div>`;
+      }
+
+      return `
+        <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="gm-form-field">
+            <label>源事件 ID / source_event_id</label>
+            <input class="gm-input" id="cslSourceEventId" placeholder="例如: evt-x..." value="${sourceEventId}" onchange="updateCSLPayload()">
+          </div>
+          <div class="gm-form-field">
+            <label>用户入站消息 ID</label>
+            <input class="gm-input" id="cslInboundMessageId" placeholder="例如: msg-in..." value="${inboundId}" onchange="updateCSLPayload()">
+          </div>
+          <div class="gm-form-field">
+            <label>智能体出站回复 ID</label>
+            <input class="gm-input" id="cslOutboundMessageId" placeholder="例如: msg-out..." value="${outboundId}" onchange="updateCSLPayload()">
+          </div>
+          <div class="gm-form-field">
+            <label>Agent 响应摘要</label>
+            <input class="gm-input" id="cslAgentResponseDigest" placeholder="sha256:..." value="${responseDigest}" onchange="updateCSLPayload()">
+          </div>
+          <div class="gm-form-field">
+            <label>验收证据 URL</label>
+            <input class="gm-input" id="cslEvidenceUrl" placeholder="例如: https://..." value="${evidence}" onchange="updateCSLPayload()">
+          </div>
+        </div>
+        <div class="gm-chip warn" style="margin-bottom: 16px; width: 100%; border-radius: 6px; padding: 8px 12px; display: block; height: auto; text-transform: none; font-weight: normal; line-height: 1.5;">
+          本地预检不能替代通讯软件平台回调。未形成真实入站、中转执行、出站回复的闭环交互数据前，无法提报通讯链路交付。
+        </div>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+          <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
+          <button class="gm-btn" onclick="submitCSLTest()">发起远程探针测试</button>
+          <button class="gm-btn" onclick="submitCSLLocalRuntimeTest()">生成本地 Runtime 证据</button>
+          <button class="gm-btn gm-btn-primary" onclick="submitCSLAcceptance()">提交证据并正式确权</button>
+        </div>`;
+    }
+
+    function renderServiceCanvas() {
+      const mod = state.activeModule;
+      const key = state.activeSubnav || defaultSubnav(mod);
+      const meta = currentPageMeta(mod, key);
+
+      document.getElementById("canvasKicker").innerText = modules.find(m => m[0] === mod)?.[1] || "CLOUD";
+      document.getElementById("canvasTitle").innerText = meta[0];
+      document.getElementById("canvasDesc").innerText = `${meta[2]}`;
+
+      const timelineWrapper = document.getElementById("timelineWrapper");
+      if (timelineWrapper) {
+        timelineWrapper.classList.add("gm-hidden");
+      }
+
+      let body = "";
+      if (mod === "courses") {
+        const s = state.agentCenter && state.agentCenter.summary;
+        const lastSync = (state.agentCenter && state.agentCenter.last_synced_at) || "等待服务端快照";
+        const level = (state.agentCenter && state.agentCenter.current_level) || "等待确权";
+
+        let leftCol = "";
+        if (!s) {
+          leftCol = `
+            <div class="gm-canvas-card gm-hud-corners" style="background: linear-gradient(180deg, rgba(253, 214, 99, 0.02) 0%, transparent 100%), var(--g-surface-2); border-color: rgba(253, 214, 99, 0.15); padding: 24px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
+                <div>
+                  <b style="font-size: 15px; color: var(--g-warning);">云端代理业务快照 (等待同步)</b>
+                  <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">未同步资产信息与结算快照，资产归属及收益确权完全以云端记账为准</div>
+                </div>
+                <span class="gm-status-lock" style="color: var(--g-warning); border-color: rgba(253, 214, 99, 0.3); background: rgba(253, 214, 99, 0.05);">等待同步</span>
+              </div>
+
+              <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">下游客户总数</label>
+                  <div class="gm-skeleton-bar" style="width: 80px; height: 18px;"></div>
+                </div>
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">已结算可提现</label>
+                  <div class="gm-skeleton-bar" style="width: 100px; height: 18px;"></div>
+                </div>
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">待审核未结算</label>
+                  <div class="gm-skeleton-bar" style="width: 100px; height: 18px;"></div>
+                </div>
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">审核冻结金额</label>
+                  <div class="gm-skeleton-bar" style="width: 100px; height: 18px;"></div>
+                </div>
+              </div>
+
+              <div class="gm-empty-state-banner" style="padding: 24px; border: 1px dashed rgba(253, 214, 99, 0.2); background: rgba(253, 214, 99, 0.005); margin-bottom: 20px; border-radius: var(--g-radius-control);">
+                <div style="font-size: 24px; margin-bottom: 8px; animation: ledPulse 2s infinite ease-in-out; color: var(--g-warning);">✦</div>
+                <h4 style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--g-text);">云端资产快照未同步</h4>
+                <p style="font-size: 11px; color: var(--g-text-subtle); max-width: 420px; line-height: 1.6; margin: 0 auto;">
+                  代理权级、结算比率与账目流水全部托管在云端。本地不作计算缓存。请点击下方同步按钮发起服务端快照同步。
+                </p>
+              </div>
+
+              <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
+                <span style="font-size: 11px; color: var(--g-text-subtle);">上次同步: <strong class="gm-tech-num">${lastSync}</strong></span>
+                <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
+                  同步云端资产快照
+                </button>
+              </div>
+            </div>
+
+            <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
+              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近确权同步流水</b>
+              <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
+                <div class="gm-log-row muted">[04:27:56] 系统：代理中心连接器已初始化</div>
+                <div class="gm-log-row muted">[04:27:56] 系统：等待服务端快照同步指令</div>
+                <div class="gm-log-row muted">[04:27:56] 规则：当前仅展示标准确权状态</div>
+              </div>
+            </div>`;
+        } else {
+          const displayCount = typeof s.downstream_count === 'number' ? `${s.downstream_count} 人` : '未同步';
+          const displayAvail = typeof s.available_settlement_cents === 'number' ? `¥ ${(s.available_settlement_cents / 100).toFixed(2)}` : '等待服务端快照';
+          const displayPend = typeof s.pending_settlement_cents === 'number' ? `¥ ${(s.pending_settlement_cents / 100).toFixed(2)}` : '等待服务端快照';
+          const displayFroz = typeof s.frozen_cents === 'number' ? `¥ ${(s.frozen_cents / 100).toFixed(2)}` : '以服务端为准';
+
+          leftCol = `
+            <div class="gm-canvas-card gm-hud-corners" style="background: linear-gradient(180deg, rgba(129, 201, 149, 0.03) 0%, transparent 100%), var(--g-surface-2); border-color: rgba(129, 201, 149, 0.15); padding: 24px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
+                <div>
+                  <b style="font-size: 15px; color: var(--g-success);">云端代理业务快照 (已同步)</b>
+                  <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">当前记账代理等级: <strong style="color: var(--g-primary);">${level}</strong></div>
+                </div>
+                <span class="gm-status-lock" style="color: var(--g-success); border-color: rgba(129, 201, 149, 0.3); background: rgba(129, 201, 149, 0.05);">CLOUD SNAPSHOT</span>
+              </div>
+
+              <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">下游客户总数</label>
+                  <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-primary); margin-top: 4px; display: block;">${displayCount}</strong>
+                </div>
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">已结算可提现</label>
+                  <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-success); margin-top: 4px; display: block;">${displayAvail}</strong>
+                </div>
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">待审核未结算</label>
+                  <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-warning); margin-top: 4px; display: block;">${displayPend}</strong>
+                </div>
+                <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
+                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">审核冻结金额</label>
+                  <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-danger); margin-top: 4px; display: block;">${displayFroz}</strong>
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
+                <span style="font-size: 11px; color: var(--g-text-subtle);">更新时间: <strong class="gm-tech-num">${lastSync}</strong></span>
+                <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
+                  重新拉取快照
+                </button>
+              </div>
+            </div>
+
+            <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
+              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近确权同步流水</b>
+              <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
+                <div class="gm-log-row success">[04:27:56] 系统：代理中心连接器已初始化</div>
+                <div class="gm-log-row success">[04:27:57] 系统：已请求快照同步授权</div>
+                <div class="gm-log-row success">[04:27:58] 系统：服务端快照已同步</div>
+                <div class="gm-log-row success">[04:27:58] 状态：当前记账代理等级 [${level}]</div>
+                <div class="gm-log-row success">[04:27:58] 规则：账目数据以服务端快照为准</div>
+              </div>
+            </div>`;
+        }
+
+        const rightCol = `
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
+            <b>云端授权与规则契约</b>
+            <div style="font-size: 11px; margin-top: 8px; color: var(--g-text-muted);">
+              <span>当前等级: </span><strong style="color: var(--g-primary);">${level}</strong>
+            </div>
+            <ul style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 10px; padding-left: 14px;">
+              <li>业务合作及收益清算遵循服务端规则。</li>
+              <li>一切返利与结算金额完全托管在云端服务器。</li>
+              <li>在诊断矩阵未通过前，代理确权受运行规则限制处于受限状态。</li>
+            </ul>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
+            <b>同步检查清单与网络拓扑</b>
+            <table class="gm-status-table" style="margin-top: 8px;">
+              <tr class="gm-handshake-row"><td>API Key 校验</td><td>${state.apiKeyPresent ? '<span style="color: var(--g-success);">[✓] 已校验</span>' : '<span style="color: var(--g-warning);">[ ] 未配置</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>环境诊断</td><td>${state.environmentOk ? '<span style="color: var(--g-success);">[✓] 已通过</span>' : '<span style="color: var(--g-warning);">[ ] 未通过</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>快照同步</td><td>${s ? '<span style="color: var(--g-success);">[✓] 已同步</span>' : '<span style="color: var(--g-warning);">[ ] 等待同步</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>网络连接状态</td><td><span class="gm-tech-num">${s ? "在线" : "离线"}</span></td></tr>
+            </table>
+          </div>`;
+
+        body = `
+          <div class="gm-canvas-split">
+            <div class="gm-canvas-main-col">
+              ${leftCol}
+            </div>
+            <div class="gm-canvas-sidebar-col">
+              ${rightCol}
+            </div>
+          </div>
+
+          <div class="gm-activity-strip gm-scanline" style="margin-top: auto;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="gm-activity-badge gm-tech-num">服务端入口</span>
+              <span class="gm-activity-text gm-tech-num">业务端 [${meta[0]}] 需要打开服务端页面后完成确权与数据同步。</span>
+            </div>
+            <span class="gm-activity-time gm-tech-num">待命</span>
+          </div>`;
+      } else {
+        body = `
+          <div class="gm-workbench">
+            <div class="gm-workbench-main">
+              <div class="gm-canvas-card gm-hud-corners" style="background: var(--g-surface-2); padding: 24px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
+                  <b style="font-size: 15px; color: var(--g-primary);">云端服务通道: ${meta[0]}</b>
+                  <span class="gm-status-lock">等待服务端</span>
+                </div>
+
+                <p style="font-size: 12px; color: var(--g-text-muted); line-height: 1.6; margin-bottom: 20px;">
+                  ${meta[2]}
+                </p>
+
+                <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--g-line); border-radius: var(--g-radius-control); padding: 12px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                  <div class="gm-command-deck-status" style="background: transparent; border: none; padding: 0; gap: 6px;">
+                    <span><label>连接状态</label><strong style="color: var(--g-warning);"><span class="gm-led warn"></span> 等待打开</strong></span>
+                    <span><label>通道节点</label><strong class="gm-tech-num">由服务端返回</strong></span>
+                  </div>
+                  <div class="gm-command-deck-status" style="background: transparent; border: none; padding: 0; gap: 6px;">
+                    <span><label>通道状态</label><strong class="gm-tech-num">本地仅做入口展示</strong></span>
+                    <span><label>结算说明</label><strong class="gm-tech-num">以服务端页面为准</strong></span>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 12px;">
+                  <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.open_url('${meta[1]}')" style="min-width: 180px; height: 38px;">
+                    打开云端业务控制台
+                  </button>
+                </div>
+              </div>
+
+              <!-- Secure Tunnel Diagram to reduce emptiness -->
+              <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
+                <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 12px;">等待确权数据通道</b>
+                <div class="gm-tunnel-diagram" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid var(--g-line);">
+                  <div style="text-align: center;">
+                    <div style="font-size: 11px; font-weight: bold; color: var(--g-text);">本地客户端</div>
+                    <div style="font-size: 9px; color: var(--g-text-subtle); margin-top: 2px;">Local Node</div>
+                  </div>
+                  <div style="flex: 1; display: flex; flex-direction: column; align-items: center; margin: 0 16px; position: relative;">
+                    <div style="font-size: 9px; color: var(--g-success); margin-bottom: 4px; font-family: var(--g-mono);">服务端数据通道</div>
+                    <div style="width: 100%; height: 2px; background: var(--g-line); position: relative; overflow: hidden; border-radius: 1px;">
+                      <div style="position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg, transparent, var(--g-success), transparent); animation: gm-tunnel-flow 2s infinite linear;"></div>
+                    </div>
+                  </div>
+                  <div style="text-align: center;">
+                    <div style="font-size: 11px; font-weight: bold; color: var(--g-primary);">胖虎AI云端网关</div>
+                    <div style="font-size: 9px; color: var(--g-text-subtle); margin-top: 2px;">aitokenapi.cc</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="gm-workbench-sidebar">
+              <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
+                <b>服务端边界提示</b>
+                <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 8px;">
+                  您正通过内置网关访问外部业务。客户端不存储您的支付账号或交易快照。所有支付、退款及确权行为均以目标云端服务的最终记账数据为准。
+                </p>
+              </div>
+              <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
+                <b>通信状态审计</b>
+                <table class="gm-status-table" style="margin-top: 6px;">
+                  <tr class="gm-handshake-row"><td>连接检测</td><td><span class="gm-led warn"></span> 等待打开</td></tr>
+                  <tr class="gm-handshake-row"><td>数据核对</td><td>以服务端为准</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="gm-activity-strip gm-scanline" style="margin-top: auto;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="gm-activity-badge gm-tech-num">服务端入口</span>
+              <span class="gm-activity-text gm-tech-num">业务端 [${meta[0]}] 需要打开服务端页面后完成确权与数据同步。</span>
+            </div>
+            <span class="gm-activity-time gm-tech-num">待命</span>
+          </div>`;
+      }
+
+      document.getElementById("workCanvas").innerHTML = body;
+    }
+
+    function renderInspector() {
+      const el = document.getElementById("deliveryInspector");
+
+      // P0: Empty state placeholder if hasSynced is false
+      if (!state.hasSynced) {
+        el.innerHTML = `
+          <div class="gm-inspector-col">
+            <h3>交付确权状态</h3>
+            <div style="margin-bottom: 12px;">
+              <span class="gm-chip warn" style="padding: 6px 12px; font-size: 11px; width: 100%; justify-content: center; border-radius: 6px;">
+                未同步 / 等待服务端数据
+              </span>
+            </div>
+            <div class="gm-empty-state-banner">
+              <div style="font-size: 20px; margin-bottom: 6px; color: var(--g-warning);">✦</div>
+              <h4 style="font-size: 12px; font-weight: 700; margin-bottom: 4px;">等待服务端快照</h4>
+              <p style="font-size: 11px; color: var(--g-text-subtle);">未同步环境及资产信息<br>确权以服务端为准</p>
+            </div>
+          </div>
+
+          <div class="gm-inspector-col">
+            <h3>智能体 5D 状态矩阵</h3>
+            <div class="gm-matrix">
+              <div class="gm-matrix-header">
+                <span>智能体</span>
+                <span>部署</span>
+                <span>拉起</span>
+                <span>中文</span>
+                <span>验收</span>
+                <span>确权</span>
+              </div>
+              ${agents.map(([id, name]) => matrixRow(id, name)).join("")}
+            </div>
+          </div>
+
+          <div class="gm-inspector-col">
+            <h3>本地运行边界及协同规范</h3>
+            <div class="gm-inspector-rules-container">
+              <div class="gm-inspector-rule">API 密钥本地混淆处理，会话状态随开随载，保护隐私不外泄。</div>
+              <div class="gm-inspector-rule">本地仅提供通道与诊断环境，业务计算与结算在云端完成。</div>
+              <div class="gm-inspector-rule">代理快照及返佣数据完全托管在云端，本地不做计算缓存。</div>
+              <div class="gm-inspector-rule">任何不符合五维诊断规范的智能体，云端将阻断协同确权。</div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      let conclusionLabel = "待校验 API KEY";
+      let conclusionClass = "warn";
+      if (state.apiKeyPresent && state.environmentOk) {
+        conclusionLabel = "运行就绪态";
+        conclusionClass = "ok";
+      } else if (state.apiKeyPresent) {
+        conclusionLabel = "待诊断本地环境";
+        conclusionClass = "warn";
+      }
+
+      el.innerHTML = `
+        <div class="gm-inspector-col">
+          <h3>交付确权状态</h3>
+          <div style="margin-bottom: 12px;">
+            <span class="gm-chip ${conclusionClass}" style="padding: 6px 12px; font-size: 11px; width: 100%; justify-content: center; border-radius: 6px;">
+              ${conclusionLabel}
+            </span>
+          </div>
+
+          <div class="gm-inspector-kv">
+            <div><span>当前账户</span><span>${state.loginUsername || "-"}</span></div>
+            <div><span>协议类型</span><span>${state.versionLabel || "-"}</span></div>
+            <div><span>最大设备数</span><span>${state.deviceLimit || "-"}</span></div>
+            <div><span>授权截止日</span><span>${state.validUntil || "-"}</span></div>
+            <div><span>云端接口地址</span><span>aitokenapi.cc</span></div>
+          </div>
+        </div>
+
+        <div class="gm-inspector-col">
+          <h3>智能体 5D 状态矩阵</h3>
+          <div class="gm-matrix">
+            <div class="gm-matrix-header">
+              <span>智能体</span>
+              <span>部署</span>
+              <span>拉起</span>
+              <span>中文</span>
+              <span>验收</span>
+              <span>确权</span>
+            </div>
+            ${agents.map(([id, name]) => matrixRow(id, name)).join("")}
+          </div>
+        </div>
+
+        <div class="gm-inspector-col">
+          <h3>本地运行边界及协同规范</h3>
+          <div class="gm-inspector-rules-container">
+            <div class="gm-inspector-rule">API 密钥本地混淆处理，会话状态随开随载，保护隐私不外泄。</div>
+            <div class="gm-inspector-rule">本地仅提供通道与诊断环境，业务计算与结算在云端完成。</div>
+            <div class="gm-inspector-rule">代理快照及返佣数据完全托管在云端，本地不做计算缓存。</div>
+            <div class="gm-inspector-rule">任何不符合五维诊断规范的智能体，云端将阻断协同确权。</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function matrixRow(id, name) {
+      const d = state.agentMatrix[id] || {};
+      const map = v => {
+        // Double security guard. If not synced, matrix cells show warning state.
+        if (!state.hasSynced) return ["未同步", "warn"];
+        if (v === "✓") return ["通过", "ok"];
+        if (v === "●") return ["进行", "warn"];
+        if (v === "✗") return ["阻断", "bad"];
+        return ["未始", ""];
+      };
+
+      return `
+        <div class="gm-matrix-row">
+          <strong>${name}</strong>
+          ${["install", "launch", "dialogue", "acceptance", "delivery"].map(k => {
+            const m = map(d[k]);
+            return `<span class="gm-matrix-pill ${m[1]}">${m[0]}</span>`;
+          }).join("")}
+        </div>`;
+    }
+
+    function onSaveAccountChange() {
+      if (!document.getElementById("saveAccount").checked) {
+        document.getElementById("rememberPwd").checked = false;
+        document.getElementById("autoLogin").checked = false;
+      }
+    }
+
+    function onRememberPwdChange() {
+      if (!document.getElementById("rememberPwd").checked) {
+        document.getElementById("autoLogin").checked = false;
+      } else {
+        document.getElementById("saveAccount").checked = true;
+      }
+    }
+
+    function onAutoLoginChange() {
+      if (document.getElementById("autoLogin").checked) {
+        document.getElementById("saveAccount").checked = true;
+        document.getElementById("rememberPwd").checked = true;
+      }
+    }
+
+    function openRegister() {
+      const rawInvite = document.getElementById("inviteCode").value.trim();
+      window.pywebview.api.build_register_url(rawInvite).then(url => {
+        window.pywebview.api.open_url(url);
+      });
+    }
+
+    function toggleSavedAccountsList(e) {
+      e.preventDefault();
+      const list = document.getElementById("savedAccountsList");
+      list.style.display = list.style.display === "block" ? "none" : "block";
+    }
+
+    function populateSavedAccounts() {
+      const list = document.getElementById("savedAccountsList");
+      if (!list) return;
+      const accounts = state.loginAccounts || state.accounts || [];
+      list.innerHTML = accounts.length ? accounts.map(a => `
+        <div class="gm-saved-row">
+          <span>${a.username}</span>
+          <button onclick="event.stopPropagation(); removeAccount('${a.username}')">删除</button>
+        </div>
+      `).join("") : `<div class="gm-saved-row" style="cursor: default; color: var(--g-text-subtle);">暂无历史凭证</div>`;
+
+      list.querySelectorAll(".gm-saved-row span").forEach(node => {
+        node.onclick = () => {
+          document.getElementById("loginUser").value = node.innerText;
+          window.pywebview.api.select_login_account(node.innerText);
+          list.style.display = "none";
+        };
+      });
+    }
+
+    function removeAccount(username) {
+      window.pywebview.api.remove_login_account(username).then(() => {
+        if (state.loginAccounts) {
+          state.loginAccounts = state.loginAccounts.filter(a => a.username !== username);
+        }
+        if (state.accounts) {
+          state.accounts = state.accounts.filter(a => a.username !== username);
+        }
+        populateSavedAccounts();
+      });
+    }
+
+    function submitLogin() {
+      const u = document.getElementById("loginUser").value.trim();
+      const p = document.getElementById("loginPass").value.trim();
+      if (!u || !p) { alert("请输入账号 and 密码"); return; }
+      window.pywebview.api.login(u, p, document.getElementById("rememberPwd").checked, document.getElementById("autoLogin").checked).then(res => {
+        if (res && res.success === false) alert(res.message || "登录连接失败");
+      });
+    }
+
+    function toggleShowKey() {
+      const input = document.getElementById("apiKeyVal");
+      if (input) input.type = input.type === "password" ? "text" : "password";
+    }
+
+    // Preserve pywebview calls for contracts
+    function saveApiKey() {
+      const val = document.getElementById("apiKeyVal")?.value.trim();
+      if (!val) return alert("请输入 API Key");
+      window.pywebview.api.save_key(val, document.getElementById("skipKeyTest")?.checked || false);
+    }
+
+    function runDiagnosticsCheck() {
+      appendPythonLog("正在启动本地系统环境依赖与运行检测...", "running");
+      window.pywebview.api.run_env_check();
+    }
+
+    function toggleAgentEnabled(id, checked) {
+      if (!state.agentEnabled) state.agentEnabled = {};
+      state.agentEnabled[id] = checked;
+      if (state.selectedAgents) state.selectedAgents[id] = checked;
+      window.pywebview.api.toggle_agent(id, checked);
+    }
+
+    function setAgentMode(id, mode) {
+      window.pywebview.api.set_agent_mode(id, mode);
+    }
+
+    function updateCSLPayload() {
+      const previous = state.communicationSoftwareLink || {};
+      const previousState = previous.state || {};
+      state.communicationSoftwareLink = {
+        ...previous,
+        serviceProductId: document.getElementById("cslServiceProductId")?.value || previous.serviceProductId || "",
+        agentId: document.getElementById("cslAgentId")?.value || previous.agentId || "codex",
+        channel: document.getElementById("cslChannel")?.value || "feishu",
+        agentSource: document.getElementById("cslAgentSource")?.value || "existing_local_agent",
+        orderId: document.getElementById("cslOrderId")?.value || previous.orderId || "",
+        sessionId: document.getElementById("cslSessionId")?.value || previous.sessionId || "",
+        platformAccountId: document.getElementById("cslPlatformAccountId")?.value || previous.platformAccountId || "",
+        platformChatId: document.getElementById("cslPlatformChatId")?.value || previous.platformChatId || "",
+        gatewayMode: document.getElementById("cslGatewayMode")?.value || previous.gatewayMode || "official_bot",
+        testPrompt: document.getElementById("cslTestPrompt")?.value || previous.testPrompt || "请回复连接通讯软件验收成功",
+        state: {
+          ...previousState,
+          sourceEventId: document.getElementById("cslSourceEventId")?.value || previousState.sourceEventId || "",
+          inboundPlatformMessageId: document.getElementById("cslInboundMessageId")?.value || previousState.inboundPlatformMessageId || "",
+          outboundPlatformMessageId: document.getElementById("cslOutboundMessageId")?.value || previousState.outboundPlatformMessageId || "",
+          agentResponseDigest: document.getElementById("cslAgentResponseDigest")?.value || previousState.agentResponseDigest || "",
+          evidenceUrl: document.getElementById("cslEvidenceUrl")?.value || previousState.evidenceUrl || ""
+        }
+      };
+    }
+
+    function submitCSLCreateOrder() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_create_order(state.communicationSoftwareLink);
+    }
+
+    function submitCSLCreateSession() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_create_session(state.communicationSoftwareLink);
+    }
+
+    function submitCSLDisable() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_disable(state.communicationSoftwareLink);
+    }
+
+    function submitCSLTest() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_test(state.communicationSoftwareLink);
+    }
+
+    function submitCSLLocalRuntimeTest() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_run_local_runtime_test(state.communicationSoftwareLink);
+    }
+
+    function submitCSLOneClickConnect() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_one_click_connect(state.communicationSoftwareLink);
+    }
+
+    function submitCSLAcceptance() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_acceptance(state.communicationSoftwareLink);
+    }
+
+    window.appendPythonLog = function(line, cls) {
+      const el = document.getElementById("logViewport");
+      if (!el) return;
+
+      const div = document.createElement("div");
+      const lower = String(line).toLowerCase();
+      const tone = cls || (
+        lower.includes("失败") || lower.includes("error") ? "failed" :
+        lower.includes("成功") || lower.includes("ok") || lower.includes("通过") || lower.includes("check ✓") ? "success" :
+        lower.includes("正在") || lower.includes("检测") || lower.includes("诊断") || lower.includes("启动") ? "running" :
+        "muted"
+      );
+
+      div.className = `gm-log-row ${tone}`;
+      div.innerText = line;
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+    };
+
+    window.renderLogs = function() {
+      const el = document.getElementById("logViewport");
+      if (!el) return;
+      el.innerHTML = "";
+      const active = state.activeModule === "agent" ? parseInt(state.activeSubnav || "1", 10) : 1;
+      (logsData[active] || ["[19:40:00] 等待系统发出同步协同握手命令..."]).forEach(line => appendPythonLog(line));
+    };
+  </script>
+</body>
+</html>

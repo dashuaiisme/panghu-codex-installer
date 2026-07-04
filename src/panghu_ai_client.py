@@ -44,6 +44,8 @@ from commercial_api import (
     build_communication_software_link_session_create_request,
     build_communication_software_link_session_disable_request,
     build_communication_software_link_session_get_request,
+    build_communication_software_link_platform_auth_create_request,
+    build_communication_software_link_platform_auth_get_request,
     build_communication_software_link_session_test_request,
     build_order_create_request,
     build_payment_poll_request,
@@ -85,6 +87,8 @@ from commercial_core import (
     build_node_status_rows,
     build_persistent_profile_payload,
     build_real_task_diagnostic_summary,
+    build_value_added_service_catalog,
+    build_value_added_service_summary_lines,
     api_key_owner_gate,
     commercial_config_gate,
     commercial_deployment_blockers,
@@ -110,7 +114,7 @@ except Exception:  # pragma: no cover - optional dependency for embedded custome
 
 APP_NAME = "胖虎AI客户端"
 APP_VERSION = "1.0.15"
-HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
+HTTP_USER_AGENT = f"PanghuAI-Client/{APP_VERSION}"
 DEFAULT_BASE_URL = "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
@@ -134,42 +138,25 @@ def load_commercial_manifest_public_key() -> str:
 
 
 COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM = load_commercial_manifest_public_key()
-GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
+GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-ai-client/releases/latest"
 PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
 WINDOWS_RELEASE_DIR_NAME = APP_NAME
-PREVIOUS_RELEASE_DIR_NAME = "胖虎AI"
-LEGACY_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
 WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
 WINDOWS_RELEASE_ASSET_ALIASES = (
     WINDOWS_RELEASE_ASSET_NAME,
-    f"{PREVIOUS_RELEASE_DIR_NAME}-Windows.zip",
-    f"{LEGACY_RELEASE_DIR_NAME}-Windows.zip",
-    "AI.Agent.-Windows.zip",
 )
 MAC_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac.zip"
 MAC_RELEASE_ASSET_ALIASES = (
     MAC_RELEASE_ASSET_NAME,
-    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac.zip",
-    f"{LEGACY_RELEASE_DIR_NAME}-Mac.zip",
-    "AI.Agent.-Mac.zip",
 )
 MAC_APPLE_SILICON_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip"
 MAC_INTEL_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-Intel.zip"
 MAC_APPLE_SILICON_RELEASE_ASSET_ALIASES = (
     MAC_APPLE_SILICON_RELEASE_ASSET_NAME,
-    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip",
-    f"{LEGACY_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip",
-    "AI.Agent.-Mac-AppleSilicon.zip",
     MAC_RELEASE_ASSET_NAME,
-    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac.zip",
-    f"{LEGACY_RELEASE_DIR_NAME}-Mac.zip",
-    "AI.Agent.-Mac.zip",
 )
 MAC_INTEL_RELEASE_ASSET_ALIASES = (
     MAC_INTEL_RELEASE_ASSET_NAME,
-    f"{PREVIOUS_RELEASE_DIR_NAME}-Mac-Intel.zip",
-    f"{LEGACY_RELEASE_DIR_NAME}-Mac-Intel.zip",
-    "AI.Agent.-Mac-Intel.zip",
 )
 LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
 DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
@@ -199,7 +186,10 @@ COMMUNICATION_SOFTWARE_LINK_CHANNEL_OPTIONS = ("qq_bot", "weixin", "feishu", "di
 COMMUNICATION_SOFTWARE_LINK_AGENT_SOURCE_OPTIONS = ("existing_local_agent", "historical_delivery", "current_delivery", "manual_review")
 COMMUNICATION_SOFTWARE_LINK_GATEWAY_MODE_OPTIONS = ("official_bot", "customer_bot", "manual_bridge")
 COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT = "请回复连接通讯软件验收成功"
-INVITE_QUERY_KEYS = ("invite", "invite_code", "ref", "referral", "referral_code")
+COMMUNICATION_SOFTWARE_LINK_LOCAL_EVIDENCE_BASE_URL = "local://communication-software-link/evidence"
+COMMUNICATION_SOFTWARE_LINK_PLATFORM_AUTH_MAX_POLLS = 24
+COMMUNICATION_SOFTWARE_LINK_PLATFORM_AUTH_POLL_SECONDS = 5
+INVITE_QUERY_KEYS = ("invite", "invite_code", "aff", "aff_code", "ref", "referral", "referral_code")
 CODEX_WINDOWS_STORE_URL = "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
 CODEX_DOWNLOAD_URL = "https://developers.openai.com/codex/"
 CLAUDE_CODE_DOCS_URL = "https://code.claude.com/docs/en/quickstart"
@@ -260,7 +250,7 @@ FLOW_STEPS = (
     (6, "启动检测", "确认入口可以打开"),
     (7, "最小中文对话", "确认能直接中文对话"),
     (8, "功能验收矩阵", "逐项确认是否达标"),
-    (9, "基础交付验收", "已完成所有基础交付验收"),
+    (9, "基础交付验收", "完成基础验收后收口"),
     (10, "连接通讯软件", "配置通讯软件通道"),
     (11, "连接通讯软件交付验收", "通讯软件发送消息验证"),
 )
@@ -757,8 +747,8 @@ def customer_acceptance_matrix_path() -> Path:
 def app_data_dir() -> Path:
     base = os.environ.get("APPDATA")
     if base:
-        return Path(base) / "PanghuAI-Agent-Deployer"
-    return Path.home() / ".panghuai-agent-deployer"
+        return Path(base) / "PanghuAI-Client"
+    return Path.home() / ".panghuai-client"
 
 
 def profile_path() -> Path:
@@ -819,6 +809,20 @@ def ui_path(name: str) -> Path:
         if candidate.exists():
             return candidate
     return app_root() / "src" / "ui" / name
+
+
+def require_webview_runtime_and_ui() -> tuple[object, Path]:
+    shell = ui_path("index.html")
+    if not shell.exists():
+        raise RuntimeError(
+            f"胖虎AI客户端正式界面缺失：{shell}。客户包必须包含 WebView UI，不能回退到旧 Tkinter 业务界面。"
+        )
+    if webview is None:
+        raise RuntimeError(
+            "胖虎AI客户端正式界面依赖 pywebview，但当前运行包未加载该依赖。"
+            "请修复打包依赖后重新发布，不能回退到旧 Tkinter 业务界面。"
+        )
+    return webview, shell
 
 
 def save_theme_preference(theme: str) -> None:
@@ -1288,6 +1292,54 @@ def risk_plugin_report_lines(findings: list[RiskPluginFinding]) -> list[str]:
     return lines
 
 
+def build_local_communication_software_link_acceptance_evidence(
+    session_id: str,
+    order_id: str,
+    agent_id: str,
+    channel: str,
+    platform_chat_id: str,
+    test_prompt: str,
+    agent_response: str,
+) -> dict[str, str]:
+    clean_session_id = str(session_id or "").strip()
+    clean_order_id = str(order_id or "").strip()
+    clean_agent_id = str(agent_id or "").strip()
+    clean_channel = str(channel or "").strip() or "manual_bridge"
+    clean_chat_id = str(platform_chat_id or "").strip()
+    clean_prompt = str(test_prompt or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT).strip()
+    clean_response = str(agent_response or "").strip()
+    if not clean_session_id:
+        raise ValueError("连接通讯软件本地验收缺少配置会话 ID。")
+    if not clean_order_id:
+        raise ValueError("连接通讯软件本地验收缺少订单 ID。")
+    if not clean_agent_id:
+        raise ValueError("连接通讯软件本地验收缺少 Agent。")
+    if not clean_response:
+        raise ValueError("连接通讯软件本地验收缺少 Agent 响应内容。")
+    seed_payload = {
+        "session_id": clean_session_id,
+        "order_id": clean_order_id,
+        "agent_id": clean_agent_id,
+        "channel": clean_channel,
+        "platform_chat_id": clean_chat_id,
+        "test_prompt": clean_prompt,
+        "agent_response": clean_response,
+    }
+    digest = hashlib.sha256(json.dumps(seed_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    short_digest = digest[:16]
+    return {
+        "order_id": clean_order_id,
+        "session_id": clean_session_id,
+        "status": "local_runtime_verified",
+        "source_event_id": f"csl-local-{short_digest}",
+        "inbound_platform_message_id": f"local-{clean_channel}-in-{short_digest}",
+        "outbound_platform_message_id": f"local-{clean_channel}-out-{short_digest}",
+        "test_prompt": clean_prompt,
+        "agent_response_digest": f"sha256:{digest}",
+        "evidence_url": f"{COMMUNICATION_SOFTWARE_LINK_LOCAL_EVIDENCE_BASE_URL}/{quote(clean_session_id)}/{short_digest}",
+    }
+
+
 def format_risk_plugin_block_message(findings: list[RiskPluginFinding]) -> str:
     lines = [
         "检测到会改写 Agent 配置的第三方插件，已停止安装。",
@@ -1435,12 +1487,10 @@ def load_buyer_cookie_jar() -> http.cookiejar.MozillaCookieJar:
 def save_buyer_cookie_jar(cookie_jar: http.cookiejar.CookieJar) -> None:
     path = buyer_session_cookie_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(cookie_jar, http.cookiejar.FileCookieJar):
-        cookie_jar.filename = str(path)
-        jar_to_save = cookie_jar
-    else:
-        jar_to_save = http.cookiejar.MozillaCookieJar(str(path))
-        for cookie in cookie_jar:
+    jar_to_save = http.cookiejar.MozillaCookieJar(str(path))
+    for cookie in cookie_jar:
+        domain = str(getattr(cookie, "domain", "") or "").lstrip(".").lower()
+        if domain == "aitokenapi.cc" or domain.endswith(".aitokenapi.cc"):
             jar_to_save.set_cookie(cookie)
     jar_to_save.save(ignore_discard=True, ignore_expires=True)
     try:
@@ -2140,6 +2190,10 @@ def manifest_commercial_products(manifest: dict):
     return build_commercial_product_catalog(manifest)
 
 
+def manifest_value_added_services(manifest: dict):
+    return build_value_added_service_catalog(manifest)
+
+
 def parse_manifest_delivery_scope(value: object) -> DeliveryScope:
     try:
         return DeliveryScope(str(value or DeliveryScope.INSTALL_GUIDED.value))
@@ -2193,7 +2247,10 @@ def manifest_commercial_entitlements(manifest: dict) -> list[EntitlementContract
 
 
 def manifest_has_commercial_controls(manifest: dict) -> bool:
-    return any(key in manifest for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center"))
+    return any(
+        key in manifest
+        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center", "value_added_services")
+    )
 
 
 def ensure_commercial_manifest_trusted(manifest: dict, public_key_pem: str = COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM) -> None:
@@ -2227,6 +2284,10 @@ def deployment_commercial_contexts(user: dict) -> "CommercialSessionContexts":
 
 def agent_center_summary_text(manifest: dict | None) -> str:
     return "\n".join(build_agent_center_summary_lines(manifest or {}))
+
+
+def value_added_services_summary_text(manifest: dict | None) -> str:
+    return "\n".join(build_value_added_service_summary_lines(manifest_value_added_services(manifest or {})))
 
 
 def build_commercial_config_session_reserve_preview(
@@ -2472,6 +2533,35 @@ def commercial_api_request_with_auth(
                 contexts.operator.user_id,
                 session_id,
             ),
+        )
+    elif action == "communication_software_link_platform_auth_create":
+        order_id = str(kwargs["order_id"])
+        agent_id = str(kwargs["agent_id"])
+        channel = str(kwargs["channel"])
+        gateway_mode = str(kwargs["gateway_mode"])
+        platform_chat_hint = str(kwargs.get("platform_chat_hint") or "")
+        request = build_communication_software_link_platform_auth_create_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            gateway_mode=gateway_mode,
+            platform_chat_hint=platform_chat_hint,
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "platform_auth",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                order_id,
+                agent_id,
+                channel,
+                gateway_mode,
+                platform_chat_hint,
+            ),
+        )
+    elif action == "communication_software_link_platform_auth_get":
+        request = build_communication_software_link_platform_auth_get_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            auth_session_id=str(kwargs["auth_session_id"]),
         )
     elif action == "reserve":
         request = build_commercial_config_session_reserve_preview(
@@ -3351,7 +3441,7 @@ def find_available_update() -> tuple[UpdateInfo | None, str, str | None]:
         return None, f"检查更新失败：{exc}", None
 
     latest_tag = str(payload.get("tag_name") or "").strip()
-    release_url = str(payload.get("html_url") or "https://github.com/dashuaiisme/panghu-codex-installer/releases")
+    release_url = str(payload.get("html_url") or "https://github.com/dashuaiisme/panghu-ai-client/releases")
     if not latest_tag:
         return None, "检查更新失败：GitHub Release 没有版本号。", release_url
     if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
@@ -3393,7 +3483,7 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
 
 
 def update_script_path() -> Path:
-    root = Path(tempfile.gettempdir()) / "PanghuAI-Agent-Deployer-Updater"
+    root = Path(tempfile.gettempdir()) / "PanghuAI-Client-Updater"
     root.mkdir(parents=True, exist_ok=True)
     return root / ("apply-update.ps1" if platform.system() == "Windows" else "apply-update.sh")
 
@@ -3434,7 +3524,7 @@ $zipPath = {powershell_single_quoted(zip_path)}
 $appDir = {powershell_single_quoted(app_dir)}
 $launchTarget = {powershell_single_quoted(launch_target)}
 $pidToWait = {pid}
-$staging = Join-Path $env:TEMP ("PanghuAI-Agent-Deployer-Update-" + [guid]::NewGuid().ToString("N"))
+$staging = Join-Path $env:TEMP ("PanghuAI-Client-Update-" + [guid]::NewGuid().ToString("N"))
 try {{
     Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
@@ -4191,6 +4281,27 @@ def run_agent_dialogue_probe(agent: AgentSpec, mode_id: str, model: str) -> tupl
     return True, output[:1000]
 
 
+def agent_mode_uses_cli_probe(mode_id: str) -> bool:
+    return mode_id == "cli"
+
+
+def agent_mode_requires_client_scope(mode_id: str) -> bool:
+    return mode_id in {"client", "both"}
+
+
+def verify_agent_client_scope(agent: AgentSpec, mode_id: str) -> tuple[bool, str]:
+    client_ok, client_detail = agent_client_status(agent)
+    if not client_ok:
+        return (
+            False,
+            f"{agent.name}/{mode_id} client scope 需要独立客户端验收；当前客户端形态未确认：{client_detail}",
+        )
+    return (
+        False,
+        f"{agent.name}/{mode_id} client scope 需要独立客户端验收；已检测到客户端入口，但尚未实现客户端内最小任务自动验收，不能用 CLI 探针代替。",
+    )
+
+
 def agent_dialogue_probe_command_text(agent: AgentSpec, model: str) -> str:
     if agent.id == "gemini_agy":
         return "配置待开发，请用 Google 账号自行登录进行中文对话"
@@ -4606,6 +4717,7 @@ class WebviewApi:
             "accounts": login_state.get("accounts") or [],
             "buyerPurchase": self.app.current_buyer_purchase_state(),
             "agentCenter": agent_center_state,
+            "valueAddedServices": self.app.current_value_added_services_state(),
             "communicationSoftwareLink": self.app.current_communication_software_link_web_state(),
         }
 
@@ -4703,6 +4815,9 @@ class WebviewApi:
         self.app.status.set("客服提示：请先登录胖虎AI账号")
         self.app.sync_webview_state()
         return True
+
+    def build_register_url(self, invite_code_or_url=""):
+        return build_register_url(str(invite_code_or_url or ""))
 
     def save_key(self, api_key: str, skip_test: bool):
         self.app.api_key.set(api_key)
@@ -4858,6 +4973,29 @@ class WebviewApi:
     def _apply_communication_software_link_payload(self, payload=None):
         if not isinstance(payload, dict):
             return
+        state_payload = payload.get("state")
+        flattened = dict(payload)
+        if isinstance(state_payload, dict):
+            flattened.update(state_payload)
+        aliases = {
+            "serviceProductId": "service_product_id",
+            "orderId": "order_id",
+            "sessionId": "session_id",
+            "agentId": "agent_id",
+            "agentSource": "agent_source",
+            "platformAccountId": "platform_account_id",
+            "platformChatId": "platform_chat_id",
+            "gatewayMode": "gateway_mode",
+            "testPrompt": "test_prompt",
+            "sourceEventId": "source_event_id",
+            "inboundPlatformMessageId": "inbound_platform_message_id",
+            "outboundPlatformMessageId": "outbound_platform_message_id",
+            "agentResponseDigest": "agent_response_digest",
+            "evidenceUrl": "evidence_url",
+        }
+        for camel_key, snake_key in aliases.items():
+            if camel_key in flattened and snake_key not in flattened:
+                flattened[snake_key] = flattened[camel_key]
         mapping = {
             "service_product_id": self.app.communication_software_link_service_product_id,
             "order_id": self.app.communication_software_link_order_id,
@@ -4876,8 +5014,8 @@ class WebviewApi:
             "evidence_url": self.app.communication_software_link_evidence_url,
         }
         for key, var in mapping.items():
-            if key in payload:
-                var.set(str(payload.get(key) or ""))
+            if key in flattened:
+                var.set(str(flattened.get(key) or ""))
 
     def communication_software_link_refresh_offering(self, payload=None):
         try:
@@ -4924,6 +5062,22 @@ class WebviewApi:
             self._apply_communication_software_link_payload(payload)
             self.app.start_communication_software_link_test()
             return self._accepted("连接通讯软件测试请求已受理，测试结果以服务端回填为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_run_local_runtime_test(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_local_runtime_test()
+            return self._accepted("连接通讯软件本地 Runtime 测试已受理，完成后只生成本地预检字段，不能替代通讯软件平台回调。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_one_click_connect(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_one_click_connect()
+            return self._accepted("连接通讯软件一键连接已受理：将完成订单、配置会话、测试和本地预检；不会自动提交真实验收。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -5016,6 +5170,8 @@ class WebviewApi:
 
 class InstallerApp:
     def __init__(self, root: tk.Tk, webview_mode: bool = False) -> None:
+        if not webview_mode:
+            raise RuntimeError("胖虎AI客户端正式业务界面只允许 WebView UI；旧 Tkinter 业务界面已禁止启动。")
         self.webview_mode = webview_mode
         self.root = root
         self.theme_name = load_theme_preference()
@@ -5038,6 +5194,7 @@ class InstallerApp:
         self.commercial_contexts = None
         self.commercial_capabilities = {}
         self.commercial_products = []
+        self.value_added_services = []
         self.commercial_entitlements: list[EntitlementContract] = []
         self.agent_center_live_data: dict = {}
         self.agent_downstreams_live_data: dict = {}
@@ -5274,6 +5431,7 @@ class InstallerApp:
             "accounts": load_login_account_public_state().get("accounts") or [],
             "buyerPurchase": self.current_buyer_purchase_state(),
             "agentCenter": agent_center_state,
+            "valueAddedServices": self.current_value_added_services_state(),
             "communicationSoftwareLink": self.current_communication_software_link_web_state(),
         }
 
@@ -6531,6 +6689,27 @@ class InstallerApp:
                 return parse_agent_center_snapshot_data(center)
         return {}
 
+    def current_value_added_services_state(self) -> list[dict]:
+        services = getattr(self, "value_added_services", []) or []
+        result: list[dict] = []
+        for service in services:
+            result.append(
+                {
+                    "service_id": service.service_id,
+                    "title": service.title,
+                    "target_project": service.target_project,
+                    "status": service.status,
+                    "entry_url": service.entry_url,
+                    "purchase_url": service.purchase_url,
+                    "entitlement_status": service.entitlement_status,
+                    "requires_webview_session": service.requires_webview_session,
+                    "summary_url": service.summary_url,
+                    "unverified_reason": service.unverified_reason,
+                    "is_available": service.is_available,
+                }
+            )
+        return result
+
     def current_buyer_purchase_state(self) -> dict:
         statuses = getattr(self, "buyer_purchase_statuses", {})
         entitlements = getattr(self, "commercial_entitlements", [])
@@ -6560,7 +6739,10 @@ class InstallerApp:
             "agentId": self._safe_var_value("communication_software_link_agent_id"),
             "channel": self._safe_var_value("communication_software_link_channel"),
             "agentSource": self._safe_var_value("communication_software_link_agent_source"),
+            "platformAccountId": self._safe_var_value("communication_software_link_platform_account_id"),
+            "platformChatId": self._safe_var_value("communication_software_link_platform_chat_id"),
             "gatewayMode": self._safe_var_value("communication_software_link_gateway_mode"),
+            "testPrompt": self._safe_var_value("communication_software_link_test_prompt"),
             "state": self.current_communication_software_link_state(),
         }
 
@@ -6581,8 +6763,11 @@ class InstallerApp:
             "outboundPlatformMessageId": self._safe_var_value("communication_software_link_outbound_message_id"),
             "agentResponseDigest": self._safe_var_value("communication_software_link_response_digest"),
             "evidenceUrl": self._safe_var_value("communication_software_link_evidence_url"),
-            "realServiceStatus": "server_required",
-            "clientMayClaimDeliveryComplete": False,
+            "realServiceStatus": str(order_status.get("real_service_status") or "server_required"),
+            "platformCallbackStatus": str(order_status.get("platform_callback_status") or ""),
+            "runtimeAdapterStatus": str(order_status.get("runtime_adapter_status") or ""),
+            "acceptanceStatus": str(order_status.get("acceptance_status") or ""),
+            "clientMayClaimDeliveryComplete": order_status.get("client_may_claim_delivery_complete") is True,
             "deliveryBoundary": delivery_boundary,
         }
 
@@ -6858,6 +7043,17 @@ class InstallerApp:
                 order_status["session_id"] = session_id
             if status:
                 order_status["communication_software_link_status"] = status
+            for key in (
+                "real_service_status",
+                "platform_callback_status",
+                "runtime_adapter_status",
+                "acceptance_status",
+            ):
+                value = str(fields.get(key) or "").strip()
+                if value:
+                    order_status[key] = value
+            if "client_may_claim_delivery_complete" in fields:
+                order_status["client_may_claim_delivery_complete"] = fields.get("client_may_claim_delivery_complete") is True
             self.communication_software_link_order_statuses[order_id] = order_status
 
     def _communication_software_link_create_session_worker(self, request) -> None:
@@ -6914,6 +7110,289 @@ class InstallerApp:
         )
         self.set_busy(True)
         threading.Thread(target=self._communication_software_link_generic_worker, args=("测试请求已提交", request), daemon=True).start()
+
+    def start_communication_software_link_local_runtime_test(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        session_id = self.communication_software_link_session_id.get().strip()
+        order_id = self.communication_software_link_order_id.get().strip()
+        agent_id = self.communication_software_link_agent_id.get().strip()
+        if not session_id:
+            messagebox.showwarning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            return
+        if not order_id:
+            messagebox.showwarning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            return
+        if not agent_id:
+            messagebox.showwarning("缺少 Agent", "请选择要接入通讯软件的 Agent。")
+            return
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_local_runtime_worker, daemon=True).start()
+
+    def _run_local_communication_software_link_runtime_probe(self, agent_id: str) -> str:
+        agent = next((item for item in AGENTS if item.id == agent_id), None)
+        if agent is None:
+            raise ValueError(f"未知 Agent：{agent_id}")
+        mode_var = getattr(self, "agent_mode", {}).get(agent_id)
+        mode_id = mode_var.get() if mode_var is not None else "cli"
+        if not agent_mode_uses_cli_probe(mode_id):
+            ok, output = verify_agent_client_scope(agent, mode_id)
+        else:
+            model_var = getattr(self, "model", None)
+            model = model_var.get().strip() if model_var is not None else DEFAULT_MODEL
+            ok, output = run_agent_dialogue_probe(agent, mode_id, model or DEFAULT_MODEL)
+        if not ok:
+            raise RuntimeError(output or f"{agent.name} 本地 Runtime 测试未通过。")
+        return output
+
+    def _communication_software_link_local_runtime_worker(self) -> None:
+        try:
+            agent_id = self.communication_software_link_agent_id.get().strip()
+            output = self._run_local_communication_software_link_runtime_probe(agent_id)
+            evidence = build_local_communication_software_link_acceptance_evidence(
+                session_id=self.communication_software_link_session_id.get().strip(),
+                order_id=self.communication_software_link_order_id.get().strip(),
+                agent_id=agent_id,
+                channel=self.communication_software_link_channel.get().strip(),
+                platform_chat_id=self.communication_software_link_platform_chat_id.get().strip(),
+                test_prompt=self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT,
+                agent_response=output,
+            )
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(evidence))
+            self.log_from_worker("连接通讯软件本地 Runtime 测试通过；已生成入站、Agent 响应摘要、出站和 source_event_id 验收字段。")
+            self.set_status_from_worker("状态：连接通讯软件本地 Runtime 测试通过，等待真实平台回调与服务端验收记录")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件本地 Runtime 测试失败：{exc}")
+            self.show_error_from_worker("连接通讯软件本地 Runtime 测试失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def start_communication_software_link_one_click_connect(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_one_click_connect_worker, daemon=True).start()
+
+    def _communication_software_link_one_click_connect_worker(self) -> None:
+        try:
+            result = self.run_communication_software_link_one_click_connect()
+            self.log_from_worker(
+                "连接通讯软件一键连接已完成本地预检；"
+                f"订单={result.get('order_id') or '-'}，会话={result.get('session_id') or '-'}，"
+                "本地预检不能替代通讯软件平台回调，最终交付仍以服务端真实验收记录为准。"
+            )
+            self.set_status_from_worker("状态：连接通讯软件本地预检通过，等待真实平台消息与服务端验收")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件一键连接失败：{exc}")
+            self.show_error_from_worker("连接通讯软件一键连接失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def run_communication_software_link_one_click_connect(self) -> dict[str, str]:
+        if self.commercial_contexts is None or self.deployer_auth is None:
+            raise RuntimeError("请先登录胖虎AI买家账号，并获取本次运行的服务端授权。")
+        service_product_id = self.communication_software_link_service_product_id.get().strip()
+        order_id = self.communication_software_link_order_id.get().strip()
+        session_id = self.communication_software_link_session_id.get().strip()
+        agent_id = self.communication_software_link_agent_id.get().strip()
+        channel = self.communication_software_link_channel.get().strip()
+        agent_source = self.communication_software_link_agent_source.get().strip()
+        platform_account_id = self.communication_software_link_platform_account_id.get().strip()
+        platform_chat_id = self.communication_software_link_platform_chat_id.get().strip()
+        gateway_mode = self.communication_software_link_gateway_mode.get().strip()
+        test_prompt = self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT
+
+        missing = []
+        if not agent_id:
+            missing.append("Agent")
+        if not channel:
+            missing.append("通讯通道")
+        if not agent_source:
+            missing.append("Agent 来源")
+        if not gateway_mode:
+            missing.append("网关模式")
+        if not order_id and not service_product_id:
+            missing.append("服务商品 ID 或订单 ID")
+        if missing:
+            raise ValueError("连接通讯软件一键连接缺少：" + "、".join(missing))
+
+        if not order_id:
+            order_request = commercial_api_request_with_auth(
+                "communication_software_link_order_create",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                service_product_id=service_product_id,
+                agent_id=agent_id,
+                channel=channel,
+                agent_source=agent_source,
+            )
+            order_data, summary = execute_commercial_api_with_trusted_certs(order_request)
+            self.log_from_worker(summary)
+            order_id = str(order_data.get("order_id") or order_data.get("service_order_id") or order_data.get("id") or "").strip()
+            if not order_id:
+                raise ValueError("创建连接通讯软件订单返回缺少订单 ID。")
+            order_status = parse_communication_software_link_order_status_data(order_data)
+            self.communication_software_link_order_statuses[order_id] = order_status
+            self.run_on_ui(lambda: self.communication_software_link_order_id.set(order_id))
+        else:
+            status = self.communication_software_link_order_statuses.get(order_id)
+            if status is None:
+                order_request = commercial_api_request_with_auth(
+                    "communication_software_link_order_get",
+                    self.commercial_contexts,
+                    deployer_auth=self.deployer_auth,
+                    order_id=order_id,
+                )
+                order_data, summary = execute_commercial_api_with_trusted_certs(order_request)
+                self.log_from_worker(summary)
+                status = parse_communication_software_link_order_status_data(order_data)
+                self.communication_software_link_order_statuses[order_id] = status
+            order_status = status
+
+        if not order_status.get("session_allowed"):
+            raise RuntimeError("连接通讯软件订单尚未支付或未进入服务端人工复核，不能创建配置会话。")
+
+        if not platform_account_id or not platform_chat_id:
+            platform_fields = self.resolve_communication_software_link_platform_authorization(
+                order_id=order_id,
+                agent_id=agent_id,
+                channel=channel,
+                gateway_mode=gateway_mode,
+                platform_chat_hint=platform_chat_id,
+            )
+            platform_account_id = platform_fields["platform_account_id"]
+            platform_chat_id = platform_fields["platform_chat_id"]
+            gateway_mode = platform_fields.get("gateway_mode") or gateway_mode
+
+        if not session_id:
+            session_request = commercial_api_request_with_auth(
+                "communication_software_link_session_create",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                order_id=order_id,
+                agent_id=agent_id,
+                channel=channel,
+                platform_account_id=platform_account_id,
+                platform_chat_id=platform_chat_id,
+                gateway_mode=gateway_mode,
+                agent_source=agent_source,
+            )
+            session_data, summary = execute_commercial_api_with_trusted_certs(session_request)
+            self.log_from_worker(summary)
+            fields = parse_communication_software_link_state_fields(session_data)
+            session_id = fields["session_id"]
+            if not session_id:
+                raise ValueError("创建连接通讯软件配置会话返回缺少会话 ID。")
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(fields))
+        else:
+            self.run_on_ui(lambda: self.communication_software_link_session_id.set(session_id))
+
+        test_request = commercial_api_request_with_auth(
+            "communication_software_link_session_test",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            session_id=session_id,
+            test_prompt=test_prompt,
+        )
+        test_data, summary = execute_commercial_api_with_trusted_certs(test_request)
+        self.log_from_worker(summary)
+        self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(parse_communication_software_link_state_fields(test_data)))
+
+        agent_response = self._run_local_communication_software_link_runtime_probe(agent_id)
+        evidence = build_local_communication_software_link_acceptance_evidence(
+            session_id=session_id,
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            platform_chat_id=platform_chat_id,
+            test_prompt=test_prompt,
+            agent_response=agent_response,
+        )
+        self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(evidence))
+
+        return {
+            "status": "local_runtime_precheck_passed",
+            "order_id": order_id,
+            "session_id": session_id,
+            "source_event_id": evidence["source_event_id"],
+            "evidence_url": evidence["evidence_url"],
+            "client_may_claim_delivery_complete": False,
+        }
+
+    def open_communication_software_link_platform_auth_url(self, url: str) -> None:
+        open_url(
+            url,
+            cookie_jar=getattr(self, "cookie_jar", None),
+            log=getattr(self, "log", None),
+            storage_path=self.current_buyer_web_profile_path() if hasattr(self, "current_buyer_web_profile_path") else None,
+        )
+
+    def resolve_communication_software_link_platform_authorization(
+        self,
+        order_id: str,
+        agent_id: str,
+        channel: str,
+        gateway_mode: str,
+        platform_chat_hint: str = "",
+    ) -> dict[str, str]:
+        create_request = commercial_api_request_with_auth(
+            "communication_software_link_platform_auth_create",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            gateway_mode=gateway_mode,
+            platform_chat_hint=platform_chat_hint,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(create_request)
+        self.log_from_worker(summary)
+        auth_session_id = str(data.get("auth_session_id") or data.get("platform_auth_session_id") or data.get("id") or "").strip()
+        authorization_url = str(data.get("authorization_url") or data.get("qr_code_url") or data.get("url") or "").strip()
+        if not auth_session_id:
+            raise ValueError("连接通讯软件平台授权返回缺少授权会话 ID。")
+        if authorization_url:
+            self.run_on_ui(lambda: self.open_communication_software_link_platform_auth_url(authorization_url))
+            self.log_from_worker("已打开连接通讯软件平台授权页，请买家在手机或通讯软件中完成扫码/确认。")
+        max_polls = max(1, int(COMMUNICATION_SOFTWARE_LINK_PLATFORM_AUTH_MAX_POLLS))
+        poll_seconds = max(0, int(COMMUNICATION_SOFTWARE_LINK_PLATFORM_AUTH_POLL_SECONDS))
+        for attempt in range(max_polls):
+            get_request = commercial_api_request_with_auth(
+                "communication_software_link_platform_auth_get",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                auth_session_id=auth_session_id,
+            )
+            status_data, summary = execute_commercial_api_with_trusted_certs(get_request)
+            self.log_from_worker(summary)
+            status = str(status_data.get("status") or "").strip().lower()
+            platform_account_id = str(status_data.get("platform_account_id") or "").strip()
+            platform_chat_id = str(status_data.get("platform_chat_id") or "").strip()
+            resolved_gateway_mode = str(status_data.get("gateway_mode") or gateway_mode or "").strip()
+            if status in {"authorized", "connected", "completed", "success"} and platform_account_id and platform_chat_id:
+                self.run_on_ui(lambda: self.communication_software_link_platform_account_id.set(platform_account_id))
+                self.run_on_ui(lambda: self.communication_software_link_platform_chat_id.set(platform_chat_id))
+                if resolved_gateway_mode:
+                    self.run_on_ui(lambda: self.communication_software_link_gateway_mode.set(resolved_gateway_mode))
+                return {
+                    "platform_account_id": platform_account_id,
+                    "platform_chat_id": platform_chat_id,
+                    "gateway_mode": resolved_gateway_mode,
+                }
+            if status in {"failed", "cancelled", "canceled", "expired", "rejected"}:
+                raise RuntimeError(f"连接通讯软件平台授权未完成：{status}")
+            if attempt < max_polls - 1 and poll_seconds:
+                self.log_from_worker(f"平台授权等待中（{attempt + 1}/{max_polls}）：请在手机或通讯软件中完成扫码/授权。")
+                time.sleep(poll_seconds)
+        raise RuntimeError("连接通讯软件平台授权超时，请确认手机或通讯软件已完成扫码/授权后重试。")
 
     def start_communication_software_link_acceptance(self) -> None:
         if self.worker_running:
@@ -8983,6 +9462,7 @@ class InstallerApp:
             self.deployer_manifest = manifest
             self.commercial_capabilities = manifest_commercial_capabilities(manifest)
             self.commercial_products = manifest_commercial_products(manifest)
+            self.value_added_services = manifest_value_added_services(manifest)
             self.commercial_entitlements = manifest_commercial_entitlements(manifest)
             self.run_on_ui(self.refresh_commercial_summary)
             commercial_manifest_present = manifest_has_commercial_controls(manifest)
@@ -9124,6 +9604,33 @@ class InstallerApp:
                 session_key = (agent.id, commercial_mode_key)
                 progress = agent_progress.setdefault(session_key, DeploymentProgress())
                 if progress.status_for(DeploymentNode.CONFIG_WRITE) != NodeStatus.PASS:
+                    continue
+                if agent_mode_requires_client_scope(mode):
+                    client_ok, client_excerpt = verify_agent_client_scope(agent, mode)
+                    progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.PASS if client_ok else NodeStatus.FAILED)
+                    progress.mark(DeploymentNode.REAL_TASK_VERIFY, NodeStatus.FAILED)
+                    self.log_from_worker(client_excerpt)
+                    real_task = verify_real_task_evidence(
+                        diagnostic_code=diagnostic_code,
+                        agent_id=agent.id,
+                        mode_key=commercial_mode_key,
+                        request_ok=True,
+                        response_ok=False,
+                        response_excerpt=client_excerpt,
+                    )
+                    real_task_results[session_key] = real_task
+                    config_session_id = config_session_ids.get(session_key, "")
+                    if config_session_id:
+                        _data, summary = execute_config_session_fail(
+                            config_session_id,
+                            diagnostic_code,
+                            real_task.customer_message,
+                            opener=trusted_urlopen,
+                            contexts=contexts,
+                            deployer_auth=deployer_auth,
+                        )
+                        completed_session_keys.add(session_key)
+                        self.log_from_worker(f"{agent.name}/{commercial_mode_key} client scope 未形成独立客户端交付；已提交失败且不扣次：{summary}")
                     continue
                 verified, version = version_for(agent.verify_command)
                 progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.PASS if verified else NodeStatus.NEEDS_MANUAL)
@@ -9281,6 +9788,7 @@ class InstallerApp:
     def apply_commercial_manifest_snapshot(self, manifest: dict) -> None:
         self.commercial_capabilities = manifest_commercial_capabilities(manifest)
         self.commercial_products = manifest_commercial_products(manifest)
+        self.value_added_services = manifest_value_added_services(manifest)
         self.commercial_entitlements = manifest_commercial_entitlements(manifest)
         center = manifest.get("agent_center") if isinstance(manifest, dict) else None
         if isinstance(center, dict):
@@ -9383,6 +9891,7 @@ def self_test() -> None:
     assert node_rows[0].title == "登录身份"
     assert node_rows[-1].title == "客服诊断"
     assert manifest_has_commercial_controls({"products": []})
+    assert manifest_has_commercial_controls({"value_added_services": []})
     assert not manifest_has_commercial_controls({"agents": []})
     assert validate_commercial_manifest_trust({"agents": []}).trusted
     assert not validate_commercial_manifest_trust({"products": []}).trusted
@@ -9405,6 +9914,24 @@ def self_test() -> None:
     )
     assert "当前等级：L1" in center_summary
     assert "邀请入口：已开放" in center_summary
+    value_added_summary = value_added_services_summary_text(
+        {
+            "value_added_services": [
+                {
+                    "service_id": "sms_code",
+                    "title": "接码控制台",
+                    "target_project": "手机号接码控制中心",
+                    "status": "pending_production",
+                    "entry_url": "https://sim.aitokenapi.cc",
+                    "entitlement_status": "unknown",
+                    "requires_webview_session": True,
+                    "unverified_reason": "生产验收待完成",
+                }
+            ]
+        }
+    )
+    assert "待生产验收" in value_added_summary
+    assert "已交付" not in value_added_summary
     assert "请先登录买家账号" in InstallerApp.current_commercial_summary_text(
         type(
             "SummaryProbe",
@@ -9560,8 +10087,8 @@ requires_openai_auth = true
     assert 'shExpMatch(host, "*.openai.com")' in pac
     assert 'shExpMatch(host, "*.chatgpt.com")' in pac
     assert "return \"PROXY aitokenapi.cc:80; DIRECT\";" in pac
-    update = UpdateInfo("v9.9.9", "https://example.com/update.zip", "https://example.com/release", "AI.Agent.-Windows.zip", "Windows")
-    assert update.asset_name == "AI.Agent.-Windows.zip"
+    update = UpdateInfo("v9.9.9", "https://example.com/update.zip", "https://example.com/release", "胖虎AI客户端-Windows.zip", "Windows")
+    assert update.asset_name == "胖虎AI客户端-Windows.zip"
     win_update_script = build_windows_update_script(Path("C:/tmp/update.zip"), Path("C:/App"), Path("C:/App/app.exe"), 1234)
     assert "Wait-Process -Id $pidToWait" in win_update_script
     assert "Expand-Archive" in win_update_script
@@ -9612,51 +10139,32 @@ def main() -> int:
         return 0
     enable_windows_dpi_awareness()
 
-    use_tkinter = "--tkinter" in sys.argv
-    bundled_webview_shell = ui_path("index.html")
-    webview_available = False
-    if not use_tkinter and bundled_webview_shell.exists():
-        try:
-            import webview
-            webview_available = True
-        except ImportError:
-            pass
-    elif not use_tkinter:
-        print("旧 WebView UI 已移除，当前以 Tkinter 后端壳启动；新前端后续单独接入。")
-        use_tkinter = True
-
-    if webview_available:
-        try:
-            root = tk.Tk()
-            root.withdraw()
-
-            app = InstallerApp(root, webview_mode=True)
-
-            window = webview.create_window(
-                title=APP_NAME,
-                url=str(bundled_webview_shell.absolute()),
-                js_api=WebviewApi(app),
-                width=1400,
-                height=900,
-                min_size=(1180, 760),
-                resizable=True
-            )
-            app.webview_window = window
-
-            app_shell_storage = web_profile_root() / "app-shell"
-            app_shell_storage.mkdir(parents=True, exist_ok=True)
-            webview.start(debug=False, private_mode=False, storage_path=str(app_shell_storage))
-            app.close_app()
-            return 0
-        except Exception as e:
-            print(f"Failed to start PyWebview GUI, falling back to Tkinter: {e}")
-            use_tkinter = True
-
-    if use_tkinter:
+    try:
+        webview_runtime, bundled_webview_shell = require_webview_runtime_and_ui()
         root = tk.Tk()
-        InstallerApp(root, webview_mode=False)
-        root.mainloop()
+        root.withdraw()
+
+        app = InstallerApp(root, webview_mode=True)
+
+        window = webview_runtime.create_window(
+            title=APP_NAME,
+            url=str(bundled_webview_shell.absolute()),
+            js_api=WebviewApi(app),
+            width=1400,
+            height=900,
+            min_size=(1180, 760),
+            resizable=True
+        )
+        app.webview_window = window
+
+        app_shell_storage = web_profile_root() / "app-shell"
+        app_shell_storage.mkdir(parents=True, exist_ok=True)
+        webview_runtime.start(debug=False, private_mode=False, storage_path=str(app_shell_storage))
+        app.close_app()
         return 0
+    except Exception as e:
+        print(f"胖虎AI客户端启动失败：{e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

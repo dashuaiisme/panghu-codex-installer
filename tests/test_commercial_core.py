@@ -22,6 +22,7 @@ from commercial_core import (  # noqa: E402
     NodeStatus,
     RealTaskVerificationResult,
     UserContext,
+    ValueAddedServiceEntry,
     WebProfileScope,
     build_commercial_agent_capabilities,
     build_buyer_self_service_status_rows,
@@ -34,6 +35,8 @@ from commercial_core import (  # noqa: E402
     build_customer_delivery_verdict,
     build_customer_delivery_report,
     build_support_diagnostic_packet,
+    build_value_added_service_catalog,
+    build_value_added_service_summary_lines,
     canonical_commercial_manifest_payload,
     commercial_deployment_blockers,
     commercial_config_gate,
@@ -63,6 +66,13 @@ class CommercialCoreTests(unittest.TestCase):
 
     def test_agent_center_manifest_snapshot_requires_server_signature(self) -> None:
         decision = validate_commercial_manifest_trust({"agent_center": {"enabled": True}})
+
+        self.assertFalse(decision.trusted)
+        self.assertTrue(decision.requires_signature)
+        self.assertIn("签名", decision.message)
+
+    def test_value_added_services_manifest_snapshot_requires_server_signature(self) -> None:
+        decision = validate_commercial_manifest_trust({"value_added_services": []})
 
         self.assertFalse(decision.trusted)
         self.assertTrue(decision.requires_signature)
@@ -530,6 +540,94 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertIn("待结算：¥62.00", text)
         self.assertIn("冻结金额：¥7.00", text)
         self.assertNotIn("99%", text)
+
+    def test_value_added_service_catalog_uses_server_snapshot_without_sensitive_fields(self) -> None:
+        catalog = build_value_added_service_catalog(
+            {
+                "value_added_services": [
+                    {
+                        "service_id": "gpt_plus",
+                        "title": "Plus 订阅",
+                        "target_project": "Plus session.脚本工具",
+                        "status": "available",
+                        "entry_url": "https://aitokenapi.cc/value-added/gpt-plus",
+                        "purchase_url": "https://aitokenapi.cc/value-added/gpt-plus",
+                        "entitlement_status": "not_purchased",
+                        "requires_webview_session": True,
+                        "summary_url": "https://aitokenapi.cc/api/value-added/gpt-plus/summary",
+                        "session_token": "secret-should-skip",
+                    },
+                    {
+                        "service_id": "sms_code",
+                        "title": "接码控制台",
+                        "target_project": "手机号接码控制中心",
+                        "status": "pending_production",
+                        "entry_url": "https://sim.aitokenapi.cc",
+                        "purchase_url": "https://aitokenapi.cc/value-added/phone-card",
+                        "entitlement_status": "unknown",
+                        "requires_webview_session": True,
+                        "summary_url": "https://aitokenapi.cc/api/value-added/sms-code/summary",
+                        "unverified_reason": "真实设备和数据库尚未验收",
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(len(catalog), 1)
+        service = catalog[0]
+        self.assertIsInstance(service, ValueAddedServiceEntry)
+        self.assertEqual(service.service_id, "sms_code")
+        self.assertFalse(service.is_available)
+        self.assertEqual(service.unverified_reason, "真实设备和数据库尚未验收")
+
+    def test_value_added_service_catalog_skips_incomplete_or_unknown_status_entries(self) -> None:
+        catalog = build_value_added_service_catalog(
+            {
+                "value_added_services": [
+                    {
+                        "service_id": "phone_card",
+                        "title": "手机卡/云号码",
+                        "target_project": "手机号接码控制中心",
+                        "status": "available",
+                        "entry_url": "https://aitokenapi.cc/value-added/phone-card",
+                        "entitlement_status": "not_purchased",
+                    },
+                    {
+                        "service_id": "unknown",
+                        "title": "未知服务",
+                        "target_project": "Unknown",
+                        "status": "listed",
+                        "entry_url": "https://aitokenapi.cc/value-added/unknown",
+                        "entitlement_status": "not_purchased",
+                        "requires_webview_session": True,
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(catalog, [])
+
+    def test_value_added_service_summary_lines_keep_pending_production_visible(self) -> None:
+        lines = build_value_added_service_summary_lines(
+            [
+                ValueAddedServiceEntry(
+                    service_id="sms_code",
+                    title="接码控制台",
+                    target_project="手机号接码控制中心",
+                    status="pending_production",
+                    entry_url="https://sim.aitokenapi.cc",
+                    purchase_url="https://aitokenapi.cc/value-added/phone-card",
+                    entitlement_status="unknown",
+                    requires_webview_session=True,
+                    unverified_reason="生产 DNS 尚未验收",
+                )
+            ]
+        )
+        text = "\n".join(lines)
+
+        self.assertIn("待生产验收", text)
+        self.assertIn("生产 DNS 尚未验收", text)
+        self.assertNotIn("已交付", text)
 
     def test_node_status_rows_are_customer_safe_and_ordered(self) -> None:
         progress = DeploymentProgress()

@@ -12,7 +12,7 @@ sys.path.insert(0, str(SRC))
 
 from commercial_backend_contract import CommercialLedgerContract  # noqa: E402
 from commercial_core import CommercialProduct, DeliveryScope, find_orderable_product  # noqa: E402
-from panghu_codex_installer import commercial_api_request_with_auth, deployment_commercial_contexts  # noqa: E402
+from panghu_ai_client import commercial_api_request_with_auth, deployment_commercial_contexts  # noqa: E402
 
 
 def backend_closeout_matrix() -> dict[str, list[dict[str, str]]]:
@@ -195,6 +195,88 @@ def _run_communication_software_link_acceptance(ledger: CommercialLedgerContract
         for event in ledger.service_ledger_events.values()
         if event.source_event_id == "csl-delivery-flow-1"
     )
+    callback_delivery_agent_product = ledger.configure_agent_product(
+        "agent-l1-csl-callback-flow",
+        "L1",
+        "L1 连接通讯软件验收代理",
+        0,
+    )
+    callback_delivery_agent = ledger.apply_agent("agent-csl-callback-flow", callback_delivery_agent_product.product_id)
+    ledger.bind_referral_request("bind-csl-callback-flow-1", "buyer-csl-callback-flow", callback_delivery_agent.invite_code)
+    ledger.configure_commission_policy_rule("communication_software_link_delivered", "L1", depth=1, rate_bps=1000)
+    callback_delivery_base_order = ledger.create_order(
+        idempotency_key="base-csl-callback-delivery-order-1",
+        product_id="prod-codex-direct-api",
+        buyer_user_id="buyer-csl-callback-flow",
+        operator_user_id="buyer-csl-callback-flow",
+        agent_chain=[],
+        diagnostic_code="PH-CFG-CSL-CALLBACK-FLOW-1",
+    )
+    callback_delivery_base_entitlement = ledger.mark_paid_and_create_entitlement(
+        callback_delivery_base_order.order_id,
+        payment_id="base-csl-callback-delivery-pay-1",
+    )
+    callback_delivery_base_session = ledger.reserve_config_session(
+        idempotency_key="base-csl-callback-delivery-session-1",
+        entitlement_id=callback_delivery_base_entitlement.entitlement_id,
+        operator_user_id="buyer-csl-callback-flow",
+        agent_id="codex",
+        mode_key="direct_api",
+        device_id="device-csl-callback-flow",
+        diagnostic_code="PH-CFG-CSL-CALLBACK-FLOW-1",
+    )
+    ledger.complete_config_session(callback_delivery_base_session.config_session_id, real_task_verified=True)
+    callback_delivery_order = ledger.create_communication_software_link_order(
+        idempotency_key="csl-order-callback-delivery-flow-1",
+        service_product_id="svc-communication-software-link",
+        buyer_user_id="buyer-csl-callback-flow",
+        agent_id="codex",
+        channel="feishu",
+        agent_source="current_delivery",
+    )
+    ledger.mark_communication_software_link_order_paid(callback_delivery_order.order_id, "pay-csl-callback-delivery-flow-1")
+    callback_delivery_session = ledger.create_communication_software_link_session(
+        idempotency_key="csl-session-callback-delivery-flow-1",
+        order_id=callback_delivery_order.order_id,
+        buyer_user_id="buyer-csl-callback-flow",
+        agent_id="codex",
+        channel="feishu",
+        platform_account_id="feishu-bot-callback-delivery",
+        platform_chat_id="feishu-chat-callback-delivery",
+        gateway_mode="official_bot",
+        agent_source="current_delivery",
+    )
+    ledger.mark_communication_software_link_connected(callback_delivery_session.session_id)
+    commission_count_before_callback_delivery = len(ledger.commission_entries)
+    callback_delivery = ledger.process_communication_software_link_callback_delivery(
+        session_id=callback_delivery_session.session_id,
+        channel="feishu",
+        platform_message_id="inbound-csl-callback-delivery-flow-1",
+        sender_id="buyer-csl-callback-flow",
+        text="@胖虎 ping",
+        mentioned_bot=True,
+        authorized_sender_ids={"buyer-csl-callback-flow"},
+        source_event_id="csl-callback-delivery-flow-1",
+        outbound_platform_message_id="outbound-csl-callback-delivery-flow-1",
+        agent_response_digest="pong",
+        evidence_url="offline://communication-software-link/callback-delivery-flow-1",
+        accepted_by="admin-offline",
+    )
+    callback_delivery_replay = ledger.process_communication_software_link_callback_delivery(
+        session_id=callback_delivery_session.session_id,
+        channel="feishu",
+        platform_message_id="inbound-csl-callback-delivery-flow-1",
+        sender_id="buyer-csl-callback-flow",
+        text="@胖虎 ping",
+        mentioned_bot=True,
+        authorized_sender_ids={"buyer-csl-callback-flow"},
+        source_event_id="csl-callback-delivery-flow-1",
+        outbound_platform_message_id="outbound-csl-callback-delivery-flow-1",
+        agent_response_digest="pong",
+        evidence_url="offline://communication-software-link/callback-delivery-flow-1",
+        accepted_by="admin-offline",
+    )
+    callback_delivery_commissions = ledger.commission_entries[commission_count_before_callback_delivery:]
     disabled_order = ledger.create_communication_software_link_order(
         idempotency_key="csl-order-disable-flow-1",
         service_product_id="svc-communication-software-link",
@@ -260,7 +342,13 @@ def _run_communication_software_link_acceptance(ledger: CommercialLedgerContract
         "runtime_adapter_required": True,
         "runtime_adapter_missing_blocked": runtime_adapter_missing_blocked,
         "runtime_adapter_status": runtime_result.status,
+        "callback_delivery_status": callback_delivery.status,
+        "callback_delivery_replay_status": callback_delivery_replay.status,
+        "callback_delivery_acceptance_id": callback_delivery.acceptance_record.acceptance_id if callback_delivery.acceptance_record else "",
+        "callback_delivery_commission_count": len(callback_delivery_commissions),
+        "callback_delivery_commission_cents": sum(entry.commission_cents for entry in callback_delivery_commissions),
         "final_order_status": ledger.service_orders[order.order_id].status,
+        "final_order_status_scope": "offline_mock",
         "final_charge_status": ledger.service_orders[order.order_id].charge_status,
         "service_ledger_event_type": ledger_event.event_type,
         "service_ledger_service_type": ledger_event.service_type,

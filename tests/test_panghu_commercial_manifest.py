@@ -2,6 +2,7 @@ import sys
 import unittest
 import json
 import base64
+import importlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -10,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-import panghu_codex_installer as installer_module  # noqa: E402
-from panghu_codex_installer import (  # noqa: E402
+import panghu_ai_client as installer_module  # noqa: E402
+from panghu_ai_client import (  # noqa: E402
     CodexConfigMode,
     InstallerApp,
     UserContext,
@@ -66,9 +67,13 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         original = generated.read_text(encoding="utf-8") if generated.exists() else None
         if generated.exists():
             generated.unlink()
+        sys.modules.pop("commercial_manifest_public_key", None)
+        importlib.invalidate_caches()
         try:
             self.assertEqual(load_commercial_manifest_public_key(), "")
         finally:
+            sys.modules.pop("commercial_manifest_public_key", None)
+            importlib.invalidate_caches()
             if original is not None:
                 generated.write_text(original, encoding="utf-8")
 
@@ -77,6 +82,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertTrue(manifest_has_commercial_controls({"products": []}))
         self.assertTrue(manifest_has_commercial_controls({"entitlements": []}))
         self.assertTrue(manifest_has_commercial_controls({"agent_center": {"enabled": True}}))
+        self.assertTrue(manifest_has_commercial_controls({"value_added_services": []}))
 
     def test_manifest_entitlements_skip_unknown_delivery_scope_instead_of_defaulting(self) -> None:
         entitlements = manifest_commercial_entitlements(
@@ -100,7 +106,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(entitlements, [])
 
     def test_packaged_self_test_covers_payment_status_unlock_guard(self) -> None:
-        source = (SRC / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (SRC / "panghu_ai_client.py").read_text(encoding="utf-8")
 
         self.assertIn('parse_payment_status_data({"order_id": "ord-selftest", "payment_status": "paid"})', source)
         self.assertIn('not paid_without_entitlement["ready_for_delivery"]', source)
@@ -500,6 +506,17 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 },
             ),
             ("communication_software_link_session_get", {"session_id": "csl-1"}),
+            (
+                "communication_software_link_platform_auth_create",
+                {
+                    "order_id": "svc-ord-1",
+                    "agent_id": "hermes",
+                    "channel": "feishu",
+                    "gateway_mode": "official_bot",
+                    "platform_chat_hint": "chat-1",
+                },
+            ),
+            ("communication_software_link_platform_auth_get", {"auth_session_id": "pauth-1"}),
             ("communication_software_link_session_test", {"session_id": "csl-1", "test_prompt": "ping"}),
             (
                 "communication_software_link_session_acceptance",
@@ -785,7 +802,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(captured["data"]["api_key"], "sk-live-secret")
 
     def test_legacy_agent_assist_workers_are_removed(self) -> None:
-        source = (SRC / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (SRC / "panghu_ai_client.py").read_text(encoding="utf-8")
 
         self.assertNotIn("def _agent_assist_login_worker", source)
         self.assertNotIn("def _agent_create_order_worker", source)
@@ -920,7 +937,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertFalse(saved["open_app"])
 
     def test_legacy_agent_assist_fields_are_not_initialized_on_app(self) -> None:
-        source = (SRC / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (SRC / "panghu_ai_client.py").read_text(encoding="utf-8")
 
         self.assertNotIn("self.agent_assist_draft", source)
         self.assertNotIn("self.agent_assist_statuses", source)
@@ -1409,9 +1426,9 @@ class PanghuCommercialManifestTests(unittest.TestCase):
 
     def test_ui_does_not_hydrate_backend_api_key_into_dom_value(self) -> None:
         ui_shell = ROOT / "src" / "ui" / "index.html"
-        py_source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        py_source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
 
-        self.assertFalse(ui_shell.exists())
+        self.assertTrue(ui_shell.exists())
         self.assertIn('"apiKeyValue": ""', py_source)
         self.assertIn('"apiKeyPresent": bool(self.app.api_key.get().strip())', py_source)
         self.assertIn('"apiKeyMasked": mask_key(self.app.api_key.get().strip())', py_source)
@@ -1419,7 +1436,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertNotIn('"apiKeyValue": self.api_key.get()', py_source)
 
     def test_login_entry_is_unified_and_not_buyer_agent_mode_split(self) -> None:
-        source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
 
         login_source = source[source.index("def _build_login_frame") : source.index("def _build_buyer_purchase_panel")]
         self.assertIn("登录胖虎AI账号", login_source)
@@ -1430,7 +1447,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertNotIn("_build_agent_assist_panel(login_card)", login_source)
 
     def test_legacy_agent_assist_is_not_customer_visible_or_delivery_owner(self) -> None:
-        source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
 
         forbidden_customer_terms = [
             "买家模式",
@@ -1555,7 +1572,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(calls[:3], ["log", "console_outer", "console_shell"])
 
     def test_ui_layout_contracts_prevent_visual_regression(self) -> None:
-        source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
         self.assertIn('root.geometry("1400x900")', source)
         self.assertIn("LEFT_PANEL_WIDTH = 220", source)
         self.assertIn("RIGHT_PANEL_WIDTH = 300", source)
@@ -1579,9 +1596,9 @@ class PanghuCommercialManifestTests(unittest.TestCase):
 
     def test_customer_web_modules_keep_delivery_right_rail_visible(self) -> None:
         ui_shell = ROOT / "src" / "ui" / "index.html"
-        source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
 
-        self.assertFalse(ui_shell.exists())
+        self.assertTrue(ui_shell.exists())
         self.assertIn("MODULE_SITE", source)
         self.assertIn("MODULE_VALUE_ADDED", source)
         self.assertIn("MODULE_COURSES", source)
@@ -1593,9 +1610,10 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("agent_center", source)
 
     def test_webview_backend_bridge_contracts_are_not_dead_buttons(self) -> None:
-        py_source = (ROOT / "src" / "panghu_codex_installer.py").read_text(encoding="utf-8")
+        py_source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
+        html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
 
-        self.assertFalse((ROOT / "src" / "ui" / "index.html").exists())
+        self.assertTrue((ROOT / "src" / "ui" / "index.html").exists())
         self.assertIn("def start_official_chatgpt_config(self):", py_source)
         self.assertNotIn("def start_official_mode_config(self):", py_source)
         self.assertIn("def refresh_agent_center(self):", py_source)
@@ -1611,8 +1629,68 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn('"state": self.current_communication_software_link_state()', py_source)
         self.assertIn("parse_agent_center_snapshot_data", py_source)
         self.assertIn("self.agent_center_live_data = parse_agent_center_snapshot_data(center)", py_source)
+        self.assertIn("valueAddedServices", py_source)
+        self.assertIn("manifest_value_added_services", py_source)
+        self.assertIn("self.value_added_services = manifest_value_added_services(manifest)", py_source)
         self.assertIn('return {"success": True, "accepted": True, "message": message}', py_source)
         self.assertIn("def current_communication_software_link_web_state(self) -> dict:", py_source)
+        self.assertIn("def communication_software_link_one_click_connect(self, payload=None):", py_source)
+        self.assertIn("def start_communication_software_link_one_click_connect(self) -> None:", py_source)
+        self.assertIn("def run_communication_software_link_one_click_connect(self) -> dict[str, str]:", py_source)
+        self.assertIn('["开始部署与配置","start_deploy"]', html)
+        self.assertIn("window.pywebview.api.${api}()", html)
+        self.assertIn("function setAgentMode(id, mode)", html)
+        self.assertIn("window.pywebview.api.set_agent_mode(id, mode)", html)
+        self.assertIn("agentModeOptions", html)
+        self.assertIn("state.agentMode", html)
+        self.assertIn("communication_software_link_one_click_connect", html)
+        self.assertIn("submitCSLOneClickConnect", html)
+        self.assertIn("window.pywebview.api.communication_software_link_one_click_connect(state.communicationSoftwareLink)", html)
+        self.assertIn("一键连接并本地预检", html)
+        self.assertIn("本地预检不能替代通讯软件平台回调", html)
+        self.assertNotIn("一键连接并提交验收", html)
+        self.assertNotIn("一键连接已受理：将按订单、配置会话、测试、Runtime 证据和服务端验收顺序执行", py_source)
+        self.assertIn("communication_software_link_run_local_runtime_test", html)
+        self.assertIn("communication_software_link_disable(state.communicationSoftwareLink)", html)
+        self.assertNotIn("communication_software_link_disable({ order_id:", html)
+        self.assertIn('id="cslServiceProductId"', html)
+        self.assertIn('id="cslAgentId"', html)
+        self.assertIn('id="cslPlatformAccountId"', html)
+        self.assertIn('id="cslPlatformChatId"', html)
+        self.assertIn('id="cslGatewayMode"', html)
+        self.assertIn('id="cslTestPrompt"', html)
+        self.assertIn("serviceProductId:", html)
+        self.assertIn("platformAccountId:", html)
+        self.assertIn("testPrompt:", html)
+
+    def test_webview_customer_asset_does_not_ship_demo_accounts_or_fake_agent_center_sync(self) -> None:
+        html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
+
+        forbidden_literals = [
+            "test_buyer@gmail.com",
+            "agent_master",
+            "120次",
+            "3台",
+            "已完成检验",
+            "通道激活",
+            "已连接",
+            "已建立确权数据通道",
+            "连接检测</td><td class=\"ok\"",
+            "服务端快照已返回",
+            "账目同步连接已建立",
+        ]
+
+        for literal in forbidden_literals:
+            self.assertNotIn(literal, html)
+
+    def test_value_added_services_frontend_is_manifest_driven_when_server_catalog_exists(self) -> None:
+        html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("valueAddedServices: []", html)
+        self.assertIn("function valueAddedServiceMap()", html)
+        self.assertIn("function currentSubnavItems(mod)", html)
+        self.assertIn("function currentPageMeta(mod, key)", html)
+        self.assertIn("客户端只打开服务端入口，不保存短信、Session Token 或履约密钥", html)
 
     def test_online_update_start_failure_message_is_sanitized(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
@@ -1891,6 +1969,107 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertIn("Hermes/cli 启动检测通过", log_text)
         self.assertIn("最小对话已通过；商业交付成功已提交", log_text)
+
+    def test_deploy_worker_does_not_complete_client_scope_with_cli_probe(self) -> None:
+        app = InstallerApp.__new__(InstallerApp)
+        app.cookie_jar = None
+        app.next_diagnostic_code = lambda: "PH-CFG-HERMES-CLIENT"
+        logs = []
+        app.log_from_worker = logs.append
+        app.set_status_from_worker = lambda _message: None
+        app.run_on_ui = lambda callback: callback()
+        app.set_busy = lambda _busy: None
+        app.show_error_from_worker = lambda _title, _message: None
+        app.show_info_from_worker = lambda _title, _message: None
+        app.deployer_manifest = {}
+        app.commercial_capabilities = {}
+        app.commercial_products = []
+        app.commercial_entitlements = []
+        app.value_added_services = []
+        app.refresh_commercial_summary = lambda: None
+        contexts = deployment_commercial_contexts({"id": "buyer-1"})
+        hermes = next(agent for agent in installer_module.AGENTS if agent.id == "hermes")
+        completed = []
+        failed = []
+
+        original_fetch = installer_module.fetch_deployer_manifest
+        original_trust = installer_module.ensure_commercial_manifest_trusted
+        original_install = installer_module.install_agent
+        original_apply_config = installer_module.apply_agent_config
+        original_version = installer_module.version_for
+        original_probe = installer_module.run_agent_dialogue_probe
+        original_reserve = installer_module.execute_config_session_reserve
+        original_complete = installer_module.execute_config_session_complete
+        original_fail = installer_module.execute_config_session_fail
+        original_write_guide = installer_module.write_agent_setup_guide
+        original_write_matrix = installer_module.write_customer_agent_acceptance_matrix
+        try:
+            installer_module.fetch_deployer_manifest = lambda *_args, **_kwargs: (
+                True,
+                "manifest ok",
+                {
+                    "agents": [{"id": "hermes", "delivery_scope": "full_config", "full_config_allowed": True}],
+                    "entitlements": [
+                        {
+                            "entitlement_id": "ent-hermes-client",
+                            "buyer_user_id": "buyer-1",
+                            "agent_id": "hermes",
+                            "mode_key": "client",
+                            "valid_until": "2099-01-01",
+                            "delivery_scope": "full_config",
+                            "status": "active",
+                            "remaining_uses": 1,
+                            "device_limit": 1,
+                        }
+                    ],
+                },
+            )
+            installer_module.ensure_commercial_manifest_trusted = lambda _manifest: None
+            installer_module.install_agent = lambda _agent, _mode, _log: True
+            installer_module.apply_agent_config = lambda _agent, _mode, _api_key, _model, _log: True
+            installer_module.version_for = lambda _command: (True, "hermes cli 1.0")
+            installer_module.run_agent_dialogue_probe = lambda _agent, _mode, _model: (True, "胖虎AI配置验证成功")
+            installer_module.execute_config_session_reserve = lambda **_kwargs: ("cfg-hermes-client", "reserved")
+            installer_module.execute_config_session_complete = lambda *args, **_kwargs: (
+                completed.append(args[0]),
+                "completed-with-deduct",
+            )
+            installer_module.execute_config_session_fail = lambda *args, **_kwargs: (
+                failed.append(args[0]),
+                "failed-without-deduct",
+            )
+            installer_module.write_agent_setup_guide = lambda *_args, **_kwargs: Path("NOOP")
+            installer_module.write_customer_agent_acceptance_matrix = lambda *_args, **_kwargs: Path("NOOP")
+
+            app._deploy_worker(
+                selected=[(hermes, "client")],
+                user={"id": "buyer-1"},
+                deployer_auth={"token": "buyer-token"},
+                contexts=contexts,
+                api_key="sk-live-secret",
+                base_url="https://aitokenapi.cc",
+                model="gpt-5.4",
+                skip_test=True,
+                open_app=False,
+            )
+        finally:
+            installer_module.fetch_deployer_manifest = original_fetch
+            installer_module.ensure_commercial_manifest_trusted = original_trust
+            installer_module.install_agent = original_install
+            installer_module.apply_agent_config = original_apply_config
+            installer_module.version_for = original_version
+            installer_module.run_agent_dialogue_probe = original_probe
+            installer_module.execute_config_session_reserve = original_reserve
+            installer_module.execute_config_session_complete = original_complete
+            installer_module.execute_config_session_fail = original_fail
+            installer_module.write_agent_setup_guide = original_write_guide
+            installer_module.write_customer_agent_acceptance_matrix = original_write_matrix
+
+        log_text = "\n".join(logs)
+        self.assertEqual(completed, [])
+        self.assertEqual(failed, ["cfg-hermes-client"])
+        self.assertIn("client scope 需要独立客户端验收", log_text)
+        self.assertNotIn("Hermes/client 最小对话已通过；商业交付成功已提交", log_text)
 
     def test_agent_center_summary_text_uses_server_manifest_only(self) -> None:
         text = agent_center_summary_text(

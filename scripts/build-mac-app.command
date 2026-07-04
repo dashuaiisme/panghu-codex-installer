@@ -24,7 +24,7 @@ APP_NAME="胖虎AI客户端"
 APP_VERSION="${APP_VERSION:-$(.venv/bin/python - <<'PY'
 import ast
 from pathlib import Path
-for node in ast.parse(Path("src/panghu_codex_installer.py").read_text(encoding="utf-8")).body:
+for node in ast.parse(Path("src/panghu_ai_client.py").read_text(encoding="utf-8")).body:
     if isinstance(node, ast.Assign):
         for target in node.targets:
             if getattr(target, "id", "") == "APP_VERSION":
@@ -34,7 +34,7 @@ raise SystemExit("APP_VERSION not found")
 PY
 )}"
 APP_VERSION="${APP_VERSION#v}"
-BUNDLE_ID="${BUNDLE_ID:-cc.aitokenapi.panghu.agent-deployer}"
+BUNDLE_ID="${BUNDLE_ID:-cc.aitokenapi.panghu.client}"
 MAC_ARCH="${MAC_ARCH:-$(uname -m)}"
 case "$MAC_ARCH" in
   arm64) MAC_PACKAGE_SUFFIX="AppleSilicon" ;;
@@ -69,15 +69,17 @@ fi
   --osx-bundle-identifier "$BUNDLE_ID" \
   --collect-data certifi \
   --add-data "assets:assets" \
+  --add-data "src/ui:ui" \
   --distpath release \
   --workpath build \
   --specpath build \
-  src/panghu_codex_installer.py
+  src/panghu_ai_client.py
 APP_PATH="release/${APP_NAME}.app"
 ZIP_PATH="release/${APP_NAME}-Mac-${MAC_PACKAGE_SUFFIX}.zip"
 rm -rf "$APP_PATH/Contents/Resources/assets" "$APP_PATH/Contents/Resources/ui"
 mkdir -p "$APP_PATH/Contents/Resources"
 cp -R "$ASSETS" "$APP_PATH/Contents/Resources/assets"
+cp -R "$ROOT/src/ui" "$APP_PATH/Contents/Resources/ui"
 if [ -d "$APP_PATH" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_PATH/Contents/Info.plist" \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$APP_PATH/Contents/Info.plist"

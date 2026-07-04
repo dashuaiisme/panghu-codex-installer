@@ -2,12 +2,21 @@ __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
 
 build/
 dist/
 release/
 artifacts/
 output/
+outputs/
+tmp/
+logs/
 node_modules/
 scratch/
 *.spec

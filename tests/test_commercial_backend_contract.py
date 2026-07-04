@@ -380,7 +380,7 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertEqual(ledger.config_sessions["cfg-1"].status, "cancelled")
         self.assertEqual(len(ledger.commission_reversals), 1)
 
-    def test_order_entitlement_status_report_separates_local_states_from_delivery_ready(self) -> None:
+    def test_order_entitlement_status_report_separates_local_states_from_real_delivery(self) -> None:
         ledger = CommercialLedgerContract()
         created = ledger.create_order("order-created", "prod-codex", "buyer-1", "buyer-1", [], "PH-CFG-1")
         paid_order = ledger.create_order("order-paid", "prod-codex", "buyer-2", "buyer-2", [], "PH-CFG-2")
@@ -419,7 +419,8 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertEqual(reversed_report["entitlement_status_report"], "revoked")
         self.assertEqual(reversed_report["config_session_statuses"][session.config_session_id], "cancelled")
         self.assertIn("订单已撤销", "\n".join(reversed_report["blocking_gaps"]))
-        self.assertEqual(ready["order_status_report"], "delivery_ready")
+        self.assertEqual(ready["order_status_report"], "local_session_completed_pending_real_delivery")
+        self.assertEqual(ready["delivery_scope"], "codex_agent_config")
         self.assertEqual(ready["entitlement_status_report"], "authorized")
         self.assertEqual(ready["config_session_statuses"][completed_session.config_session_id], "completed")
         self.assertIn("本地配置会话完成不代表客户真实交付完成", "\n".join(ready["blocking_gaps"]))
@@ -494,6 +495,27 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertEqual(first_binding.direct_agent_user_id, "agent-first")
         self.assertEqual(retry_binding.direct_agent_user_id, "agent-first")
         self.assertEqual(len(ledger.referral_bindings), 1)
+
+    def test_referral_bind_request_is_idempotent_and_rejects_invalid_agent_binding(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        ledger.configure_agent_product("agent-l2-paid", "L2", "L2 付费代理", 9900, requires_review=True)
+        active_agent = ledger.apply_agent("agent-active", "agent-l1-free")
+        pending_agent = ledger.apply_agent("agent-pending", "agent-l2-paid")
+
+        binding = ledger.bind_referral_request("bind-1", "buyer-1", active_agent.invite_code)
+        replay = ledger.bind_referral_request("bind-1", "buyer-1", active_agent.invite_code)
+
+        self.assertEqual(binding.direct_agent_user_id, "agent-active")
+        self.assertEqual(replay.direct_agent_user_id, "agent-active")
+        self.assertEqual(len(ledger.referral_bindings), 1)
+        self.assertEqual(ledger.build_agent_chain_snapshot("buyer-1", "usage-1").chain, ["agent-active"])
+        with self.assertRaisesRegex(ValueError, "幂等键"):
+            ledger.bind_referral_request("bind-1", "buyer-2", active_agent.invite_code)
+        with self.assertRaisesRegex(ValueError, "不能绑定自己"):
+            ledger.bind_referral_request("bind-self", "agent-active", active_agent.invite_code)
+        with self.assertRaisesRegex(ValueError, "未激活"):
+            ledger.bind_referral_request("bind-pending", "buyer-2", pending_agent.invite_code)
 
     def test_agent_chain_snapshot_uses_pure_five_level_relation(self) -> None:
         ledger = CommercialLedgerContract()
@@ -838,6 +860,16 @@ class CommercialBackendContractTests(unittest.TestCase):
             "current_delivery",
         )
         ledger.mark_communication_software_link_connected(communication_link_session.session_id)
+        ledger.evaluate_communication_software_link_callback(
+            communication_link_session.session_id,
+            "feishu",
+            "in-msg-1",
+            "buyer-1",
+            "请用中文回复连接通讯软件验收成功",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="csl-delivered-1",
+        )
         self._record_communication_software_link_runtime_success(ledger, communication_link_session.session_id)
 
         acceptance = ledger.record_communication_software_link_acceptance(
@@ -1023,6 +1055,16 @@ class CommercialBackendContractTests(unittest.TestCase):
             "current_delivery",
         )
         ledger.mark_communication_software_link_connected(session.session_id)
+        ledger.evaluate_communication_software_link_callback(
+            session.session_id,
+            "feishu",
+            "in-msg-1",
+            "buyer-1",
+            "请回复验收成功",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="csl-delivered-1",
+        )
         self._record_communication_software_link_runtime_success(ledger, session.session_id)
 
         with self.assertRaisesRegex(ValueError, "闭环验收证据"):
@@ -1062,6 +1104,16 @@ class CommercialBackendContractTests(unittest.TestCase):
             "current_delivery",
         )
         ledger.mark_communication_software_link_connected(session.session_id)
+        ledger.evaluate_communication_software_link_callback(
+            session.session_id,
+            "feishu",
+            "in-msg-1",
+            "buyer-1",
+            "请回复验收成功",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="csl-delivered-1",
+        )
         self._record_communication_software_link_runtime_success(ledger, session.session_id)
 
         first = ledger.record_communication_software_link_acceptance(
@@ -1124,6 +1176,16 @@ class CommercialBackendContractTests(unittest.TestCase):
             "current_delivery",
         )
         ledger.mark_communication_software_link_connected(session.session_id)
+        ledger.evaluate_communication_software_link_callback(
+            session.session_id,
+            "feishu",
+            "in-msg-1",
+            "buyer-1",
+            "请回复验收成功",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="csl-delivered-1",
+        )
         self._record_communication_software_link_runtime_success(ledger, session.session_id)
 
         ledger.record_communication_software_link_acceptance(
@@ -1275,6 +1337,103 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertTrue(accepted.should_invoke_agent)
         self.assertEqual(accepted.status, "accepted")
 
+    def test_communication_software_link_acceptance_rejects_runtime_without_accepted_platform_callback(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_communication_software_link_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_communication_software_link_order("csl-order-1", "svc-communication-software-link", "buyer-1", "hermes", "feishu", "current_delivery")
+        ledger.mark_communication_software_link_order_paid(order.order_id, "csl-pay-1")
+        session = ledger.create_communication_software_link_session(
+            "csl-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_communication_software_link_connected(session.session_id)
+        self._record_communication_software_link_runtime_success(
+            ledger,
+            session.session_id,
+            source_event_id="csl-delivered-without-callback",
+        )
+
+        with self.assertRaisesRegex(ValueError, "平台回调"):
+            ledger.record_communication_software_link_acceptance(
+                session.session_id,
+                "csl-delivered-without-callback",
+                "in-msg-1",
+                "out-msg-1",
+                "请回复验收成功",
+                "sha256:reply",
+                "https://aitokenapi.cc/evidence/csl-delivered-without-callback",
+                "buyer-1",
+            )
+
+    def test_communication_software_link_acceptance_rejects_callback_from_different_session(self) -> None:
+        ledger = CommercialLedgerContract()
+        self._configure_communication_software_link_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order_a = ledger.create_communication_software_link_order("csl-order-a", "svc-communication-software-link", "buyer-1", "hermes", "feishu", "current_delivery")
+        order_b = ledger.create_communication_software_link_order("csl-order-b", "svc-communication-software-link", "buyer-1", "hermes", "feishu", "current_delivery")
+        ledger.mark_communication_software_link_order_paid(order_a.order_id, "csl-pay-a")
+        ledger.mark_communication_software_link_order_paid(order_b.order_id, "csl-pay-b")
+        session_a = ledger.create_communication_software_link_session(
+            "csl-session-a",
+            order_a.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-a",
+            "official_bot",
+            "current_delivery",
+        )
+        session_b = ledger.create_communication_software_link_session(
+            "csl-session-b",
+            order_b.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-b",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_communication_software_link_connected(session_a.session_id)
+        ledger.mark_communication_software_link_connected(session_b.session_id)
+        ledger.evaluate_communication_software_link_callback(
+            session_a.session_id,
+            "feishu",
+            "in-msg-a",
+            "buyer-1",
+            "请回复验收成功",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="cross-session-event-1",
+        )
+        self._record_communication_software_link_runtime_success(
+            ledger,
+            session_b.session_id,
+            source_event_id="cross-session-event-1",
+            inbound_platform_message_id="in-msg-a",
+        )
+
+        with self.assertRaisesRegex(ValueError, "平台回调.*会话"):
+            ledger.record_communication_software_link_acceptance(
+                session_b.session_id,
+                "cross-session-event-1",
+                "in-msg-a",
+                "out-msg-1",
+                "请回复验收成功",
+                "sha256:reply",
+                "https://aitokenapi.cc/evidence/cross-session-event-1",
+                "buyer-1",
+            )
+
     def test_communication_software_link_acceptance_requires_runtime_adapter_success(self) -> None:
         ledger = CommercialLedgerContract()
         self._configure_communication_software_link_product(ledger)
@@ -1340,6 +1499,149 @@ class CommercialBackendContractTests(unittest.TestCase):
         self.assertEqual(acceptance.source_event_id, "csl-delivered-1")
         self.assertEqual(ledger.service_orders[order.order_id].status, "delivered")
 
+    def test_communication_software_link_callback_delivery_records_runtime_acceptance_and_commission_once(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        agent = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", agent.invite_code)
+        ledger.configure_commission_policy_rule("communication_software_link_delivered", "L1", depth=1, rate_bps=1000)
+        self._configure_communication_software_link_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_communication_software_link_order(
+            "csl-order-1",
+            "svc-communication-software-link",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "current_delivery",
+        )
+        ledger.mark_communication_software_link_order_paid(order.order_id, "csl-pay-1")
+        session = ledger.create_communication_software_link_session(
+            "csl-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_communication_software_link_connected(session.session_id)
+
+        delivered = ledger.process_communication_software_link_callback_delivery(
+            session.session_id,
+            channel="feishu",
+            platform_message_id="in-msg-1",
+            sender_id="buyer-1",
+            text="@胖虎 ping",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="evt-csl-1",
+            outbound_platform_message_id="out-msg-1",
+            agent_response_digest="sha256:reply",
+            evidence_url="https://aitokenapi.cc/evidence/evt-csl-1",
+            accepted_by="buyer-1",
+        )
+        replay = ledger.process_communication_software_link_callback_delivery(
+            session.session_id,
+            channel="feishu",
+            platform_message_id="in-msg-1",
+            sender_id="buyer-1",
+            text="@胖虎 ping",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="evt-csl-1",
+            outbound_platform_message_id="out-msg-1",
+            agent_response_digest="sha256:reply",
+            evidence_url="https://aitokenapi.cc/evidence/evt-csl-1",
+            accepted_by="buyer-1",
+        )
+
+        self.assertEqual(delivered.status, "delivered")
+        self.assertEqual(delivered.decision.status, "accepted")
+        self.assertEqual(delivered.runtime_result.status, "success")
+        self.assertEqual(delivered.acceptance_record.source_event_id, "evt-csl-1")
+        self.assertEqual(replay.status, "replayed")
+        self.assertEqual(replay.acceptance_record.acceptance_id, delivered.acceptance_record.acceptance_id)
+        self.assertEqual(ledger.communication_software_link_sessions[session.session_id].status, "acceptance_passed")
+        self.assertEqual(ledger.service_orders[order.order_id].status, "delivered")
+        self.assertEqual(len(ledger.service_ledger_events), 1)
+        self.assertEqual(len(ledger.commission_events), 1)
+        self.assertEqual(len(ledger.commission_entries), 1)
+        self.assertEqual(ledger.commission_entries[0].commission_cents, 1990)
+
+    def test_communication_software_link_delivered_session_rejects_new_callback_delivery(self) -> None:
+        ledger = CommercialLedgerContract()
+        ledger.configure_agent_product("agent-l1-free", "L1", "L1 免费代理", 0)
+        agent = ledger.apply_agent("agent-1", "agent-l1-free")
+        ledger.bind_referral("buyer-1", agent.invite_code)
+        ledger.configure_commission_policy_rule("communication_software_link_delivered", "L1", depth=1, rate_bps=1000)
+        self._configure_communication_software_link_product(ledger)
+        self._complete_base_agent_delivery(ledger)
+        order = ledger.create_communication_software_link_order(
+            "csl-order-1",
+            "svc-communication-software-link",
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "current_delivery",
+        )
+        ledger.mark_communication_software_link_order_paid(order.order_id, "csl-pay-1")
+        session = ledger.create_communication_software_link_session(
+            "csl-session-1",
+            order.order_id,
+            "buyer-1",
+            "hermes",
+            "feishu",
+            "bot-account-1",
+            "chat-1",
+            "official_bot",
+            "current_delivery",
+        )
+        ledger.mark_communication_software_link_connected(session.session_id)
+        delivered = ledger.process_communication_software_link_callback_delivery(
+            session.session_id,
+            channel="feishu",
+            platform_message_id="in-msg-1",
+            sender_id="buyer-1",
+            text="@胖虎 ping",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="evt-csl-1",
+            outbound_platform_message_id="out-msg-1",
+            agent_response_digest="sha256:reply",
+            evidence_url="https://aitokenapi.cc/evidence/evt-csl-1",
+            accepted_by="buyer-1",
+        )
+
+        duplicate_delivery = ledger.process_communication_software_link_callback_delivery(
+            session.session_id,
+            channel="feishu",
+            platform_message_id="in-msg-2",
+            sender_id="buyer-1",
+            text="@胖虎 ping again",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="evt-csl-2",
+            outbound_platform_message_id="out-msg-2",
+            agent_response_digest="sha256:reply-2",
+            evidence_url="https://aitokenapi.cc/evidence/evt-csl-2",
+            accepted_by="buyer-1",
+        )
+
+        self.assertIn(duplicate_delivery.status, {"ignored", "replayed", "already_delivered"})
+        self.assertFalse(duplicate_delivery.decision.should_invoke_agent)
+        self.assertIsNone(duplicate_delivery.runtime_result)
+        self.assertIsNone(duplicate_delivery.acceptance_record)
+        self.assertEqual(delivered.acceptance_record.acceptance_id, "csl-acc-1")
+        self.assertEqual(ledger.communication_software_link_sessions[session.session_id].status, "acceptance_passed")
+        self.assertEqual(ledger.service_orders[order.order_id].status, "delivered")
+        self.assertEqual(len(ledger.communication_software_link_acceptance_records), 1)
+        self.assertEqual(len(ledger.service_ledger_events), 1)
+        self.assertEqual(len(ledger.commission_events), 1)
+        self.assertEqual(len(ledger.commission_entries), 1)
+
     def test_communication_software_link_callback_source_event_id_replay_is_rejected(self) -> None:
         ledger = CommercialLedgerContract()
         self._configure_communication_software_link_product(ledger)
@@ -1402,6 +1704,16 @@ class CommercialBackendContractTests(unittest.TestCase):
             "current_delivery",
         )
         ledger.mark_communication_software_link_connected(session.session_id)
+        ledger.evaluate_communication_software_link_callback(
+            session.session_id,
+            "feishu",
+            "in-msg-1",
+            "buyer-1",
+            "请回复验收成功",
+            mentioned_bot=True,
+            authorized_sender_ids={"buyer-1"},
+            source_event_id="csl-delivered-1",
+        )
         self._record_communication_software_link_runtime_success(ledger, session.session_id)
         ledger.record_communication_software_link_acceptance(
             session.session_id,

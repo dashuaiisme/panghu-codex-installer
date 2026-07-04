@@ -47,12 +47,19 @@ jobs:
       - name: Commercial release acceptance
         run: python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope windows --strict
 
+      - name: Verify public release gate
+        shell: pwsh
+        run: |
+          $report = python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope windows | ConvertFrom-Json
+          if ($report.status -ne 'PASS') {
+            Write-Error "Public Release upload is blocked because commercial release acceptance is $($report.status)."
+          }
+
       - name: Prepare release asset
         shell: pwsh
         run: |
-          Copy-Item -LiteralPath 'release\胖虎AI客户端-Windows.zip' -Destination 'release\AI.Agent.-Windows.zip' -Force
-          (Get-FileHash -Algorithm SHA256 -LiteralPath 'release\AI.Agent.-Windows.zip').Hash.ToLowerInvariant() | Set-Content -Encoding ascii 'release\AI.Agent.-Windows.zip.sha256'
-          (Get-Item -LiteralPath 'release\AI.Agent.-Windows.zip').Length | Set-Content -Encoding ascii 'release\AI.Agent.-Windows.zip.size'
+          (Get-FileHash -Algorithm SHA256 -LiteralPath 'release\胖虎AI客户端-Windows.zip').Hash.ToLowerInvariant() | Set-Content -Encoding ascii 'release\胖虎AI客户端-Windows.zip.sha256'
+          (Get-Item -LiteralPath 'release\胖虎AI客户端-Windows.zip').Length | Set-Content -Encoding ascii 'release\胖虎AI客户端-Windows.zip.size'
 
       - name: Upload to release
         env:
@@ -60,16 +67,16 @@ jobs:
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           gh release view "$env:RELEASE_TAG"
-          gh release upload "$env:RELEASE_TAG" "release/AI.Agent.-Windows.zip" --clobber
+          gh release upload "$env:RELEASE_TAG" "release/胖虎AI客户端-Windows.zip" --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AI.Agent.-Windows
+          name: 胖虎AI客户端-Windows
           path: |
-            release/AI.Agent.-Windows.zip
-            release/AI.Agent.-Windows.zip.sha256
-            release/AI.Agent.-Windows.zip.size
+            release/胖虎AI客户端-Windows.zip
+            release/胖虎AI客户端-Windows.zip.sha256
+            release/胖虎AI客户端-Windows.zip.size
 
   build-mac:
     name: Build Mac ${{ matrix.package_suffix }}
@@ -121,7 +128,7 @@ jobs:
       - name: Build app
         env:
           APP_VERSION: ${{ env.RELEASE_TAG }}
-          BUNDLE_ID: cc.aitokenapi.panghu.agent-deployer
+          BUNDLE_ID: cc.aitokenapi.panghu.client
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM: ${{ secrets.PANGHU_COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM }}
           PANGHU_REQUIRE_COMMERCIAL_MANIFEST_PUBLIC_KEY: "1"
@@ -145,7 +152,7 @@ jobs:
           release/胖虎AI客户端.app/Contents/MacOS/胖虎AI客户端 --self-test
 
       - name: Commercial release acceptance
-        run: python scripts/commercial_release_acceptance.py --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict
+        run: python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict
 
       - name: Notarize app
         env:
@@ -184,20 +191,30 @@ jobs:
           "$FINAL_ZIP_TEST_DIR/胖虎AI客户端.app/Contents/MacOS/胖虎AI客户端" --self-test
 
       - name: Final commercial release acceptance
-        run: python scripts/commercial_release_acceptance.py --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict
+        run: python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict
+
+      - name: Verify public release gate
+        run: |
+          python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope ${{ matrix.package_scope }} > release-gate.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("release-gate.json").read_text(encoding="utf-8"))
+          if report.get("status") != "PASS":
+              raise SystemExit(f"Public Release upload is blocked because commercial release acceptance is {report.get('status')}.")
+          PY
 
       - name: Prepare release asset
         run: |
-          cp "release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip"
-          shasum -a 256 "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.sha256"
-          stat -f "%z" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" | tee "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.size"
+          shasum -a 256 "release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip" | tee "release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip.sha256"
+          stat -f "%z" "release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip" | tee "release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip.size"
 
       - name: Upload to release
         if: ${{ env.notarized == 'true' || env.ALLOW_UNNOTARIZED_UPLOAD == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "$RELEASE_TAG" "release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip" --clobber
+          gh release upload "$RELEASE_TAG" "release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip" --clobber
 
       - name: Report blocked public Mac upload
         if: ${{ env.notarized != 'true' && env.ALLOW_UNNOTARIZED_UPLOAD != 'true' }}
@@ -208,8 +225,8 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AI.Agent.-Mac-${{ matrix.package_suffix }}
+          name: 胖虎AI客户端-Mac-${{ matrix.package_suffix }}
           path: |
-            release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip
-            release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.sha256
-            release/AI.Agent.-Mac-${{ matrix.package_suffix }}.zip.size
+            release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip
+            release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip.sha256
+            release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip.size

@@ -1,6 +1,6 @@
 # 产品验收标准
 
-最后更新：2026-06-28
+最后更新：2026-07-03
 
 ## 0. 本文件职责
 
@@ -12,25 +12,26 @@
 
 本文件不负责记录当前状态、过程流水或执行方法。
 
+每轮验收记录必须按执行域验收，并写清：执行域、命令来源、执行命令、退出结果、证据路径、未验证原因、残留风险。未验证项必须显式标注，不能用本地截图、单元测试或离线 mock 替代真实客户闭环。验收记录写入 `FINAL_REPORT.md`，验证数字归口 `TESTING.md`，不留在本文件。
+
 ## 1. A 级：代码健康验收
 
 必须通过：
 
-- `python -m py_compile src\panghu_codex_installer.py scripts\agent_delivery_acceptance.py scripts\customer_web_entry_acceptance.py`
-- `python src\panghu_codex_installer.py --self-test`
+- `python -m py_compile src\panghu_ai_client.py scripts\agent_delivery_acceptance.py scripts\customer_web_entry_acceptance.py`
+- `python src\panghu_ai_client.py --self-test`
 - `python -m unittest discover -s tests -p "test_*.py"`
 
 说明：
 
 - A 级通过只代表代码健康通过，不代表产品可交付。
-- 本轮结果：`py_compile OK`、`self-test OK`、`unittest 306 OK`。
-- 本轮旧前端删除 / 商业 manifest / 发布脚本 focused pytest 为 `98 passed, 11 subtests passed`；商业后端 focused pytest 为 `158 passed, 11 subtests passed`。
+- 历史验证数字和最近记录统一见 `TESTING.md`；未重新执行前不得写成当前已复验。
 
 ## 2. B 级：客户界面验收
 
-当前旧前端已按最新指令删除，B 级客户界面验收暂停，不再引用旧 WebView shell、旧截图脚本或旧截图目录作为当前证据。
+当前客户 UI 入口仍是 `src/ui/index.html`。已清理的是旧 WebView shell、旧截图和旧输出证据；B 级客户界面验收必须使用当前脚本新生成的截图，不再引用旧截图作为当前证据。
 
-新前端重做前，本级状态为 `deferred`。后续新 UI 重新接入后，必须重新生成截图证据并覆盖：
+复验必须重新生成截图证据并覆盖：
 
 - 未登录登录闸口
 - 登录页自动登录 / 记住密码勾选项、账号下拉切换和账号删除入口
@@ -45,10 +46,11 @@
 新 UI 必须满足：
 
 - 登录前不暴露完整控制台
-- 顶部、左侧、中间、右侧、底部结构稳定
-- 左侧只展示当前模块子导航
-- 中间区域不堆满所有步骤
-- 右侧账号 / 权益 / Agent 交付状态清晰
+- 登录后必须覆盖品牌账号、业务入口、任务流程、主操作区、权益 / Agent 交付状态、日志或诊断能力
+- Gemini / agy 可以自由决定导航、面板、抽屉、命令区、状态区和日志区的布局，不再按顶部 / 左侧 / 中间 / 右侧 / 底部固定结构验收
+- 配置Agent 的步骤层级必须清晰，但不强制单步骤卡片或左侧子导航
+- 账号 / 权益 / Agent 交付状态必须清晰可见或可快速展开，但不强制右侧固定面板
+- 不能把所有步骤无层级地堆成一整页
 
 说明：历史截图不得作为新前端或当前上线判断证据。
 
@@ -67,8 +69,8 @@
 说明：
 
 - 入口和依赖前提通过，不等于真实业务闭环通过。
-- 本轮 `.venv\Scripts\python.exe scripts\customer_web_entry_acceptance.py` 返回 `web_entry_status=ready`。
-- 系统 Python 返回 `blocked` 是因为没有 `webview`，不代表项目运行环境失败；C 级入口前提以项目 `.venv` 结果为准。
+- 历史记录中 `.venv\Scripts\python.exe scripts\customer_web_entry_acceptance.py` 返回 `web_entry_status` = `ready`。
+- 当前未见 `.venv`；后续 C 级入口前提复验需先重建项目虚拟环境。
 
 ## 4. D 级：代理中心业务验收
 
@@ -175,19 +177,29 @@ Codex 模式切换必须验收：
 - 未形成入站消息、Agent 调用和出站回复证据时，不得标记连接通讯软件交付完成。
 - 重复平台回调或重复验收提交不得重复扣费、重复返佣。
 
-## 8. H 级：发布前验收
+## 8. H 级：跨项目增值业务集成验收
 
-只有 A 到 G 全部通过，才允许进入：
+手机号接码控制中心和 Plus session.脚本工具必须以独立项目验收，但胖虎AI客户端需要完成统一入口验收：
+
+- 服务端下发 `value_added_services` 服务目录，覆盖 Plus 订阅、国外手机卡 / 云号码、接码控制台和连接通讯软件。
+- 客户端只展示服务端返回的入口、状态、权益摘要和未验收原因，不本地硬编码价格、库存、号码分配、Plus 激活码、Session Token 或短信内容。
+- 接码控制台入口能在内置 WebView 打开服务端下发 URL；生产闭环必须包含 `sim` 子域名、正式 `AGENT_TOKEN`、真实数据库、真实设备 Agent、真实短信回传和客服可追踪记录。
+- Plus 订阅入口能在内置 WebView 打开服务端购买或履约入口；生产闭环必须包含支付成功、激活码发放、Plus 执行器兑换、Session Token 临时处理、自动化履约、日志回写和人工复核。
+- 未完成生产验收的服务必须显示待接入、待生产验收或人工复核，不能显示为已交付。
+
+## 9. I 级：发布前验收
+
+只有 A 到 H 全部通过，才允许进入：
 
 - Windows 打包
 - Mac 打包
 - GitHub Release
 - 下载页和 `latest.json` 更新
 
-当前是否允许进入 F 级，不在本文件判断，由 `FINAL_REPORT.md` 判断。
+当前是否允许进入发布前阶段（I 级），不在本文件判断，由 `FINAL_REPORT.md` 判断。
 
-本轮发布前相关判定：
+最近发布前相关判定：
 
-- `commercial_flow_acceptance.py --json` 返回 `status=PASS`，但属于 `offline_only` / `offline_guarded` / `mock_guarded` 范围。
-- `commercial_release_acceptance.py --json` 返回 `status=WARN`，原因是只有旧名历史客户包、三端包 `stale`、未注入商业清单生产公钥。
+- `commercial_flow_acceptance.py --json` 最近记录为 `status=PASS`，但属于 `offline_only` / `offline_guarded` / `mock_guarded` 范围。
+- `commercial_release_acceptance.py --json` 最近记录为 `status=WARN`，原因是旧客户包已清理、三端本地客户包缺失、未注入商业清单生产公钥。
 - 只要轻量发布前检查仍为 `WARN`，不得进入 Windows/Mac 打包、GitHub Release、下载页或 `latest.json` 更新流程。

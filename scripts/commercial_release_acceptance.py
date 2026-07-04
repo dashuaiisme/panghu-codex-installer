@@ -23,39 +23,18 @@ from commercial_flow_acceptance import run_acceptance  # noqa: E402
 
 def customer_app_name() -> str:
     try:
-        from panghu_codex_installer import APP_NAME
+        from panghu_ai_client import APP_NAME
     except Exception:
         name_parts = (
             chr(0x80D6),
             chr(0x864E),
             "AI",
-            chr(0x591A),
-            "Agent",
-            chr(0x4E00),
-            chr(0x952E),
-            chr(0x90E8),
-            chr(0x7F72),
-            chr(0x5DE5),
-            chr(0x5177),
+            chr(0x5BA2),
+            chr(0x6237),
+            chr(0x7AEF),
         )
         return "".join(name_parts)
     return APP_NAME
-
-
-def legacy_release_dir_name() -> str:
-    try:
-        from panghu_codex_installer import LEGACY_RELEASE_DIR_NAME
-    except Exception:
-        return ""
-    return str(LEGACY_RELEASE_DIR_NAME or "")
-
-
-def previous_release_dir_name() -> str:
-    try:
-        from panghu_codex_installer import PREVIOUS_RELEASE_DIR_NAME
-    except Exception:
-        return ""
-    return str(PREVIOUS_RELEASE_DIR_NAME or "")
 
 
 WINDOWS_RELEASE_ARTIFACT = f"{customer_app_name()}-Windows.zip"
@@ -101,7 +80,7 @@ PACKAGED_APP_COMMERCIAL_STATIC_VALUE_PATTERNS = [
 ]
 
 PACKAGED_APP_COMMERCIAL_SOURCE_FILES = {
-    "src/panghu_codex_installer.py",
+    "src/panghu_ai_client.py",
     "src/commercial_core.py",
     "src/commercial_api.py",
 }
@@ -224,27 +203,7 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
 
 
 def release_artifact_aliases(artifact_name: str) -> list[str]:
-    aliases = [artifact_name]
-    previous_name = previous_release_dir_name()
-    if previous_name:
-        if artifact_name == WINDOWS_RELEASE_ARTIFACT:
-            aliases.append(f"{previous_name}-Windows.zip")
-        elif artifact_name == MAC_APPLE_SILICON_RELEASE_ARTIFACT:
-            aliases.append(f"{previous_name}-Mac-AppleSilicon.zip")
-            aliases.append(f"{previous_name}-Mac.zip")
-        elif artifact_name == MAC_INTEL_RELEASE_ARTIFACT:
-            aliases.append(f"{previous_name}-Mac-Intel.zip")
-    legacy_name = legacy_release_dir_name()
-    if not legacy_name:
-        return aliases
-    if artifact_name == WINDOWS_RELEASE_ARTIFACT:
-        aliases.append(f"{legacy_name}-Windows.zip")
-    elif artifact_name == MAC_APPLE_SILICON_RELEASE_ARTIFACT:
-        aliases.append(f"{legacy_name}-Mac-AppleSilicon.zip")
-        aliases.append(f"{legacy_name}-Mac.zip")
-    elif artifact_name == MAC_INTEL_RELEASE_ARTIFACT:
-        aliases.append(f"{legacy_name}-Mac-Intel.zip")
-    return aliases
+    return [artifact_name]
 
 
 def resolve_release_artifact_path(artifact_name: str) -> tuple[Path, str, str]:
@@ -258,10 +217,15 @@ def resolve_release_artifact_path(artifact_name: str) -> tuple[Path, str, str]:
 def _is_packaged_internal_file(name: str) -> bool:
     normalized = name.replace("\\", "/").lstrip("/")
     lowered = normalized.lower()
-    if normalized in PACKAGED_INTERNAL_EXACT_PATHS:
-        return True
-    if any(lowered.startswith(prefix.lower()) for prefix in PACKAGED_INTERNAL_PREFIXES):
-        return True
+    path_variants = [normalized]
+    parts = [part for part in normalized.split("/") if part]
+    path_variants.extend("/".join(parts[index:]) for index in range(1, len(parts)))
+    for variant in path_variants:
+        lowered_variant = variant.lower()
+        if variant in PACKAGED_INTERNAL_EXACT_PATHS:
+            return True
+        if any(lowered_variant.startswith(prefix.lower()) for prefix in PACKAGED_INTERNAL_PREFIXES):
+            return True
     filename = Path(normalized).name
     if filename.lower() in PACKAGED_SENSITIVE_FILENAMES:
         return True
