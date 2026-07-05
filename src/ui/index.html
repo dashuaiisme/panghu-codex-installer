@@ -1725,6 +1725,8 @@
           <label><input type="checkbox" id="autoLogin" onchange="onAutoLoginChange()"> 自动连接</label>
         </div>
 
+        <div id="loginStatus" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;font-size:13px;"></div>
+
         <button class="gm-btn gm-btn-primary" onclick="submitLogin()">登录胖虎AI客户端</button>
 
         <div class="gm-login-links">
@@ -1862,7 +1864,7 @@
       apiKeyPresent: false,
       environmentOk: false,
       loginAccounts: [],
-      selectedAgents: { codex: true, claude_code: true, openclaw: true, hermes: true, gemini_agy: false },
+      selectedAgents: { codex: true, claude_code: true, openclaw: true, hermes: true, gemini_agy: true },
       agentMode: { codex: "cli", claude_code: "cli", openclaw: "cli", hermes: "cli", gemini_agy: "cli" },
       agentMatrix: {
         codex: { install: "-", launch: "-", dialogue: "-", acceptance: "-", delivery: "-" },
@@ -1910,6 +1912,23 @@
           start_dual_state_config: () => noopPromise(),
           start_official_chatgpt_config: () => noopPromise(),
           restore_backups: () => noopPromise(),
+          list_config_snapshots: () => noopPromise({ success: true, snapshots: [
+            { name: "original", reason: "接管前原始配置", created_at: "2026-07-03T09:00:00", file_count: 2, is_original: true },
+            { name: "20260703-101500-000000", reason: "写入 cli 配置前自动快照", created_at: "2026-07-03T10:15:00", file_count: 2, is_original: false }
+          ] }),
+          restore_config_snapshot: () => { appendPythonLog("（预览）已回滚到所选配置快照。", "success"); return noopPromise({ success: true }); },
+          restore_original_config: () => { appendPythonLog("（预览）已恢复官方初始配置。", "success"); return noopPromise({ success: true }); },
+          inspect_config_drift: () => noopPromise({ success: true, report: { overall_level: "ok", agents: [
+            { agent_id: "codex", configured: true, level: "ok", findings: [], repairable: false },
+            { agent_id: "claude_code", configured: false, level: "ok", findings: [], repairable: false }
+          ], risk_plugins: [] } }),
+          repair_config_drift: () => { appendPythonLog("（预览）已一键修复配置漂移。", "success"); return noopPromise({ success: true }); },
+          measure_gateway_latency: () => noopPromise({ success: true, result: { endpoints: [
+            { id: "primary", label: "胖虎AI主线路", url: "https://aitokenapi.cc", reachable: true, latency_ms: 42, status: 200 }
+          ], recommended_id: "primary", recommended_url: "https://aitokenapi.cc" } }),
+          get_codex_mode_status: () => noopPromise({ success: true, configured: true, current_mode: "direct_api", current_mode_label: "普通模式（走胖虎额度）", has_chatgpt_login: false, gateway_ok: true }),
+          start_dual_state_config: () => { appendPythonLog("（预览）已切到双态模式，请完全退出 Codex 再重开。", "success"); return noopPromise(); },
+          start_official_chatgpt_config: () => { appendPythonLog("（预览）已切到官方直登，请完全退出 Codex 再重开。", "success"); return noopPromise(); },
           open_workspace: () => noopPromise(),
           open_config_dir: () => noopPromise(),
           open_url: (url) => { appendPythonLog("请求打开内置网站页面：" + url, "running"); return noopPromise(); },
@@ -2036,9 +2055,9 @@
     const agentModeOptions = {
       codex: [["cli", "CLI"], ["client", "客户端"]],
       claude_code: [["cli", "CLI"], ["client", "客户端"]],
-      openclaw: [["cli", "CLI"], ["client", "客户端"]],
-      hermes: [["cli", "CLI"], ["client", "客户端"]],
-      gemini_agy: [["cli", "CLI"], ["client", "官方入口"]]
+      openclaw: [["cli", "CLI"]],
+      hermes: [["cli", "CLI"]],
+      gemini_agy: [["cli", "CLI"], ["client", "客户端"]]
     };
 
     function defaultSubnav(mod) { return mod === "agent" ? "2" : (subnav[mod] && subnav[mod][0][0]) || "2"; }
@@ -2349,7 +2368,7 @@
                   `).join("")}
                 </select>
                 <small style="margin-top: auto; display: block; line-height: 1.4;">
-                  ${id === "gemini_agy" ? "当前只保留官方入口，暂不计入完整配置交付。" : "CLI 可自动配置并验收；客户端范围需要独立启动和真实任务验收。"}
+                  ${(id === "openclaw" || id === "hermes") ? "官方未提供客户端安装，只做 CLI 交付。" : "CLI 可自动配置并验收；客户端范围需检测官方客户端并独立验收。"}
                 </small>
               </div>
             `).join("")}
@@ -2359,6 +2378,8 @@
           </div>`;
       } else if (step === "10" || step === "11") {
         stepBody = renderCommunicationLink(step);
+      } else if (step === "5") {
+        stepBody = renderConfigHealth();
       } else {
         const actionMap = {
           "4": [["开始部署与配置","start_deploy"],["仅写入配置文件","start_config_only"],["双态混合模式配置","start_dual_state_config"],["官方直登配置","start_official_chatgpt_config"],["恢复备份快照","restore_backups"]],
@@ -2486,6 +2507,179 @@
         </div>`;
 
       canvas.innerHTML = finalBody;
+    }
+
+    const DRIFT_META = {
+      ok: { label: "正常", color: "#1A7F37", bg: "#e6f4ea" },
+      yellow: { label: "注意", color: "#B06000", bg: "#FFF7DF" },
+      red: { label: "异常", color: "#c0392b", bg: "#fdecea" }
+    };
+
+    function agentLabel(id) {
+      const found = agents.find(a => a[0] === id);
+      return found ? found[1] : id;
+    }
+
+    function renderConfigHealth() {
+      const health = state.configHealth || { loaded: false };
+      const agentNames = agents.map(a => a[0]);
+      let driftHtml = "";
+      if (!health.loaded) {
+        driftHtml = `<small>点击“开始配置健康巡检”检查各 Agent 配置是否被第三方工具篡改。</small>`;
+      } else {
+        const report = health.drift || { agents: [], risk_plugins: [], overall_level: "ok" };
+        const overall = DRIFT_META[report.overall_level] || DRIFT_META.ok;
+        driftHtml = `<div style="margin-bottom:10px"><span class="gm-tech-num" style="background:${overall.bg};color:${overall.color};padding:2px 10px;border-radius:10px">总体：${overall.label}</span></div>`;
+        if ((report.risk_plugins || []).length) {
+          driftHtml += `<small style="color:#c0392b">⚠ 检测到风险切换工具：${report.risk_plugins.map(p => p.name).join("、")}，可能持续改写配置。</small>`;
+        }
+        driftHtml += `<table class="gm-status-table" style="margin-top:8px">` + (report.agents || []).map(a => {
+          const meta = DRIFT_META[a.level] || DRIFT_META.ok;
+          const detail = a.configured ? (a.findings || []).map(f => f.detail).join("；") || "配置正常" : "未配置";
+          const repair = a.repairable ? `<button class="gm-btn gm-btn-primary" style="min-height:24px;padding:0 8px;font-size:11px" onclick="repairDrift('${a.agent_id}')">一键修复</button>` : "";
+          return `<tr class="gm-handshake-row"><td>${agentLabel(a.agent_id)}</td><td><span class="gm-tech-num" style="background:${meta.bg};color:${meta.color};padding:1px 8px;border-radius:8px">${meta.label}</span> <span style="color:#6e6e73">${detail}</span></td><td>${repair}</td></tr>`;
+        }).join("") + `</table>`;
+      }
+
+      const selAgent = health.snapshotAgent || "codex";
+      const snaps = health.snapshots || [];
+      const snapHtml = snaps.length ? `<table class="gm-status-table">` + snaps.map(s => `
+        <tr class="gm-handshake-row">
+          <td>${s.is_original ? "🔒 官方初始" : s.created_at.slice(0,19).replace("T"," ")}</td>
+          <td style="color:#6e6e73">${s.reason}（${s.file_count} 文件）</td>
+          <td><button class="gm-btn" style="min-height:24px;padding:0 8px;font-size:11px" onclick="restoreSnapshot('${selAgent}','${s.name}')">回滚到此</button></td>
+        </tr>`).join("") + `</table>` : `<small>选择 Agent 后点击“查看配置快照”。</small>`;
+
+      return `
+        <div class="gm-canvas-grid" style="grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px;">
+          <div class="gm-canvas-card gm-hud-corners">
+            <b>Codex 模式一键切换</b>
+            <small>三种模式一键切换，无需手动改配置文件。切换后请完全退出 Codex 再重新打开才生效。</small>
+            <div style="margin-top:10px">${renderCodexModeBody(health)}</div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="gm-btn gm-btn-primary" onclick="switchCodexMode('normal')">切到普通模式</button>
+              <button class="gm-btn" onclick="switchCodexMode('dual')">切到双态模式</button>
+              <button class="gm-btn" onclick="switchCodexMode('official')">切到官方直登</button>
+              <button class="gm-btn" onclick="detectCodexMode()">检测当前模式</button>
+            </div>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners">
+            <b>配置健康巡检</b>
+            <small>检查五个 Agent 的配置是否指向胖虎AI网关。网关地址被改（红）会影响计费，请一键修复。</small>
+            <div style="margin-top:10px">${driftHtml}</div>
+            <div style="margin-top:10px"><button class="gm-btn gm-btn-primary" onclick="runDriftInspect()">开始配置健康巡检</button></div>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners">
+            <b>网关线路测速</b>
+            <small>测试胖虎AI网关线路延迟。有备用线路时，可选延迟最低的线路。</small>
+            <div style="margin-top:10px">${renderLatencyBody(health)}</div>
+            <div style="margin-top:10px"><button class="gm-btn" onclick="runLatencyTest()">测试网关延迟</button></div>
+          </div>
+          <div class="gm-canvas-card gm-hud-corners">
+            <b>配置快照与恢复</b>
+            <small>每次写配置前自动快照（保留最近 10 份）。可回滚到任意快照，或一键恢复官方初始配置。</small>
+            <div class="row" style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="snapAgentSel" onchange="onSnapAgentChange(this.value)">
+                ${agentNames.map(id => `<option value="${id}" ${id===selAgent?"selected":""}>${agentLabel(id)}</option>`).join("")}
+              </select>
+              <button class="gm-btn" onclick="loadSnapshots()">查看配置快照</button>
+              <button class="gm-btn" style="border-color:#c0392b;color:#c0392b" onclick="restoreOriginal('${selAgent}')">恢复官方初始配置</button>
+            </div>
+            <div style="margin-top:10px">${snapHtml}</div>
+          </div>
+        </div>`;
+    }
+
+    function renderLatencyBody(health) {
+      const lat = health.latency;
+      if (!lat) return `<small>点击“测试网关延迟”查看线路情况。</small>`;
+      const eps = lat.endpoints || [];
+      return `<table class="gm-status-table">` + eps.map(e => {
+        const ok = e.reachable;
+        const val = ok ? `${e.latency_ms} ms` : "不可达";
+        const color = ok ? (e.latency_ms < 300 ? "#1A7F37" : "#B06000") : "#c0392b";
+        const rec = e.id === lat.recommended_id ? ` <span class="gm-tech-num" style="background:#e6f4ea;color:#1A7F37;padding:1px 6px;border-radius:6px">推荐</span>` : "";
+        return `<tr class="gm-handshake-row"><td>${e.label || e.id}</td><td style="color:${color}">${val}${rec}</td></tr>`;
+      }).join("") + `</table>`;
+    }
+    function runLatencyTest() {
+      ensureConfigHealth();
+      appendPythonLog("正在测试网关线路延迟……", "running");
+      window.pywebview.api.measure_gateway_latency().then(r => {
+        if (r && r.success) { state.configHealth.latency = r.result; appendPythonLog("网关测速完成。", "success"); }
+        else { appendPythonLog("测速失败：" + ((r&&r.message)||""), "error"); }
+        refreshAll();
+      });
+    }
+    function renderCodexModeBody(health) {
+      const cm = health.codexMode;
+      if (!cm) return `<small>点击“检测当前模式”查看 Codex 现在是哪种模式。</small>`;
+      if (!cm.configured) return `<small style="color:#B06000">未检测到胖虎 Codex 配置，请先在上面完成 Codex 配置。</small>`;
+      const login = cm.has_chatgpt_login
+        ? `<span class="gm-tech-num" style="background:#e6f4ea;color:#1A7F37;padding:1px 8px;border-radius:8px">ChatGPT 登录态：保留 ✓</span>`
+        : `<span class="gm-tech-num" style="background:#f5f5f7;color:#6e6e73;padding:1px 8px;border-radius:8px">ChatGPT 登录态：无</span>`;
+      const gw = cm.gateway_ok === false
+        ? ` <span class="gm-tech-num" style="background:#fdecea;color:#c0392b;padding:1px 8px;border-radius:8px">网关异常</span>` : "";
+      return `<div><span class="gm-tech-num" style="background:#eef;color:#0071E3;padding:2px 10px;border-radius:10px">当前：${cm.current_mode_label}</span> ${login}${gw}</div>`;
+    }
+    function detectCodexMode() {
+      ensureConfigHealth();
+      appendPythonLog("正在检测当前 Codex 模式……", "running");
+      window.pywebview.api.get_codex_mode_status().then(r => {
+        if (r && r.success) { state.configHealth.codexMode = r; appendPythonLog("Codex 模式检测完成：" + (r.current_mode_label||""), "success"); }
+        else { appendPythonLog("检测失败：" + ((r&&r.message)||""), "error"); }
+        refreshAll();
+      });
+    }
+    function switchCodexMode(kind) {
+      const map = { normal: ["start_config_only","普通模式"], dual: ["start_dual_state_config","双态模式"], official: ["start_official_chatgpt_config","官方直登"] };
+      const [api, label] = map[kind] || map.normal;
+      appendPythonLog("正在切换到 " + label + "……", "running");
+      window.pywebview.api[api]().then(() => {
+        appendPythonLog("已切换到 " + label + "。请完全退出 Codex 再重新打开才生效。", "success");
+        setTimeout(detectCodexMode, 400);
+      });
+    }
+    function ensureConfigHealth() { if (!state.configHealth) state.configHealth = { loaded: false, snapshots: [], snapshotAgent: "codex" }; }
+    function runDriftInspect() {
+      ensureConfigHealth();
+      appendPythonLog("开始配置健康巡检……", "running");
+      window.pywebview.api.inspect_config_drift().then(r => {
+        if (r && r.success) { state.configHealth.loaded = true; state.configHealth.drift = r.report; appendPythonLog("配置健康巡检完成。", "success"); }
+        else { appendPythonLog("巡检失败：" + ((r&&r.message)||""), "error"); }
+        refreshAll();
+      });
+    }
+    function repairDrift(agentId) {
+      appendPythonLog("正在一键修复 " + agentLabel(agentId) + " 配置……", "running");
+      window.pywebview.api.repair_config_drift(agentId).then(r => {
+        appendPythonLog(r && r.success ? "修复成功，请重开对应 Agent。" : "修复未完成：" + ((r&&r.message)||"请查看日志"), r&&r.success?"success":"error");
+        runDriftInspect();
+      });
+    }
+    function onSnapAgentChange(agentId) { ensureConfigHealth(); state.configHealth.snapshotAgent = agentId; state.configHealth.snapshots = []; refreshAll(); }
+    function loadSnapshots() {
+      ensureConfigHealth();
+      const agentId = state.configHealth.snapshotAgent || "codex";
+      window.pywebview.api.list_config_snapshots(agentId).then(r => {
+        if (r && r.success) { state.configHealth.snapshots = r.snapshots || []; }
+        else { appendPythonLog("读取快照失败：" + ((r&&r.message)||""), "error"); }
+        refreshAll();
+      });
+    }
+    function restoreSnapshot(agentId, name) {
+      if (!confirm("确认回滚 " + agentLabel(agentId) + " 到快照 " + name + "？（回滚前会自动再存一份当前状态）")) return;
+      window.pywebview.api.restore_config_snapshot(agentId, name).then(r => {
+        appendPythonLog(r && r.success ? "已回滚，请重开对应 Agent。" : "回滚失败：" + ((r&&r.message)||""), r&&r.success?"success":"error");
+        loadSnapshots();
+      });
+    }
+    function restoreOriginal(agentId) {
+      if (!confirm("确认把 " + agentLabel(agentId) + " 恢复到接管前的官方初始配置？")) return;
+      window.pywebview.api.restore_original_config(agentId).then(r => {
+        appendPythonLog(r && r.success ? "已恢复官方初始配置。" : "恢复失败：" + ((r&&r.message)||""), r&&r.success?"success":"error");
+        loadSnapshots();
+      });
     }
 
     function renderCommunicationLink(step) {
@@ -3066,6 +3260,69 @@
       }
     }
 
+    function setLoginStatus(msg, level) {
+      const el = document.getElementById("loginStatus");
+      if (!el) return;
+      if (!msg) { el.style.display = "none"; return; }
+      const colors = {
+        info: ["#eef", "#0071E3"], running: ["#FFF7DF", "#B06000"],
+        error: ["#fdecea", "#c0392b"], success: ["#e6f4ea", "#1A7F37"]
+      };
+      const c = colors[level] || colors.info;
+      el.style.background = c[0]; el.style.color = c[1];
+      el.textContent = msg; el.style.display = "block";
+    }
+    // 供 Python 后台线程回调（成功切界面，失败/进度在登录页显示）
+    window.setLoginStatus = setLoginStatus;
+    // 全局 toast：登录页显示在状态条，登录后显示为右上角浮动提示。
+    // Python 侧 notify_user/push_webview_toast 的所有客户提示都走这里。
+    window.showToast = function(msg, level) {
+      const gate = document.getElementById("loginGate");
+      if (gate && getComputedStyle(gate).display !== "none") { setLoginStatus(msg, level); return; }
+      let host = document.getElementById("gmToastHost");
+      if (!host) {
+        host = document.createElement("div");
+        host.id = "gmToastHost";
+        host.style.cssText = "position:fixed;top:64px;right:20px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:420px;pointer-events:none;";
+        document.body.appendChild(host);
+      }
+      const colors = {
+        info: ["#eef4ff", "#0071E3"], running: ["#FFF7DF", "#B06000"],
+        warning: ["#FFF7DF", "#B06000"],
+        error: ["#fdecea", "#c0392b"], success: ["#e6f4ea", "#1A7F37"]
+      };
+      const c = colors[level] || colors.info;
+      const item = document.createElement("div");
+      item.style.cssText = "background:" + c[0] + ";color:" + c[1] + ";padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.5;box-shadow:0 4px 16px rgba(0,0,0,.35);word-break:break-word;";
+      item.textContent = msg;
+      host.appendChild(item);
+      while (host.children.length > 5) host.removeChild(host.firstChild);
+      setTimeout(() => { item.remove(); }, 6000);
+    };
+
+    function submitLogin() {
+      const username = (document.getElementById("loginUser").value || "").trim();
+      const password = document.getElementById("loginPass").value || "";
+      if (!username || !password) {
+        setLoginStatus("请输入账号和密码后再登录。", "error");
+        return;
+      }
+      const rememberPwd = !!(document.getElementById("rememberPwd") && document.getElementById("rememberPwd").checked);
+      const autoLogin = !!(document.getElementById("autoLogin") && document.getElementById("autoLogin").checked);
+      setLoginStatus("正在登录胖虎AI，请稍候……", "running");
+      const btn = document.querySelector('#loginGate .gm-btn-primary');
+      if (btn) { btn.disabled = true; }
+      Promise.resolve(window.pywebview.api.login(username, password, rememberPwd, autoLogin))
+        .then(res => {
+          if (res && res.success === false) {
+            setLoginStatus("登录失败：" + (res.message || "请检查账号密码"), "error");
+          }
+          // pending:true 时结果由后台线程通过 setLoginStatus / 切界面反映
+        })
+        .catch(err => { setLoginStatus("登录出错：" + err, "error"); })
+        .finally(() => { if (btn) { btn.disabled = false; } });
+    }
+
     function openRegister() {
       const rawInvite = document.getElementById("inviteCode").value.trim();
       window.pywebview.api.build_register_url(rawInvite).then(url => {
@@ -3111,14 +3368,8 @@
       });
     }
 
-    function submitLogin() {
-      const u = document.getElementById("loginUser").value.trim();
-      const p = document.getElementById("loginPass").value.trim();
-      if (!u || !p) { alert("请输入账号 and 密码"); return; }
-      window.pywebview.api.login(u, p, document.getElementById("rememberPwd").checked, document.getElementById("autoLogin").checked).then(res => {
-        if (res && res.success === false) alert(res.message || "登录连接失败");
-      });
-    }
+    // 旧版 submitLogin（Codex 遗留，alert 版）已删除：函数声明重复时后者覆盖前者，
+    // 曾导致上方带 loginStatus 反馈的正式版 submitLogin 永远不生效（登录"无反应"根因）。
 
     function toggleShowKey() {
       const input = document.getElementById("apiKeyVal");
@@ -3128,8 +3379,14 @@
     // Preserve pywebview calls for contracts
     function saveApiKey() {
       const val = document.getElementById("apiKeyVal")?.value.trim();
-      if (!val) return alert("请输入 API Key");
-      window.pywebview.api.save_key(val, document.getElementById("skipKeyTest")?.checked || false);
+      if (!val) { window.showToast("请输入 API Key", "warning"); return; }
+      window.showToast("正在校验并保存 Key……", "running");
+      Promise.resolve(window.pywebview.api.save_key(val, document.getElementById("skipKeyTest")?.checked || false))
+        .then(res => {
+          if (res && res.success) { window.showToast(res.message || "Key 已保存", "success"); }
+          else { window.showToast("Key 保存失败：" + ((res && res.message) || "未知原因"), "error"); }
+        })
+        .catch(err => window.showToast("Key 保存出错：" + err, "error"));
     }
 
     function runDiagnosticsCheck() {

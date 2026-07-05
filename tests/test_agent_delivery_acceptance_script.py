@@ -43,7 +43,7 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
             self.assertNotIn("client", item["mode_statuses"])
             self.assertIn(item["mode_statuses"]["dialogue"], {"not_run", "not_supported"})
 
-    def test_selected_gemini_agy_stays_blocking_even_for_cli_scope(self) -> None:
+    def test_selected_gemini_agy_follows_standard_cli_scope_gating(self) -> None:
         result = self.run_script("--delivery-scope", "cli", "--agents", "gemini_agy")
         report = json.loads(result.stdout)
 
@@ -52,9 +52,10 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
         self.assertEqual(report["delivery_scope"], "cli")
         self.assertEqual(report["selected_agent_ids"], ["gemini_agy"])
         self.assertEqual(report["agents"][0]["delivery_status"], "blocked")
-        self.assertEqual(report["agents"][0]["mode_statuses"]["cli"], "not_supported")
-        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_supported")
-        self.assertIn("Gemini / agy 配置待开发", "\n".join(report["blocking_gaps"]))
+        self.assertIn(report["agents"][0]["mode_statuses"]["cli"], {"ready", "not_detected"})
+        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_run")
+        self.assertIn("最小中文对话未执行", "\n".join(report["blocking_gaps"]))
+        self.assertNotIn("配置待开发", result.stdout)
 
     def test_client_scope_selected_agent_blocks_on_unconfirmed_client(self) -> None:
         result = self.run_script("--delivery-scope", "client", "--agents", "claude_code")
@@ -94,7 +95,14 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
 
         old_env = {
             key: os.environ.get(key)
-            for key in ("CLAUDE_CODE_SETTINGS_PATH", "OPENCLAW_CONFIG_PATH", "HERMES_HOME")
+            for key in (
+                "CLAUDE_CODE_SETTINGS_PATH",
+                "OPENCLAW_CONFIG_PATH",
+                "HERMES_HOME",
+                "GOOGLE_GEMINI_BASE_URL",
+                "GEMINI_API_KEY",
+                "GEMINI_MODEL",
+            )
         }
         try:
             with patch.object(agent_delivery_acceptance.installer, "install_claude_code_config", side_effect=fake_install("claude")), \
@@ -113,6 +121,12 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
                 self.assertTrue(str(os.environ["CLAUDE_CODE_SETTINGS_PATH"]).startswith(str(temp_root)))
                 self.assertTrue(str(os.environ["OPENCLAW_CONFIG_PATH"]).startswith(str(temp_root)))
                 self.assertTrue(str(os.environ["HERMES_HOME"]).startswith(str(temp_root)))
+                self.assertEqual(os.environ["GEMINI_API_KEY"], "sk-test-secret-123456")
+                self.assertEqual(os.environ["GEMINI_MODEL"], "gpt-5.4")
+                self.assertEqual(
+                    os.environ["GOOGLE_GEMINI_BASE_URL"],
+                    agent_delivery_acceptance.installer.DEFAULT_BASE_URL,
+                )
                 temp_env.cleanup()
         finally:
             for key, value in old_env.items():
@@ -138,12 +152,22 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
         self.assertEqual(captured["command"][0], "openclaw")
         self.assertEqual(output, "failed")
 
-    def test_gemini_dialogue_probe_reports_not_supported(self) -> None:
+    def test_gemini_dialogue_probe_runs_agy_command_with_timeout(self) -> None:
         agent = next(agent for agent in agent_delivery_acceptance.installer.AGENTS if agent.id == "gemini_agy")
-        ok, output = agent_delivery_acceptance.run_agent_dialogue_probe_with_timeout(agent, "cli", "gpt-5.4", 7)
+        captured = {}
+
+        def fake_run(command, timeout=900):
+            captured["command"] = command
+            captured["timeout"] = timeout
+            return False, "failed"
+
+        with patch.object(agent_delivery_acceptance.installer, "run_command", side_effect=fake_run):
+            ok, output = agent_delivery_acceptance.run_agent_dialogue_probe_with_timeout(agent, "cli", "gpt-5.4", 7)
 
         self.assertFalse(ok)
-        self.assertIn("配置待开发", output)
+        self.assertEqual(captured["timeout"], 7)
+        self.assertEqual(captured["command"][0], "agy")
+        self.assertIn("gpt-5.4", captured["command"])
 
     def test_codex_gateway_probe_requires_acceptance_key(self) -> None:
         ok, output = agent_delivery_acceptance.run_codex_gateway_probe("", "gpt-5.4")

@@ -36,6 +36,26 @@ def make_cookie(name: str, value: str, rest: dict | None = None) -> http.cookiej
 
 
 class InstallerBackendTests(unittest.TestCase):
+    def test_localize_server_message_maps_known_english_to_chinese(self) -> None:
+        self.assertEqual(
+            pci.localize_server_message("Username or password is incorrect, or user has been banned"),
+            "账号或密码错误，或该账号已被封禁。",
+        )
+        # 大小写 / 结尾标点不影响匹配
+        self.assertEqual(
+            pci.localize_server_message("username or password is incorrect."),
+            "账号或密码错误。",
+        )
+        # 子串兜底：整句里包含已收录片段也能映射
+        self.assertEqual(
+            pci.localize_server_message("login rejected: user has been banned by admin"),
+            "该账号已被封禁，请联系客服。",
+        )
+        # 未收录的原文原样透传，不做猜测性翻译
+        self.assertEqual(pci.localize_server_message("some unknown reason"), "some unknown reason")
+        self.assertEqual(pci.localize_server_message(""), "")
+        self.assertEqual(pci.localize_server_message(None), "")
+
     def test_register_url_preserves_agent_invite_for_new_account_registration(self) -> None:
         self.assertEqual(pci.build_register_url(""), pci.REGISTER_URL)
         self.assertEqual(

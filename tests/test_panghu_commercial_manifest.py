@@ -2087,7 +2087,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         log_text = "\n".join(logs)
         self.assertEqual(completed, [])
         self.assertEqual(failed, ["cfg-hermes-client"])
-        self.assertIn("client scope 需要独立客户端验收", log_text)
+        self.assertIn("只销售 CLI 交付；client scope 不适用", log_text)
         self.assertNotIn("Hermes/client 最小对话已通过；商业交付成功已提交", log_text)
 
     def test_agent_center_summary_text_uses_server_manifest_only(self) -> None:

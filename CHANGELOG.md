@@ -1,5 +1,151 @@
 # 变更记录
 
+## 2026-07-04（第四轮：五 Agent 商业链路全通 + 代理中心真数据 + 佣金第 4 类事件）
+
+- **五个 Agent 全部真机走通完整商业链路**（本地联调栈，沙箱 USERPROFILE/LOCALAPPDATA/APPDATA）：Codex、ClaudeCode、OpenClaw、Hermes、Gemini/agy 均完成 权益门禁→会话预占→安装检测→快照→配置写入→启动检测→**真实 CLI 最小中文对话"胖虎AI配置验证成功"→扣次→交付矩阵"完整交付"**；Gemini 首次失败时"不扣次"守卫正确生效。扣次真实反映到顶栏算力（25→14 次）。
+- **修复 agy 探针命令**：agy CLI 无 `-m` 短参（报 flags provided but not defined），改 `--model`。
+- **联调网关补三种模型接口格式**：/v1/messages（Anthropic，ClaudeCode 用）、/v1beta/models/*:generateContent|streamGenerateContent（Gemini，agy 用）、/v1/chat/completions 补 SSE 流式；三格式均返回验收文本。
+- **沙箱隔离修正**：Hermes 配置走 LOCALAPPDATA 而非 USERPROFILE，首轮联调误写真实 `AppData\Local\hermes`（客户端自动备份机制生效），已用备份恢复原配置；联调启动脚本现在同时沙箱 USERPROFILE/LOCALAPPDATA/APPDATA。注意：npm install -g 全局升级了 openclaw 2026.6.10→2026.6.11（真实环境，无害）。
+- **后台佣金引擎补第 4 类事件 tool_order_paid**（合同歧义点 #1 决议）：与 paid_activation 同构、比例独立配置、默认 0 未配置不允许启用、五级归因/幂等互斥/T+N/冲正全套；管理页同步。后台 **77 测试全绿**。其余 4 个歧义点维持已实现口径（提现账号可空人工补充、放款流水号 payout_reference 优先 reason 兜底、回调平台+聊天对象匹配、账本动作 freeze/release/reverse）。
+- **代理中心真数据打通**：后台 seed 默认产品/四类佣金比例（ready_to_enable=true）→ 买家经联调网关 /api/agent/apply 申请 → 管理员审批 → 客户端"代理中心"同步真实云端快照：L1 等级、邀请码、四项账本金额、同步检查全绿、网络在线。截图 outputs/integration_14_agent_center.png。
+- 客户端 **359 测试全绿**。遗留：增值业务目录走签名清单同步已有底座、待服务端提供目录数据；生产部署待用户批准 + PRODUCTION_LOCK 流程。
+
+## 2026-07-04（第三轮：本地联调打通完整买家链路 + 后台合同对齐 + 两个真机级 bug）
+
+- **后台管理系统对齐客户端合同**：后台按需求草稿实现的路由（/api/agent/applications、/api/agent-business/* 等）全部改为合同路径（/api/agent/apply、/api/admin/agent/* 等），补齐 commlink offering/platform-auth/回调复数等缺失路由，响应统一 {success,data} 信封；新增 tests/test_client_contract_integration.py（16 项，直接用客户端 build_* 构造器打后台 TestClient）；后台 69 测试全绿（另修 requirements.txt 缺 cryptography）。5 个合同歧义点见后台交接报告（tool_order_paid 事件未实现等）。
+- **客户端真机级 bug 两个**：① save_key/log 等把 urlopen 当自定义 opener 传（timeout 被当 data），Key 归属校验对真实服务器也必炸 → 改 trusted_urlopen；② 同步 bridge 处理器内调 log/sync（js_api 回调里 evaluate_js）重入死锁整窗卡死 → 新增异步 JS 推送队列（_push_js + 专用线程），log/sync_webview_state/push_webview_toast 全部队列化；前端 saveApiKey 改为显示成败 toast。
+- **本地联调环境**：scripts/local_integration_server.py（8299）——mock 登录/激活/Ed25519 签名清单（agents 白名单+full_config 能力+7 条权益）/config-sessions/verify-owner/支付状态//v1 对话 mock，其余 /api/* 反代本地后台(8300)并注入 X-Panghu-User。客户端新增联调开关：PANGHU_DEV_BASE_URL_OVERRIDE（窗口标题醒目提示）、PANGHU_DEV_MANIFEST_PUBLIC_KEY_FILE；生产不设环境变量行为不变。
+- **完整买家链路真机贯通**（沙箱 USERPROFILE，不碰真实配置）：登录→签名清单验签→权益 35 次→Key 校验+归属门禁→环境检测→商业门禁→会话预占→Codex 安装检测→快照→配置写入→连通 200→**最小中文对话"胖虎AI配置验证成功"→交付成功提交扣次→验收矩阵"Codex(CLI)：完整交付"**。截图 outputs/integration_*.png。
+- 客户端 359 测试全绿。遗留：其余四 Agent 的同链路联调、代理中心/增值业务模块接本地后台真数据、生产部署（待用户批准+锁流程）。
+
+## 2026-07-04（第二轮：登录后链路全面打通 + 登录失败中文映射）
+
+用户真实账号登录后反馈"很多链路没打通"，真机（CDP 接入真实 WebView2）逐链路排查，找到并修复五类断链：
+
+1. **busy 状态泄漏（伞形根因）**：`_restore_saved_session_worker` 恢复会话后从不 `set_busy(False)`，`worker_running` 永远为 True → 检查更新/保存 Key/部署等所有带 `if self.worker_running: return` 守卫的动作**静默失效**。→ 补 `finally: set_busy(False)`（与 `_login_worker` 对齐）。
+2. **Tk messagebox 全军覆没**：43 处 `messagebox.showwarning/showinfo/showerror` 在 webview 模式必抛 RuntimeError 被吞 →"点了无反应"（如无 Key 点环境诊断）。→ 新增 `notify_user/notify_info/notify_warning/notify_error` 统一提示出口（webview 走日志+前端 toast），全量替换；`prompt_online_update` 的 askyesno 在 webview 模式改为提示不自动更新（打包发布叫停中）；`run_environment_check` 的 Tk `env_text` 控件加 webview 守卫；模块级 `open_url` 白名单告警改走 log 回调。
+3. **evaluate_js 与页面加载竞态锁死**：启动时会话恢复线程在前端加载完成前调 `evaluate_js`（无超时），竞态输了就永久锁死 bridge → 窗口"未响应"、会话恢复"失灵"（复现过一次）。→ 新增 `webview_ready` 门闩：前端首次拉取 `get_initial_state` 前禁止一切 evaluate_js 推送（`log`/`sync_webview_state`/`push_webview_toast` 三个出口全部加闩，log 推送补 try/except）；就绪前状态与日志随首次拉取整体带给前端，不丢失。
+4. **toast 登录后不可见**：`window.showToast` 只写登录页状态条 → 登录后所有 Python 推送提示全部不可见。→ 前端改为全局 toast：登录页走状态条，登录后右上角浮动提示（自动消失、最多堆叠 5 条）。
+5. **算力"待刷新"误导**：清单已从服务端刷新但账号无活跃权益时仍显示"待刷新"。→ 改为如实显示"无可用权益"（"待刷新"只用于尚未拉到清单阶段）。
+
+其他：`_login_worker` 的 `user_label`（webview 不存在的 Tk 控件）加 hasattr 守卫；服务端登录失败英文 message 增加中文映射 `localize_server_message`（登录/部署授权两处接入，未收录原文透传，新增单测）；删除沙箱遗留 `_probe_big.txt`（用户批准）。
+
+**真机验证（假账号+真实会话）**：登录失败中文提示；会话恢复后自动更新检查跑通（"当前已是最新版本：1.0.16"）；手动检查更新 4 秒出 toast；无 Key 点环境诊断弹提示并跳回第一步；Codex 模式检测（官方直登+ChatGPT 登录态保留）、配置健康巡检（真实红黄判定+一键修复入口）、网关测速（主线路 200/约 1.2s）、快照列表四条链路后端+UI 全通。全量测试 **359 passed + 187 subtests**。
+
+遗留：更新的"发现新版本"路径在 webview 模式只提示不自动更新（待接前端确认框）；买家购买/扣次/部署链路因该账号无活跃权益无法真机走通（需服务端权益或测试权益）。
+
+## 2026-07-04（Claude Code CLI 接手：登录真机彻底修复 + 全量测试 Windows 复验）
+
+接手 `docs/CLI交接文档_2026-07-03.md`，在 Windows 真机定位并修复登录"无反应"的两个真正根因：
+
+1. **前端重复函数覆盖**：`src/ui/index.html` 存在两个 `submitLogin` 声明——07-03 修复版（带 loginStatus 反馈）在前，Codex 遗留的旧版（alert 版、无反馈）在后；JS 函数声明后者覆盖前者，导致修复版从未生效。→ 删除旧版，全文件扫描确认无其他重复函数声明。
+2. **Tk 变量跨线程崩溃（真机根因，沙箱不可见）**：webview 模式主线程阻塞在 `webview.start()`，Tk mainloop 永远不运行；任何 pywebview bridge 线程/登录后台线程访问 `tk.StringVar` 都抛 `RuntimeError: main thread is not in main loop`——`_login_bridge_worker` 第一行 `login_username.set()` 即死，except 块里 `status.set()` 再次抛异常，线程无声死亡，登录结果永远推不回前端；连 `get_initial_state` 等所有 js_api 调用也一直在真机上失败。→ 新增线程安全 `WebviewVar/WebviewStringVar/WebviewBooleanVar/WebviewIntVar`（支持 trace_add），全量替换 `tk.StringVar/BooleanVar/IntVar` 构造点（35 处），bridge/后台线程不再触碰任何 Tk 对象。
+3. 测试同步（scope 口径遗留）：`_agent_mode_label` 对已移除 client 模式的 CLI-only Agent 回退到中文标签"客户端"（客户可见矩阵不再出现英文 mode id）；`test_panghu_commercial_manifest.py` 旧文案断言更新为新口径"只销售 CLI 交付；client scope 不适用"。
+
+**真机验证（CDP 接入真实 WebView2 窗口，假账号走完整登录链路）**：点击登录 → 立即黄条"正在登录胖虎AI，请稍候……" → 全程界面响应正常（无卡死）→ 约 2 秒后红条显示服务端真实原因"登录失败：Username or password is incorrect, or user has been banned" → 按钮恢复可点。截图证据 `outputs/login_fake_cred_test.png`。
+
+**Windows 全量复验**：`python -m pytest tests -q` → **358 passed, 187 subtests passed**（含 07-03 所有标"需 Windows 复验"的批次：快照/漂移/测速/scope/合同审计）；`--self-test` OK。
+
+遗留：① 真实账号登录成功路径（切进配置流程）待用户用真实账号验证一次；② pywebview 启动时对 js_api 的 `app` 公开属性做深度反射产生递归告警日志（不致命，建议后续把 `WebviewApi.app` 改为 `_app` 消除）；③ 服务端登录失败 message 为英文原文透传，如需中文可加映射。
+
+## 2026-07-03（修复：登录无反应 + 登录卡死未响应）
+
+两个连环 bug：
+
+1. 登录按钮无反应：`src/ui/index.html` 按钮 `onclick="submitLogin()"` 但 `submitLogin` 从未定义（Codex 遗留），点击 JS 抛 ReferenceError 静默失败。→ 补齐 `submitLogin()`（读表单+勾选、调 `pywebview.api.login`、空字段拦截、失败日志提示）。
+2. 修好按钮后登录卡死（窗口"未响应"）：`WebviewApi.login` 同步执行，内含 20s 网络请求，阻塞了 WebView GUI 线程。→ 重构为后台线程：`login` 立即返回 `{pending:true}`，真实登录在 `_login_bridge_worker` 线程跑，结果经 `self.app.log` 日志推送 + `sync_webview_state` 切界面反映；新增 `push_webview_toast` 从后台线程弹提示。
+- 需 Windows 复验：完全重启客户端，点登录——界面不再卡死；成功进配置流程，失败在日志区显示原因（账号密码错/连接失败等）。
+
+## 2026-07-03（Codex 模式一键切换+检测面板）
+
+用户反馈三模式验证要手动翻/改配置文件、容易改错。切换本就是一键（按钮已存在），补上"免翻文件的检测"：
+
+- `WebviewApi.get_codex_mode_status`：读 config.toml + auth.json，一键返回当前模式、ChatGPT 登录态是否保留、网关是否正常，免手动核对文件。
+- `src/ui/index.html` 配置健康面板新增"Codex 模式一键切换"卡：当前模式徽章 + ChatGPT 登录态标记 + 三个一键切换按钮（普通/双态/官方直登，复用现有 start_config_only/start_dual_state_config/start_official_chatgpt_config）+ 检测按钮；切换后自动重新检测。浏览器预览 stub 补齐。
+- `docs/Codex三模式真机验证清单` 改为全程点按钮：切换→退出重开→发中文测→点检测确认，不再要求手动打开 config.toml/auth.json。
+- 需 Windows 复验前端结构检查 + self-test。
+
+## 2026-07-03（开源对标补足 第四批：网关线路测速）
+
+依据方案 P1（对标 cc-switch 延迟测速）：
+
+- `measure_gateway_latency`：对胖虎网关候选线路（`GATEWAY_ENDPOINT_CANDIDATES`，当前仅主域名）做 HEAD/GET 轻量探测，返回各线路延迟、可达性，按延迟排序，推荐延迟最低的可达线路。复用现有 `trusted_urlopen`。服务端下发备用线路后可扩展候选列表，为多线路自动选优打基础。
+- `WebviewApi.measure_gateway_latency` bridge + 配置健康面板新增"网关线路测速"卡片（延迟着色、推荐标记）+ 浏览器预览 stub。
+- 测试：`tests/test_gateway_latency.py`（mock 探测，不打真实网络：推荐最低延迟、排序、不可达置底、全不可达无推荐、默认候选含主线路）。沙箱等价逻辑已验证全绿；需 Windows 复验。
+- 用量面板（P1 另一项）仍依赖中转站开放统计接口，接口就绪前不做。
+
+## 2026-07-03（开源对标补足 第三批：配置健康 UI 接入前端）
+
+把第一、二批的后端能力接入 WebView 界面，客户可见可点：
+
+- `WebviewApi` 新增 5 个 bridge 方法：`list_config_snapshots` / `restore_config_snapshot` / `restore_original_config` / `inspect_config_drift` / `repair_config_drift`（异常统一包成 {success, message}）。
+- `src/ui/index.html`：配置Agent 模块步骤 5 新增"配置健康"面板 `renderConfigHealth()`——
+  - 配置健康巡检：一键巡检五个 Agent，红/黄/正常三色状态；红色（网关被改/缺 Key）直接给"一键修复"按钮；检测到风险切换工具时醒目提示。
+  - 配置快照与恢复：按 Agent 查看快照列表（含🔒官方初始），一键回滚到任意快照（带二次确认），一键恢复官方初始配置。
+  - 浏览器预览模式补齐对应 stub，isBrowser 下有演示数据。
+- 沙箱挂载对大 HTML 文件有截断，node 结构检查不可靠；需 Windows 本机复验：`node` 前端结构检查 + `python src\panghu_ai_client.py --self-test`。
+- 至此开源对标 P0 三项（快照/恢复/漂移巡检）后端+UI 全部完成。
+
+## 2026-07-03（开源对标补足 第二批：配置漂移巡检 + 一键修复）
+
+依据方案 P0（对标 cc-switch 漂移检测），实现配置被外部工具篡改的主动发现与修复：
+
+- `inspect_agent_config_drift`：逐 Agent 比对当前配置与胖虎期望值，分级——red（网关地址被改/缺 Key，影响计费、把买家切走）、yellow（模型被改）、ok。覆盖五个 Agent 各自的配置文件与字段；Key 只判存在性，报告不含任何明文。
+- `agent_expected_gateway`：各 Agent 期望网关映射（Claude=根域名、Codex/OpenClaw/Hermes=/v1、Gemini=根域名）。
+- `inspect_all_config_drift`：全量巡检 + 与 `detect_risk_plugins` 联动——检测到 ccswitch/codex++ 等风险插件时整体升红。
+- `repair_agent_config_drift`：一键修复，用当前买家 Key/模型经 `apply_agent_config` 重写配置（自动带快照保护），修复后复检仍红则提示有工具在持续改写。
+- 测试：`tests/test_config_drift.py`（红/黄/ok、未配置、缺 Key、期望网关、风险插件升红、修复往返、无明文泄露）。沙箱无 tkinter，已用等价脚本验证核心分级逻辑全绿；需 Windows 复验 `python -m pytest tests/test_config_drift.py -q`。
+- UI 巡检面板（红黄灯 + 一键修复按钮）与第一批快照面板同批接前端。
+
+## 2026-07-03（开源对标补足 第一批：统一配置快照 + 一键恢复）
+
+依据 `docs/开源对标功能补足方案_2026-07-03.md`（对标 cc-switch Profile 机制 / Codex++ 官方切回），实现 P0 快照能力：
+
+- 新增统一配置快照层（`~/.panghu_config_snapshots/<agent>/`，可用 `PANGHU_SNAPSHOT_ROOT` 覆盖）：
+  - `create_config_snapshot`：写配置前自动快照，含 meta.json（reason/时间/文件清单/缺失清单），保留最近 `SNAPSHOT_KEEP_COUNT=10` 份（用户决策）。
+  - `ensure_original_config_snapshot`：首次接管前留存 `original` 初始快照，永不被轮转清理。
+  - `list_config_snapshots` / `restore_config_snapshot`：快照列表与回滚；回滚前自动生成 pre-restore 快照（支持"回滚的回滚"）；快照时不存在的文件在回滚时会被移除，精确还原。
+  - `restore_original_config`：一键恢复官方初始配置（交付回收 / 客户自修复场景，配合服务端"只补次数"退款政策）。
+  - `apply_agent_config` 统一接入：写任何 Agent 配置前先 ensure_original + create 快照；Codex 三模式快照与本层统一。
+- 覆盖 5 个 Agent 的真实配置文件路径（Codex config.toml+auth.json、Claude settings.json、OpenClaw json、Hermes config.yaml+.env、Gemini/agy .env）。
+- 测试：`tests/test_config_snapshots.py`（original 永久、10 份轮转、回滚往返、缺失文件移除、一键恢复、异常路径）。沙箱无 tkinter 无法跑主程序测试，已用等价独立脚本验证算法全绿；需 Windows 本机复验 `python -m pytest tests/test_config_snapshots.py -q`。
+- UI 快照历史/一键恢复按钮为下一批（需接前端）。
+
+## 2026-07-03（客户端 scope 口径修正轮 —— 撤销上一轮错误实现）
+
+用户纠错：正确口径是"官方提供客户端安装的做客户端交付，没有提供的只做 CLI 交付"，上一轮的"CLI 回退顶替客户端交付"属于理解错误，已全部撤销并按正确口径重做：
+
+- `AGENTS_WITH_OFFICIAL_CLIENT = {codex, claude_code, gemini_agy}`：做真实客户端交付。新增 Claude Desktop 检测（`%LOCALAPPDATA%\AnthropicClaude`、`/Applications/Claude.app` 等）和 Google Antigravity 检测（`%LOCALAPPDATA%\Programs\Antigravity`、`/Applications/Antigravity.app` 等）；`verify_agent_client_scope` 检测到官方客户端时通过安装项，最终交付仍以客户端内最小中文任务和验收矩阵为准。
+- `CLI_ONLY_DELIVERY_AGENTS = {openclaw, hermes}`：官方无客户端，只销售 CLI；AgentSpec 移除 client 模式，playbook `client_supported=False`，UI 模式选择只留 CLI，验收脚本对 client scope 明确报"不适用"。
+- 删除 `CLIENT_SCOPE_CLI_FALLBACK_AGENTS` 及全部回退逻辑；测试重写为新口径（含 Claude Desktop 检测通过/未检测两种路径断言）。
+- `ACCEPTANCE.md` E 级、`docs/产品决策清单` §三 同步修正口径并记录本次纠错。
+- 需 Windows 本机复验全量 pytest。
+
+## 2026-07-03（客户端 scope 回退口径实现轮）【已撤销，见上一条】
+
+- ~~按用户决策实现客户端 scope 回退~~（误解用户需求，当日修正）。
+
+## 2026-07-03（Gemini/agy 完整配置链路接入轮）
+
+- Gemini / agy（Google Antigravity，`agy` CLI）从"官方入口/待接入"升级为完整配置链路，与其他四个 Agent 同一验收矩阵门控：
+  - 配置写入：`install_gemini_agy_config` 写 `~/.gemini/.env` 的 `GOOGLE_GEMINI_BASE_URL=https://aitokenapi.cc`（Gemini 格式服务根地址）、`GEMINI_API_KEY=买家 Key`、`GEMINI_MODEL=<模型>`；保留用户已有其他 env 行，带备份/恢复。依据：agy 继承 Gemini CLI 环境变量；中转站按 `x-goog-api-key` 自动识别 Gemini 格式（docs/openapi/relay.json）。
+  - 最小中文对话验收：`agy -m <模型> -p <中文验收提示>`，纳入 `run_agent_dialogue_probe` 通用链路。
+  - `AgentSpec.supports_config=True`（cli/client）、playbook 真实化、配置计划真实化；UI 默认勾选 gemini_agy，移除"暂不计入完整配置交付"特殊文案。
+  - `agent_delivery_acceptance.py` 移除 gemini 全部 not_supported 特判；隔离验收环境注入 GEMINI 环境变量。
+  - 测试同步：test_agent_playbooks（env 构造、合并保留、探针命令）、test_agent_delivery_acceptance_script（标准 CLI 门控、隔离环境断言、探针超时传递）、self-test 断言更新。
+  - APP_VERSION 1.0.15 → 1.0.16。
+- 文档同步：产品手册、技术维护手册、PRODUCT.md、ACCEPTANCE.md E 级从"待接入"改为"已接入完整配置链路；未通过最小中文对话验收前不计完整交付"。
+- 边界保持：配置链路实现 ≠ 已交付；真实客户机器上的 agy 安装、重开启动检测和最小中文对话验收仍未执行。
+- 本轮改动需在 Windows 本机复验：全量 pytest + self-test。
+
+## 2026-07-03（N03 合同审计收尾轮）
+
+- 完成后端商业合同（`docs/COMMERCIAL_BACKEND_API_CONTRACT.md`）与客户端实现的逐项对照审计：27/27 路由覆盖、字段名一致、敏感字段过滤完整（SENSITIVE_FIELDS + VALUE_ADDED_FORBIDDEN_KEYS）、所有创建类操作有幂等键、主程序 22 个商业 API 调用点全部经由 `commercial_api.py` 构造器，无绕过手拼请求。审计结论 A 级，无阻塞性偏差。
+- 修复 `build_payment_poll_request` 缺少操作者校验：新增 `operator_user_id` 参数与 `_require_current_buyer_operator` 校验，与其余全部请求构造器对齐；同步主程序 `payment_poll` 调用点和 `tests/test_commercial_api.py` 断言（含不匹配操作者抛 ValueError 的负例）。
+- 确认商业清单生产公钥注入机制已完备（构建脚本 + CI Secret + signer 脚本），"未注入"是运维步骤而非代码缺口。
+- 遗留待澄清（记入 FINAL_REPORT 待决策）：`delivery_scope` 默认值 `codex_agent_config` 不在合同允许值内；通讯软件回调是否需携带 scope 标记。
+- 本轮改动需在 Windows 本机复验：`python -m pytest tests\test_commercial_api.py -q` 及全量 pytest。
+
 ## 2026-07-03（R5-DOCS-ROBOT-GUIDE-01 文档收尾）
 
 - 记录买家机器人创建/注册/凭证填写引导：客户端 UI `src/ui/index.html` 新增引导卡片，提供官方入口，并提示需要回填 `platform_account_id`、`platform_chat_id`、`gateway_mode`、回调地址和验签密钥。

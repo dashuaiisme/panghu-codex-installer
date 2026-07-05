@@ -418,7 +418,9 @@ class CommercialApiContractTests(unittest.TestCase):
             operator_user_id="buyer-1",
             idempotency_key="idem-1",
         )
-        payment = build_payment_poll_request(self.contract, order_id="order-1", buyer_user_id="buyer-1")
+        payment = build_payment_poll_request(
+            self.contract, order_id="order-1", buyer_user_id="buyer-1", operator_user_id="buyer-1"
+        )
         config = build_config_session_reserve_request(
             self.contract,
             entitlement_id="ent-1",
@@ -436,6 +438,11 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(order.body["delivery_scope"], "codex_agent_config")
         self.assertEqual(order.headers["Idempotency-Key"], "idem-1")
         self.assertEqual(payment.query["order_id"], "order-1")
+        self.assertEqual(payment.query["operator_user_id"], "buyer-1")
+        with self.assertRaises(ValueError):
+            build_payment_poll_request(
+                self.contract, order_id="order-1", buyer_user_id="buyer-1", operator_user_id="other-user"
+            )
         self.assertEqual(config.body["diagnostic_code"], "PH-CFG-1")
         self.assertEqual(config.body["delivery_scope"], "codex_agent_config")
         self.assertEqual(config.headers["Idempotency-Key"], "idem-2")

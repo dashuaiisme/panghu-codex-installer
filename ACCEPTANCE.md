@@ -99,6 +99,11 @@
 
 CLI 和客户端是独立付费、独立交付范围。只购买 CLI 时，不得因为客户端未确认阻断 CLI 交付；购买 `client` 或 `both` 时，客户端入口、启动、配置和真实任务必须单独验收。
 
+客户端 scope 口径（用户决策 2026-07-03 修正版）：
+
+- 官方提供客户端安装的 Agent —— Codex（Windows 官方包）、ClaudeCode（Claude Desktop）、Gemini / agy（Google Antigravity）—— 必须做真实客户端交付：检测/安装官方客户端、完成配置，并按验收矩阵单独验收客户端内最小中文任务。
+- 官方未提供客户端安装的 Agent —— OpenClaw、Hermes —— 只销售 CLI 交付，不提供 `client` scope；商品不得按 client/both 上架。
+
 每个已接入 Agent 必须分别验收五维状态：
 
 - 安装状态
@@ -119,9 +124,10 @@ CLI 和客户端是独立付费、独立交付范围。只购买 CLI 时，不�
 
 CLI-only 通过不等于客户端 scope 通过，也不等于三端客户包发布完成。
 
-待接入或入口型 Agent：
+Gemini / agy（Google Antigravity）：
 
-- Gemini / agy 当前只保留官方安装或打开入口；未接入胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得计入完整配置交付。
+- 已接入完整配置链路：写入 `~/.gemini/.env`（GOOGLE_GEMINI_BASE_URL / GEMINI_API_KEY / GEMINI_MODEL），走胖虎AI网关 Gemini 格式。
+- 与其他 Agent 相同：必须完成配置写入、重开 agy 启动检测、最小中文对话（`agy -m <model> -p ...`）和功能验收矩阵后才计完整配置交付。
 
 Codex 额外必须验收三种配置模式：
 

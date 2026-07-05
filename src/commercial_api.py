@@ -832,11 +832,17 @@ def build_payment_poll_request(
     contract: CommercialApiContract,
     order_id: str,
     buyer_user_id: str,
+    operator_user_id: str,
 ) -> CommercialApiRequest:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     return CommercialApiRequest(
         method="GET",
         url=contract.payment_status_url,
-        query={"order_id": order_id, "buyer_user_id": buyer_user_id},
+        query={
+            "order_id": order_id,
+            "buyer_user_id": buyer_user_id,
+            "operator_user_id": operator_user_id,
+        },
     )
 
 

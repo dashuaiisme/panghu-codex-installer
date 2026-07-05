@@ -20,24 +20,26 @@ class AgentPlaybookTests(unittest.TestCase):
             {"codex", "claude_code", "hermes", "openclaw", "gemini_agy"},
         )
 
-    def test_every_agent_has_cli_and_client_modes_marked_configurable(self) -> None:
+    def test_agent_modes_follow_official_client_availability(self) -> None:
+        # 用户决策（2026-07-03 修正版）：官方有客户端的做客户端交付；没有的只做 CLI
         for agent in installer.AGENTS:
             modes = {mode.id: mode for mode in agent.modes}
             self.assertIn("cli", modes, agent.id)
-            self.assertIn("client", modes, agent.id)
-            if agent.id == "gemini_agy":
-                self.assertFalse(modes["cli"].supports_config, agent.id)
-                self.assertFalse(modes["client"].supports_config, agent.id)
-            else:
-                self.assertTrue(modes["cli"].supports_config, agent.id)
+            self.assertTrue(modes["cli"].supports_config, agent.id)
+            if agent.id in installer.AGENTS_WITH_OFFICIAL_CLIENT:
+                self.assertIn("client", modes, agent.id)
                 self.assertTrue(modes["client"].supports_config, agent.id)
+            else:
+                self.assertNotIn("client", modes, agent.id)
+        self.assertEqual(installer.AGENTS_WITH_OFFICIAL_CLIENT, {"codex", "claude_code", "gemini_agy"})
+        self.assertEqual(installer.CLI_ONLY_DELIVERY_AGENTS, {"openclaw", "hermes"})
 
     def test_non_codex_agents_have_complete_direct_conversation_playbooks(self) -> None:
         for agent_id in ("claude_code", "openclaw", "hermes"):
             playbook = installer.agent_delivery_playbook(agent_id)
             self.assertEqual(playbook.agent_id, agent_id)
             self.assertTrue(playbook.cli_supported)
-            self.assertTrue(playbook.client_supported)
+            self.assertEqual(playbook.client_supported, agent_id in installer.AGENTS_WITH_OFFICIAL_CLIENT)
             self.assertTrue(playbook.skip_third_party_channels)
             self.assertIn("对话", playbook.customer_goal)
             expected_base = "https://aitokenapi.cc" if agent_id == "claude_code" else "https://aitokenapi.cc/v1"
@@ -69,8 +71,10 @@ class AgentPlaybookTests(unittest.TestCase):
                 text = "\n".join(plan)
                 self.assertIn(agent.id, text)
                 if agent.id == "gemini_agy":
-                    self.assertIn("配置待开发", text)
-                    self.assertIn("Google 账号自行登录", text)
+                    self.assertIn("https://aitokenapi.cc", text)
+                    self.assertIn("gpt-5.4", text)
+                    self.assertIn("第三方通道默认跳过", text)
+                    self.assertIn("最小对话验证", text)
                     self.assertNotIn("sk-test-secret-123456", text)
                 else:
                     self.assertIn("https://aitokenapi.cc/v1", text)
@@ -81,15 +85,57 @@ class AgentPlaybookTests(unittest.TestCase):
                 self.assertNotIn("微信", text)
                 self.assertNotIn("Telegram", text)
 
-    def test_gemini_agy_is_install_only_and_not_complete_delivery(self) -> None:
+    def test_gemini_agy_full_config_chain_targets_panghu_gateway(self) -> None:
         gemini = next(agent for agent in installer.AGENTS if agent.id == "gemini_agy")
 
         self.assertEqual(gemini.verify_command, ("agy", "--version"))
-        self.assertFalse(installer.apply_agent_config(gemini, "cli", "sk-test-secret-123456", "gpt-5.4", lambda _msg: None))
-        self.assertIn("配置待开发", installer.agent_dialogue_probe_command_text(gemini, "gpt-5.4"))
-        ok, message = installer.run_agent_dialogue_probe(gemini, "cli", "gpt-5.4")
+
+        env_text = installer.build_gemini_agy_env("", "sk-test-secret-123456", "gpt-5.4")
+        self.assertIn(f"GOOGLE_GEMINI_BASE_URL={installer.DEFAULT_BASE_URL}", env_text)
+        self.assertIn("GEMINI_API_KEY=sk-test-secret-123456", env_text)
+        self.assertIn("GEMINI_MODEL=gpt-5.4", env_text)
+
+        merged = installer.build_gemini_agy_env(
+            "# user comment\nOTHER_TOOL_FLAG=1\nGEMINI_API_KEY=old-key\n",
+            "sk-test-secret-123456",
+            "gpt-5.4",
+        )
+        self.assertIn("# user comment", merged)
+        self.assertIn("OTHER_TOOL_FLAG=1", merged)
+        self.assertIn("GEMINI_API_KEY=sk-test-secret-123456", merged)
+        self.assertNotIn("old-key", merged)
+
+        command = installer.agent_dialogue_probe_command("gemini_agy", "gpt-5.4")
+        self.assertEqual(command[0], "agy")
+        self.assertIn("gpt-5.4", command)
+        self.assertIn(installer.AGENT_DIALOGUE_PROBE_PROMPT, command)
+
+        command_text = installer.agent_dialogue_probe_command_text(gemini, "gpt-5.4")
+        self.assertIn("agy", command_text)
+        self.assertNotIn("配置待开发", command_text)
+
+    def test_client_scope_official_client_policy(self) -> None:
+        # 用户决策（修正版）：官方有客户端的做真客户端交付；没有的 client scope 不适用
+        hermes = next(agent for agent in installer.AGENTS if agent.id == "hermes")
+        ok, message = installer.verify_agent_client_scope(hermes, "client")
         self.assertFalse(ok)
-        self.assertIn("配置待开发", message)
+        self.assertIn("只销售 CLI 交付", message)
+
+        claude = next(agent for agent in installer.AGENTS if agent.id == "claude_code")
+        with patch.object(installer, "agent_client_status", return_value=(False, "未在常见安装位置检测到")):
+            ok, message = installer.verify_agent_client_scope(claude, "client")
+        self.assertFalse(ok)
+        self.assertIn("未检测到", message)
+
+        with patch.object(installer, "agent_client_status", return_value=(True, "Claude Desktop：C:/fake/claude.exe")):
+            ok, message = installer.verify_agent_client_scope(claude, "client")
+        self.assertTrue(ok)
+        self.assertIn("验收矩阵", message)
+
+        gemini = next(agent for agent in installer.AGENTS if agent.id == "gemini_agy")
+        with patch.object(installer, "agent_client_status", return_value=(True, "Antigravity：/Applications/Antigravity.app")):
+            ok, _message = installer.verify_agent_client_scope(gemini, "client")
+        self.assertTrue(ok)
 
     def test_claude_code_install_prefers_official_native_quickstart_entry(self) -> None:
         calls = []

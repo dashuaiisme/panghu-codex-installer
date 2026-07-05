@@ -8,7 +8,7 @@
 
 ## 1. 项目边界
 
-本项目是独立的客户侧桌面工具，正式名称为“胖虎AI客户端”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上进入一站式 AI 客户端服务流程：配置已接入完整链路的 Agent，打开胖虎AI中转站/网站入口，查看充值购买、增值业务、手机号/短信接码、GPT 会员服务、连接通讯软件和代理中心等服务端入口。Gemini / agy 当前只保留官方入口和待接入状态。
+本项目是独立的客户侧桌面工具，正式名称为“胖虎AI客户端”。它的职责是让客户登录胖虎AI账号后，在 Windows 或 Mac 上进入一站式 AI 客户端服务流程：配置已接入完整链路的 Agent，打开胖虎AI中转站/网站入口，查看充值购买、增值业务、手机号/短信接码、GPT 会员服务、连接通讯软件和代理中心等服务端入口。五个 Agent（Codex、ClaudeCode、OpenClaw、Hermes、Gemini / agy）均已接入完整配置链路。
 
 本项目不是“胖虎AI中转站”的子项目；相反，胖虎AI客户端是客户侧主产品和统一入口。胖虎AI中转站在客户端体系中只作为 API 网关分支服务承接，负责 API Token、余额扣费、模型调用、用量记录、模型价格、网关侧充值记账和必要的 token 返佣。手机接码、Plus 充值 / Plus 订阅、连接通讯软件和代理中心同样作为客户端内的功能区或分支服务接入。
 
@@ -84,7 +84,7 @@ https://aitokenapi.cc/deployer/latest.json
 | ClaudeCode | 覆盖官方 CLI 和客户端入口；写入 `~/.claude/settings.json` 的 `env`，配置 `ANTHROPIC_BASE_URL=https://aitokenapi.cc`、`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 和模型，并用 `claude --model <模型> -p <中文验收提示>` 最小中文对话验收。注意 Claude Code 会自行拼接 `/v1/messages`，这里不能写成 `/v1`，否则会变成 `/v1/v1/messages`。当前只读检测到 CLI，但独立客户端形态未稳定确认 |
 | OpenClaw | 覆盖官方 CLI 和 Hub/客户端入口；安装优先使用官方 npm 包 `openclaw@latest`，写入 `~/.openclaw/openclaw.json` 的 `models.providers.panghuai` 自定义 OpenAI-compatible 提供商（`baseUrl=https://aitokenapi.cc/v1`、`api=openai-completions`、`apiKey=买家 Key`），并用 `openclaw infer model run --model panghuai/<模型> --prompt ... --json` 最小中文对话验收。未检测到 CLI、`openclaw config validate` 未通过或最小对话失败时，不能声明完整交付 |
 | Hermes | 覆盖官方 CLI 和客户端入口；按官方文档写入 Hermes Home 下的 `config.yaml` 与 `.env`，配置 `custom_providers.panghuai`、`model.provider=custom:panghuai`、`PANGHUAI_API_KEY`，并用 `hermes --provider custom:panghuai --model <模型> -z <中文验收提示>` 最小中文对话验收。当前只读检测到 CLI，但独立客户端形态未稳定确认 |
-| Gemini / agy | 只保留 Google Antigravity 官方 CLI 和客户端入口；配置功能待开发，默认通过 Google 账号自行登录，不写入胖虎AI API Key 或网关配置，未接入前不算完整交付 |
+| Gemini / agy | 覆盖 Google Antigravity（agy）官方 CLI 和客户端入口；写入 `~/.gemini/.env` 的 `GOOGLE_GEMINI_BASE_URL=https://aitokenapi.cc`（Gemini 格式服务根地址，不带 `/v1`）、`GEMINI_API_KEY=买家 Key`、`GEMINI_MODEL=<模型>`，并用 `agy -m <模型> -p <中文验收提示>` 最小中文对话验收。中转站按 `x-goog-api-key` 自动识别 Gemini 格式。未检测到 CLI 或最小对话失败时，不能声明完整交付 |
 
 当前状态说明：
 
@@ -579,7 +579,7 @@ python scripts\agent_delivery_acceptance.py --run-dialogue --isolated-config-fro
 Remove-Item Env:\PANGHU_AGENT_ACCEPTANCE_API_KEY
 ```
 
-报告中 Codex、ClaudeCode/CC、OpenClaw、Hermes 的最小中文对话必须为 `pass` 才能计入完整交付；Gemini / agy 当前只保留官方安装入口，报告为 `not_supported` 或“配置待开发”时是预期状态，不能包装成完整配置交付。
+报告中 Codex、ClaudeCode/CC、OpenClaw、Hermes、Gemini / agy 的最小中文对话必须为 `pass` 才能计入完整交付；五个 Agent 使用同一门控，任何一个未通过都不能包装成完整配置交付。
 
 商业合同离线验收：
 
@@ -685,7 +685,7 @@ python scripts\commercial_release_acceptance.py --with-exe-self-test --deep-scan
 
 后端合约模拟器、商业流程验收脚本、商业发布验收脚本、签名脚本、维护手册和测试用例属于内部验收面，不属于客户 App 运行面。它们可以作为本地和 CI 验收依据，但不得进入客户包；如果 `packaged_artifact_contents.internal_file_hits` 命中这些文件，必须重包并排查打包规则。
 
-报告里的 `non_codex_full_config_delivery_found` 必须为 `false`。该扫描用于防止 ClaudeCode、OpenClaw、Hermes 等 Agent 在未完成配置写入、启动检测、最小对话验证前，被主程序静态包装成无条件完整付费交付；Gemini / agy 未接入前也只能显示官方入口或待接入状态。真实交付状态必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准；矩阵未通过时必须 fail 配置会话、不扣次。
+报告里的 `non_codex_full_config_delivery_found` 必须为 `false`。该扫描用于防止 ClaudeCode、OpenClaw、Hermes、Gemini / agy 等 Agent 在未完成配置写入、启动检测、最小对话验证前，被主程序静态包装成无条件完整付费交付。真实交付状态必须以部署后生成的 `胖虎AI-Agent功能验收矩阵.txt` 为准；矩阵未通过时必须 fail 配置会话、不扣次。
 
 报告里的 `communication_link_real_delivery_claim_found` 必须为 `false`。该扫描用于防止客户包主程序把连接通讯软件写成客户端可自行声明真实交付完成；连接通讯软件最终交付只能以服务端真实验收记录为准，本地状态、离线报告或 mock 守卫不能替代真实平台回调、Agent Runtime Adapter、支付和账本闭环。
 

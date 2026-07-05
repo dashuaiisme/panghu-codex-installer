@@ -2,6 +2,7 @@ import base64
 import http.cookiejar
 import hashlib
 import json
+from datetime import datetime
 import os
 import platform
 import re
@@ -11,6 +12,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import queue
 import threading
 import time
 import tkinter as tk
@@ -113,12 +115,16 @@ except Exception:  # pragma: no cover - optional dependency for embedded custome
 
 
 APP_NAME = "胖虎AI客户端"
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 HTTP_USER_AGENT = f"PanghuAI-Client/{APP_VERSION}"
-DEFAULT_BASE_URL = "https://aitokenapi.cc"
+# 本地联调开关（仅开发/集成测试用）：设置 PANGHU_DEV_BASE_URL_OVERRIDE 可将
+# 全部服务端地址指向本地联调网关。生产构建不设置此环境变量，行为不变；
+# 启动时若覆盖生效会在日志和窗口标题打出醒目提示，防止误用。
+PANGHU_DEV_BASE_URL_OVERRIDE = os.environ.get("PANGHU_DEV_BASE_URL_OVERRIDE", "").strip().rstrip("/")
+DEFAULT_BASE_URL = PANGHU_DEV_BASE_URL_OVERRIDE or "https://aitokenapi.cc"
 DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
-CODEX_BASE_URL = "https://aitokenapi.cc/v1"
+CODEX_BASE_URL = f"{DEFAULT_BASE_URL}/v1"
 CLAUDE_CODE_BASE_URL = DEFAULT_BASE_URL
 TEMP_OPENAI_ACCESS_SECONDS = 600
 TEMP_OPENAI_ACCESS_MAX_SECONDS = 600
@@ -130,6 +136,15 @@ def empty_flow_logs() -> dict[int, list]:
 
 
 def load_commercial_manifest_public_key() -> str:
+    # 本地联调开关（仅开发用）：src/commercial_manifest_public_key.py 是构建
+    # 注入的生成文件，会遮蔽 PYTHONPATH；联调时用环境变量显式指定测试公钥
+    # PEM 文件。生产构建不设置此变量，行为不变。
+    dev_override_file = os.environ.get("PANGHU_DEV_MANIFEST_PUBLIC_KEY_FILE", "").strip()
+    if dev_override_file:
+        try:
+            return Path(dev_override_file).read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
     try:
         from commercial_manifest_public_key import PUBLIC_KEY_PEM
     except Exception:
@@ -507,35 +522,33 @@ AGENTS = (
     AgentSpec(
         id="openclaw",
         name="OpenClaw",
-        description="OpenClaw Agent，优先走官方在线安装与官方客户端入口。",
+        description="OpenClaw Agent，官方未提供客户端安装，只做 CLI 交付。",
         verify_command=("openclaw", "--version"),
         modes=(
             AgentMode("cli", "CLI", "使用 OpenClaw 官方在线脚本安装，并写入胖虎AI网关配置。", supports_config=True),
-            AgentMode("client", "客户端", "安装或打开 OpenClaw 官方 Hub/客户端，并按胖虎AI网关配置验收。", supports_config=True),
         ),
         config_note="默认跳过 QQ/微信/TG 等第三方通道，只配置最短可用对话链路。",
     ),
     AgentSpec(
         id="hermes",
         name="Hermes",
-        description="Nous Research Hermes Agent，优先走官方在线安装。",
+        description="Nous Research Hermes Agent，官方未提供客户端安装，只做 CLI 交付。",
         verify_command=("hermes", "--version"),
         modes=(
             AgentMode("cli", "CLI", "使用 Hermes 官方在线安装入口，并写入胖虎AI网关配置。", supports_config=True),
-            AgentMode("client", "客户端", "安装或打开 Hermes 官方客户端入口，并按胖虎AI网关配置验收。", supports_config=True),
         ),
         config_note="默认跳过 QQ/微信/TG 等第三方通道，只配置最短可用对话链路。",
     ),
     AgentSpec(
         id="gemini_agy",
         name="Gemini / agy",
-        description="Google Gemini / Antigravity Agent，本版只保留官方 CLI 与客户端入口。",
+        description="Google Antigravity（agy）Agent，写入胖虎AI网关 Gemini 格式配置，覆盖 CLI 与官方客户端入口。",
         verify_command=("agy", "--version"),
         modes=(
-            AgentMode("cli", "CLI", "安装 Google Antigravity CLI；默认通过 Google 账号自行登录。", supports_config=False),
-            AgentMode("client", "客户端", "打开 Google Antigravity 官方入口；配置功能待开发。", supports_auto_install=False, supports_config=False),
+            AgentMode("cli", "CLI", "安装 Google Antigravity CLI，并写入胖虎AI网关 Gemini 格式配置。", supports_config=True),
+            AgentMode("client", "客户端", "打开 Google Antigravity 官方入口；配置与 CLI 共用同一环境文件。", supports_auto_install=False, supports_config=True),
         ),
-        config_note="配置待开发：暂不写入胖虎AI API Key 或网关配置，客户通过 Google 账号自行登录。",
+        config_note="写入 ~/.gemini/.env 的 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY、GEMINI_MODEL，消耗胖虎AI额度。",
     ),
 )
 
@@ -568,7 +581,7 @@ AGENT_DELIVERY_PLAYBOOKS = {
     "openclaw": AgentDeliveryPlaybook(
         agent_id="openclaw",
         cli_supported=True,
-        client_supported=True,
+        client_supported=False,
         skip_third_party_channels=True,
         customer_goal="安装和配置后，买家可以直接打开 OpenClaw 对话。",
         config_commands=(
@@ -581,7 +594,7 @@ AGENT_DELIVERY_PLAYBOOKS = {
     "hermes": AgentDeliveryPlaybook(
         agent_id="hermes",
         cli_supported=True,
-        client_supported=True,
+        client_supported=False,
         skip_third_party_channels=True,
         customer_goal="安装和配置后，买家可以直接打开 Hermes 对话。",
         config_commands=(
@@ -596,12 +609,13 @@ AGENT_DELIVERY_PLAYBOOKS = {
         cli_supported=True,
         client_supported=True,
         skip_third_party_channels=True,
-        customer_goal="本版只保留 Gemini / agy 官方安装入口；客户通过 Google 账号自行登录。",
+        customer_goal="安装和配置后，买家可以直接打开 Gemini / agy 对话。",
         config_commands=(
-            "配置待开发：不写入胖虎AI API Key。",
-            "配置待开发：不写入胖虎AI网关或模型。",
+            f"写入 ~/.gemini/.env: GOOGLE_GEMINI_BASE_URL={DEFAULT_BASE_URL}",
+            "写入 ~/.gemini/.env: GEMINI_API_KEY=买家胖虎AI API Key",
+            f"写入 ~/.gemini/.env: GEMINI_MODEL={DEFAULT_MODEL}",
         ),
-        minimal_dialogue_check="配置待开发：暂不执行胖虎AI网关最小中文对话，不计为完整交付。",
+        minimal_dialogue_check="运行 agy 最小中文对话命令，确认能通过胖虎AI网关（Gemini 格式）返回。",
     ),
 }
 
@@ -615,11 +629,16 @@ def agent_delivery_playbook(agent_id: str) -> AgentDeliveryPlaybook:
 
 def build_agent_config_plan(agent_id: str, mode_id: str, api_key: str, model: str) -> list[str]:
     if agent_id == "gemini_agy":
+        playbook = agent_delivery_playbook(agent_id)
+        masked_key = mask_key(api_key)
         return [
             f"gemini_agy/{mode_id}：使用 Google Antigravity 官方入口安装或检测。",
-            f"gemini_agy/{mode_id}：配置待开发，本版不写入胖虎AI网关、模型或 API Key。",
-            f"gemini_agy/{mode_id}：客户通过 Google 账号自行登录。",
-            f"gemini_agy/{mode_id}：未接入胖虎AI网关最小中文对话验收，不计为完整交付。",
+            f"gemini_agy/{mode_id}：写入胖虎AI网关（Gemini 格式）{DEFAULT_BASE_URL}。",
+            f"gemini_agy/{mode_id}：写入模型 {model}。",
+            f"gemini_agy/{mode_id}：写入买家胖虎AI API Key {masked_key}。",
+            f"gemini_agy/{mode_id}：第三方通道默认跳过。",
+            f"gemini_agy/{mode_id}：{('；'.join(playbook.config_commands))}",
+            f"gemini_agy/{mode_id}：最小对话验证：{playbook.minimal_dialogue_check}",
         ]
     playbook = agent_delivery_playbook(agent_id)
     masked_key = mask_key(api_key)
@@ -1418,17 +1437,54 @@ def create_codex_shortcuts(log) -> None:
         log(f"Codex 快捷方式创建失败：{output}")
 
 
+def _detect_desktop_app(candidates: list[Path], app_name: str) -> tuple[bool, str]:
+    for path in candidates:
+        if not str(path):
+            continue
+        try:
+            if path.exists():
+                return True, f"{app_name}：{path}"
+            matches = sorted(path.parent.glob(path.name)) if any(ch in path.name for ch in "*?[") else []
+            if matches:
+                return True, f"{app_name}：{matches[-1]}"
+        except OSError:
+            continue
+    return False, f"{app_name} 未在常见安装位置检测到。"
+
+
+def claude_desktop_client_status() -> tuple[bool, str]:
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        Path(local_app_data) / "AnthropicClaude" / "claude.exe" if local_app_data else Path(""),
+        Path(local_app_data) / "AnthropicClaude" / "app-*" / "claude.exe" if local_app_data else Path(""),
+        Path(local_app_data) / "Programs" / "Claude" / "Claude.exe" if local_app_data else Path(""),
+        Path("/Applications/Claude.app"),
+        Path.home() / "Applications" / "Claude.app",
+    ]
+    return _detect_desktop_app(candidates, "Claude Desktop 官方客户端")
+
+
+def antigravity_client_status() -> tuple[bool, str]:
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        Path(local_app_data) / "Programs" / "Antigravity" / "Antigravity.exe" if local_app_data else Path(""),
+        Path(local_app_data) / "Antigravity" / "Antigravity.exe" if local_app_data else Path(""),
+        Path("/Applications/Antigravity.app"),
+        Path.home() / "Applications" / "Antigravity.app",
+        Path.home() / ".antigravity",
+    ]
+    return _detect_desktop_app(candidates, "Google Antigravity 官方客户端")
+
+
 def agent_client_status(agent: AgentSpec) -> tuple[bool, str]:
     if agent.id == "codex":
         return codex_app_package_exists()
     if agent.id == "claude_code":
-        return False, "ClaudeCode 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
-    if agent.id == "openclaw":
-        return False, "OpenClaw 当前按官方 CLI/Hub 入口检测，未发现可稳定识别的独立客户端包。"
-    if agent.id == "hermes":
-        return False, "Hermes 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
+        return claude_desktop_client_status()
     if agent.id == "gemini_agy":
-        return False, "Gemini / agy 当前按 Google Antigravity 官方入口检测，未发现可稳定识别的独立客户端包。"
+        return antigravity_client_status()
+    if agent.id in CLI_ONLY_DELIVERY_AGENTS:
+        return False, f"{agent.name} 官方未提供客户端安装，本产品只销售 CLI 交付。"
     return False, "未配置客户端检测规则。"
 
 
@@ -2085,6 +2141,34 @@ def execute_commercial_api_with_trusted_certs(request, timeout: int = 20) -> tup
     return execute_commercial_api_request(request, trusted_urlopen, timeout=timeout)
 
 
+# 服务端（new-api）错误 message 为英文原文，客户可见处统一映射为中文；
+# 未收录的原文原样透传，不做猜测性翻译。
+SERVER_MESSAGE_ZH_MAP = {
+    "username or password is incorrect, or user has been banned": "账号或密码错误，或该账号已被封禁。",
+    "username or password is incorrect": "账号或密码错误。",
+    "user has been banned": "该账号已被封禁，请联系客服。",
+    "invalid credentials": "账号或密码错误。",
+    "too many requests": "请求过于频繁，请稍后再试。",
+    "email address verification failed": "邮箱验证失败。",
+    "captcha verification failed": "人机验证失败，请稍后再试。",
+    "turnstile verification failed": "人机验证失败，请稍后再试。",
+}
+
+
+def localize_server_message(message) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return text
+    key = text.rstrip("。.!？?").strip().lower()
+    mapped = SERVER_MESSAGE_ZH_MAP.get(key)
+    if mapped:
+        return mapped
+    for english, chinese in SERVER_MESSAGE_ZH_MAP.items():
+        if english in key:
+            return chinese
+    return text
+
+
 def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.CookieJar) -> tuple[bool, str, dict]:
     if not username.strip() or not password:
         return False, "请输入胖虎AI账号和密码。", {}
@@ -2109,7 +2193,7 @@ def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.Cook
         return False, f"登录失败：{exc}", {}
 
     if not payload.get("success"):
-        return False, str(payload.get("message") or "账号或密码错误。"), {}
+        return False, localize_server_message(payload.get("message")) or "账号或密码错误。", {}
     data = payload.get("data") or {}
     return True, "登录成功。", data
 
@@ -2139,7 +2223,7 @@ def activate_deployer(user: dict, cookie_jar: http.cookiejar.CookieJar) -> tuple
     except Exception as exc:
         return False, f"部署授权失败：{exc}", {}
     if not payload.get("success"):
-        return False, str(payload.get("message") or "部署授权被拒绝。"), {}
+        return False, localize_server_message(payload.get("message")) or "部署授权被拒绝。", {}
     data = payload.get("data") or {}
     token = str(data.get("token") or "")
     if not token:
@@ -2357,6 +2441,7 @@ def commercial_api_request_with_auth(
             CommercialApiContract(DEFAULT_BASE_URL),
             order_id=str(kwargs["order_id"]),
             buyer_user_id=contexts.target_buyer.user_id,
+            operator_user_id=contexts.operator.user_id,
         )
     elif action == "entitlement_query":
         request = build_entitlement_query_request(
@@ -3195,10 +3280,12 @@ def open_url(
     res = open_customer_page(url, cookie_jar=cookie_jar, log=log, storage_path=storage_path)
     import sys
     if res.method == "external_browser" and res.title != "外部页面" and not ("pytest" in sys.modules or "unittest" in sys.modules):
-        try:
-            messagebox.showwarning("警告", "该链接不属于胖虎AI客户内置网站白名单，正在使用系统默认浏览器打开。")
-        except Exception:
-            pass
+        # webview 模式无 Tk mainloop，messagebox 不可用；走调用方提供的 log 回调提示。
+        if log:
+            try:
+                log("该链接不属于胖虎AI客户内置网站白名单，正在使用系统默认浏览器打开。")
+            except Exception:
+                pass
     return res
 
 
@@ -4203,6 +4290,422 @@ def install_hermes_config(api_key: str, model: str, log) -> bool:
     return True
 
 
+def gemini_agy_home_path() -> Path:
+    return Path.home() / ".gemini"
+
+
+def gemini_agy_env_path() -> Path:
+    return gemini_agy_home_path() / ".env"
+
+
+def build_gemini_agy_env(existing_text: str, api_key: str, model: str) -> str:
+    managed = {
+        "GOOGLE_GEMINI_BASE_URL": DEFAULT_BASE_URL,
+        "GEMINI_API_KEY": api_key.strip(),
+        "GEMINI_MODEL": model.strip(),
+    }
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw_line in (existing_text or "").splitlines():
+        stripped = raw_line.strip()
+        key = ""
+        if "=" in stripped and not stripped.startswith("#"):
+            key = stripped.split("=", 1)[0].strip()
+        if key in managed:
+            if key not in seen:
+                lines.append(f"{key}={managed[key]}")
+                seen.add(key)
+            continue
+        lines.append(raw_line)
+    for key, value in managed.items():
+        if key not in seen:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines).strip() + "\n"
+
+
+def install_gemini_agy_config(api_key: str, model: str, log) -> bool:
+    if not api_key.strip():
+        raise ValueError("请先输入胖虎AI API Key。")
+    if not model.strip():
+        raise ValueError("模型不能为空。")
+
+    env_path = gemini_agy_env_path()
+    existed_before = env_path.exists()
+    backup = backup_file(env_path)
+    if backup:
+        log(f"已备份 Gemini / agy 环境配置：{backup}")
+    else:
+        log(f"将创建 Gemini / agy 环境配置：{env_path}")
+
+    try:
+        existing_text = env_path.read_text(encoding="utf-8") if existed_before else ""
+        write_text(env_path, build_gemini_agy_env(existing_text, api_key, model))
+    except Exception:
+        restore_backup(env_path, backup, existed_before)
+        raise
+
+    log(f"已写入 Gemini / agy 环境配置：{env_path}")
+    log(f"Gemini / agy 网关（Gemini 格式）：{DEFAULT_BASE_URL}")
+    log(f"Gemini / agy 模型：{model.strip()}")
+    log(f"Gemini / agy Key：{mask_key(api_key.strip())}")
+    log("Gemini / agy 提示：请完全退出 agy 后重新打开，再执行最小中文对话验收。")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 统一配置快照层（对标 cc-switch Profile 机制 / Codex++ 官方切回，2026-07-03 方案 P0）
+# - 每个 Agent 独立快照目录；写配置前自动快照；保留最近 SNAPSHOT_KEEP_COUNT 份。
+# - "original" 初始快照在首次接管前留存，永不清理，用于一键恢复官方初始配置。
+# - 回滚前先做 pre-restore 快照，保证"回滚的回滚"可行。
+# ---------------------------------------------------------------------------
+
+SNAPSHOT_KEEP_COUNT = 10  # 快照保留份数（用户决策）
+ORIGINAL_SNAPSHOT_NAME = "original"
+
+
+def panghu_snapshot_root() -> Path:
+    override = os.environ.get("PANGHU_SNAPSHOT_ROOT")
+    if override:
+        return Path(override)
+    return Path.home() / ".panghu_config_snapshots"
+
+
+def agent_config_target_paths(agent_id: str) -> list[Path]:
+    if agent_id == "codex":
+        return [codex_home() / "config.toml", codex_auth_path()]
+    if agent_id == "claude_code":
+        return [claude_code_settings_path()]
+    if agent_id == "openclaw":
+        return [openclaw_config_path()]
+    if agent_id == "hermes":
+        return [hermes_config_path(), hermes_env_path()]
+    if agent_id == "gemini_agy":
+        return [gemini_agy_env_path()]
+    raise ValueError(f"未知 Agent：{agent_id}")
+
+
+def _agent_snapshot_dir(agent_id: str) -> Path:
+    return panghu_snapshot_root() / agent_id
+
+
+def _prune_config_snapshots(agent_id: str) -> None:
+    base = _agent_snapshot_dir(agent_id)
+    if not base.exists():
+        return
+    snapshots = sorted(
+        [item for item in base.iterdir() if item.is_dir() and item.name != ORIGINAL_SNAPSHOT_NAME],
+        key=lambda item: item.name,
+        reverse=True,
+    )
+    for stale in snapshots[SNAPSHOT_KEEP_COUNT:]:
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+def create_config_snapshot(agent_id: str, reason: str, log=None, name: str | None = None) -> Path:
+    targets = agent_config_target_paths(agent_id)
+    snapshot_name = name or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    snapshot_dir = _agent_snapshot_dir(agent_id) / snapshot_name
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    saved: dict[str, str] = {}
+    absent: list[str] = []
+    for target in targets:
+        if target.exists():
+            shutil.copy2(target, snapshot_dir / target.name)
+            saved[target.name] = str(target)
+        else:
+            absent.append(str(target))
+    meta = {
+        "agent_id": agent_id,
+        "reason": reason,
+        "created_at": datetime.now().isoformat(),
+        "files": saved,
+        "absent": absent,
+    }
+    (snapshot_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    if name != ORIGINAL_SNAPSHOT_NAME:
+        _prune_config_snapshots(agent_id)
+    if log:
+        log(f"已创建 {agent_id} 配置快照：{snapshot_name}（{reason}）")
+    return snapshot_dir
+
+
+def ensure_original_config_snapshot(agent_id: str, log=None) -> Path:
+    snapshot_dir = _agent_snapshot_dir(agent_id) / ORIGINAL_SNAPSHOT_NAME
+    if (snapshot_dir / "meta.json").exists():
+        return snapshot_dir
+    return create_config_snapshot(agent_id, "接管前原始配置", log=log, name=ORIGINAL_SNAPSHOT_NAME)
+
+
+def list_config_snapshots(agent_id: str) -> list[dict]:
+    base = _agent_snapshot_dir(agent_id)
+    if not base.exists():
+        return []
+    snapshots: list[dict] = []
+    for item in sorted(base.iterdir(), key=lambda entry: entry.name, reverse=True):
+        meta_path = item / "meta.json"
+        if not item.is_dir() or not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        snapshots.append(
+            {
+                "name": item.name,
+                "reason": str(meta.get("reason") or ""),
+                "created_at": str(meta.get("created_at") or ""),
+                "file_count": len(meta.get("files") or {}),
+                "is_original": item.name == ORIGINAL_SNAPSHOT_NAME,
+            }
+        )
+    return snapshots
+
+
+def restore_config_snapshot(agent_id: str, snapshot_name: str, log) -> bool:
+    snapshot_dir = _agent_snapshot_dir(agent_id) / snapshot_name
+    meta_path = snapshot_dir / "meta.json"
+    if not meta_path.exists():
+        raise ValueError(f"快照不存在：{agent_id}/{snapshot_name}")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    create_config_snapshot(agent_id, f"回滚到 {snapshot_name} 前自动快照", log=log)
+    for file_name, original_path in (meta.get("files") or {}).items():
+        source = snapshot_dir / file_name
+        target = Path(original_path)
+        if not source.exists():
+            raise ValueError(f"快照文件缺失：{source}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        log(f"已恢复 {agent_id} 配置文件：{target}")
+    for absent_path in meta.get("absent") or []:
+        target = Path(absent_path)
+        if target.exists():
+            target.unlink()
+            log(f"已移除快照时不存在的文件：{target}")
+    log(f"{agent_id} 已回滚到快照 {snapshot_name}；请完全退出并重新打开对应 Agent 后生效。")
+    return True
+
+
+def restore_original_config(agent_id: str, log) -> bool:
+    """一键恢复官方初始配置：回到本工具首次接管前的状态（交付回收/客户自修复场景）。"""
+    return restore_config_snapshot(agent_id, ORIGINAL_SNAPSHOT_NAME, log)
+
+
+# ---------------------------------------------------------------------------
+# 配置漂移巡检（对标 cc-switch 漂移检测，2026-07-03 方案 P0）
+# 比对各 Agent 当前配置与"胖虎最后一次写入的期望值"，分级：
+#   red  = 网关地址被改（影响计费/把买家切走），需一键修复
+#   yellow = 模型被改（影响体验/额度），提示
+#   grey = 无关字段变化，忽略
+# key 只比指纹（mask），不落明文。
+# ---------------------------------------------------------------------------
+
+DRIFT_RED = "red"
+DRIFT_YELLOW = "yellow"
+DRIFT_OK = "ok"
+
+
+def _read_text_safe(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+    except OSError:
+        return ""
+
+
+def _load_json_safe(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def agent_expected_gateway(agent_id: str) -> str:
+    if agent_id == "claude_code":
+        return CLAUDE_CODE_BASE_URL
+    if agent_id in {"codex", "openclaw", "hermes"}:
+        return CODEX_BASE_URL
+    if agent_id == "gemini_agy":
+        return DEFAULT_BASE_URL
+    raise ValueError(f"未知 Agent：{agent_id}")
+
+
+def inspect_agent_config_drift(agent_id: str, expected_model: str = DEFAULT_MODEL) -> dict:
+    """检查单个 Agent 的配置漂移。返回 {agent_id, level, findings[], repairable}。
+
+    findings 每项 {field, severity, detail}。不返回任何明文 Key。
+    """
+    findings: list[dict] = []
+    expected_gateway = agent_expected_gateway(agent_id)
+    configured = False
+
+    def add(field: str, severity: str, detail: str) -> None:
+        findings.append({"field": field, "severity": severity, "detail": detail})
+
+    if agent_id == "codex":
+        config_text = _read_text_safe(codex_home() / "config.toml")
+        auth = _load_json_safe(codex_auth_path())
+        configured = bool(config_text) or bool(auth)
+        if configured:
+            if CODEX_BASE_URL not in config_text and "aitokenapi.cc" not in config_text:
+                add("base_url", DRIFT_RED, "Codex config.toml 未指向胖虎AI网关")
+            if expected_model and expected_model not in config_text:
+                add("model", DRIFT_YELLOW, f"Codex 未使用推荐模型 {expected_model}")
+            if not str(auth.get("OPENAI_API_KEY") or "").strip():
+                add("api_key", DRIFT_RED, "Codex auth.json 缺少 API Key")
+    elif agent_id == "claude_code":
+        settings = _load_json_safe(claude_code_settings_path())
+        env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+        configured = bool(env)
+        if configured:
+            if str(env.get("ANTHROPIC_BASE_URL") or "") != CLAUDE_CODE_BASE_URL:
+                add("base_url", DRIFT_RED, "ClaudeCode ANTHROPIC_BASE_URL 未指向胖虎AI网关")
+            if not str(env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY") or "").strip():
+                add("api_key", DRIFT_RED, "ClaudeCode 缺少 API Key")
+            if expected_model and str(env.get("ANTHROPIC_MODEL") or "") != expected_model:
+                add("model", DRIFT_YELLOW, f"ClaudeCode 未使用推荐模型 {expected_model}")
+    elif agent_id == "openclaw":
+        config = _load_json_safe(openclaw_config_path())
+        providers = ((config.get("models") or {}).get("providers") or {})
+        panghu = providers.get("panghuai") if isinstance(providers, dict) else None
+        configured = bool(config)
+        if configured:
+            if not isinstance(panghu, dict) or str(panghu.get("baseUrl") or "") != CODEX_BASE_URL:
+                add("base_url", DRIFT_RED, "OpenClaw panghuai 提供商未指向胖虎AI网关")
+            elif not str(panghu.get("apiKey") or "").strip():
+                add("api_key", DRIFT_RED, "OpenClaw panghuai 提供商缺少 API Key")
+    elif agent_id == "hermes":
+        config_text = _read_text_safe(hermes_config_path())
+        env_text = _read_text_safe(hermes_env_path())
+        configured = bool(config_text) or bool(env_text)
+        if configured:
+            if CODEX_BASE_URL not in config_text:
+                add("base_url", DRIFT_RED, "Hermes custom_providers 未指向胖虎AI网关")
+            if "PANGHUAI_API_KEY=" not in env_text:
+                add("api_key", DRIFT_RED, "Hermes .env 缺少 PANGHUAI_API_KEY")
+    elif agent_id == "gemini_agy":
+        env_text = _read_text_safe(gemini_agy_env_path())
+        configured = bool(env_text)
+        if configured:
+            if f"GOOGLE_GEMINI_BASE_URL={DEFAULT_BASE_URL}" not in env_text:
+                add("base_url", DRIFT_RED, "Gemini/agy GOOGLE_GEMINI_BASE_URL 未指向胖虎AI网关")
+            if "GEMINI_API_KEY=" not in env_text:
+                add("api_key", DRIFT_RED, "Gemini/agy 缺少 GEMINI_API_KEY")
+            if expected_model and f"GEMINI_MODEL={expected_model}" not in env_text:
+                add("model", DRIFT_YELLOW, f"Gemini/agy 未使用推荐模型 {expected_model}")
+    else:
+        raise ValueError(f"未知 Agent：{agent_id}")
+
+    if not configured:
+        level = DRIFT_OK
+    elif any(f["severity"] == DRIFT_RED for f in findings):
+        level = DRIFT_RED
+    elif any(f["severity"] == DRIFT_YELLOW for f in findings):
+        level = DRIFT_YELLOW
+    else:
+        level = DRIFT_OK
+    return {
+        "agent_id": agent_id,
+        "configured": configured,
+        "level": level,
+        "findings": findings,
+        "repairable": level == DRIFT_RED,
+        "expected_gateway": expected_gateway,
+    }
+
+
+def inspect_all_config_drift(agent_ids: list[str] | None = None, expected_model: str = DEFAULT_MODEL) -> dict:
+    ids = agent_ids or [agent.id for agent in AGENTS]
+    reports = [inspect_agent_config_drift(agent_id, expected_model) for agent_id in ids]
+    risk_findings = detect_risk_plugins()
+    worst = DRIFT_OK
+    for report in reports:
+        if report["level"] == DRIFT_RED:
+            worst = DRIFT_RED
+            break
+        if report["level"] == DRIFT_YELLOW:
+            worst = DRIFT_YELLOW
+    if risk_findings and worst != DRIFT_RED:
+        worst = DRIFT_RED  # 风险插件在场直接升红
+    return {
+        "overall_level": worst,
+        "agents": reports,
+        "risk_plugins": [
+            {"name": finding.name, "source": finding.source, "detail": finding.detail}
+            for finding in risk_findings
+        ],
+    }
+
+
+def repair_agent_config_drift(agent_id: str, api_key: str, model: str, log) -> bool:
+    """一键修复：用当前买家 Key/模型重新写入胖虎网关配置（内部走 apply_agent_config，含快照保护）。"""
+    if not api_key.strip():
+        raise ValueError("一键修复需要当前买家的胖虎AI API Key。")
+    agent = next((item for item in AGENTS if item.id == agent_id), None)
+    if agent is None:
+        raise ValueError(f"未知 Agent：{agent_id}")
+    log(f"开始一键修复 {agent.name} 配置漂移……")
+    ok = apply_agent_config(agent, "cli", api_key, model or DEFAULT_MODEL, log)
+    if ok:
+        after = inspect_agent_config_drift(agent_id, model or DEFAULT_MODEL)
+        if after["level"] == DRIFT_RED:
+            log(f"警告：{agent.name} 修复后仍检测到红色漂移，请人工检查是否有第三方工具持续改写配置。")
+            return False
+        log(f"{agent.name} 配置漂移已修复；请完全退出并重新打开对应 Agent。")
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# 网关线路测速（对标 cc-switch 延迟测速，2026-07-03 方案 P1）
+# 对胖虎网关候选线路做轻量探测，返回延迟，为多线路自动选优打基础。
+# 线路清单默认只有主域名；服务端下发备用线路后可扩展 GATEWAY_ENDPOINT_CANDIDATES。
+# ---------------------------------------------------------------------------
+
+GATEWAY_ENDPOINT_CANDIDATES = (
+    {"id": "primary", "label": "胖虎AI主线路", "url": DEFAULT_BASE_URL},
+)
+
+
+def _measure_endpoint_latency(url: str, timeout: int = 8) -> dict:
+    import time as _time
+
+    probe_url = url.rstrip("/") + "/"
+    started = _time.monotonic()
+    try:
+        req = Request(probe_url, headers={"User-Agent": HTTP_USER_AGENT}, method="HEAD")
+        with trusted_urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+        elapsed_ms = int((_time.monotonic() - started) * 1000)
+        return {"reachable": True, "latency_ms": elapsed_ms, "status": status, "error": ""}
+    except Exception as exc:  # HEAD 不被支持时退回 GET
+        try:
+            req = Request(probe_url, headers={"User-Agent": HTTP_USER_AGENT}, method="GET")
+            with trusted_urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+            elapsed_ms = int((_time.monotonic() - started) * 1000)
+            return {"reachable": True, "latency_ms": elapsed_ms, "status": status, "error": ""}
+        except Exception as exc2:
+            return {"reachable": False, "latency_ms": None, "status": None, "error": str(exc2 or exc)}
+
+
+def measure_gateway_latency(candidates=None, timeout: int = 8) -> dict:
+    """测各候选线路延迟，返回排序结果和推荐线路（延迟最低的可达线路）。"""
+    endpoints = candidates if candidates is not None else GATEWAY_ENDPOINT_CANDIDATES
+    results = []
+    for endpoint in endpoints:
+        measured = _measure_endpoint_latency(endpoint["url"], timeout=timeout)
+        results.append({**endpoint, **measured})
+    reachable = [item for item in results if item["reachable"]]
+    reachable.sort(key=lambda item: item["latency_ms"])
+    results.sort(key=lambda item: (not item["reachable"], item["latency_ms"] if item["latency_ms"] is not None else 10**9))
+    return {
+        "endpoints": results,
+        "recommended_id": reachable[0]["id"] if reachable else None,
+        "recommended_url": reachable[0]["url"] if reachable else None,
+    }
+
+
 def agent_dialogue_probe_command(agent_id: str, model: str) -> list[str]:
     prompt = AGENT_DIALOGUE_PROBE_PROMPT
     if agent_id == "claude_code":
@@ -4216,6 +4719,9 @@ def agent_dialogue_probe_command(agent_id: str, model: str) -> list[str]:
         return ["openclaw", "infer", "model", "run", "--model", f"panghuai/{model}", "--prompt", prompt, "--json"]
     if agent_id == "hermes":
         return ["hermes", "--provider", "custom:panghuai", "--model", model, "-z", prompt]
+    if agent_id == "gemini_agy":
+        # agy CLI 只有 --model 长参（无 -m 短参，传 -m 会报 flags provided but not defined）
+        return ["agy", "--model", model, "-p", prompt]
     raise ValueError(f"未知或不支持命令验收的 Agent：{agent_id}")
 
 
@@ -4260,8 +4766,6 @@ def recent_hermes_error_summary(home: Path | None = None) -> str:
 
 
 def run_agent_dialogue_probe(agent: AgentSpec, mode_id: str, model: str) -> tuple[bool, str]:
-    if agent.id == "gemini_agy":
-        return False, "配置待开发，暂不支持自动复验命令"
     if agent.id == "codex":
         return False, "Codex 使用胖虎AI网关真实任务验证，不走外部 CLI 对话命令。"
     try:
@@ -4289,22 +4793,37 @@ def agent_mode_requires_client_scope(mode_id: str) -> bool:
     return mode_id in {"client", "both"}
 
 
+# 用户决策（2026-07-03 修正版）：官方提供客户端安装的 Agent（Codex、ClaudeCode/Claude Desktop、
+# Gemini/agy/Antigravity）做真实客户端交付：检测/安装官方客户端并按验收矩阵单独验收；
+# 官方没有客户端的（OpenClaw、Hermes）只销售 CLI 交付，不提供 client scope。
+AGENTS_WITH_OFFICIAL_CLIENT = frozenset({"codex", "claude_code", "gemini_agy"})
+CLI_ONLY_DELIVERY_AGENTS = frozenset({"openclaw", "hermes"})
+
+
+def agent_offers_client_scope(agent_id: str) -> bool:
+    return agent_id in AGENTS_WITH_OFFICIAL_CLIENT
+
+
 def verify_agent_client_scope(agent: AgentSpec, mode_id: str) -> tuple[bool, str]:
+    if agent.id in CLI_ONLY_DELIVERY_AGENTS:
+        return (
+            False,
+            f"{agent.name} 官方未提供客户端安装，本产品对该 Agent 只销售 CLI 交付；client scope 不适用。",
+        )
     client_ok, client_detail = agent_client_status(agent)
     if not client_ok:
         return (
             False,
-            f"{agent.name}/{mode_id} client scope 需要独立客户端验收；当前客户端形态未确认：{client_detail}",
+            f"{agent.name}/{mode_id} client scope 需要官方客户端；当前未检测到：{client_detail}",
         )
     return (
-        False,
-        f"{agent.name}/{mode_id} client scope 需要独立客户端验收；已检测到客户端入口，但尚未实现客户端内最小任务自动验收，不能用 CLI 探针代替。",
+        True,
+        f"{agent.name}/{mode_id} 官方客户端已检测到（{client_detail}）；"
+        "最终交付仍以客户端内最小中文任务和功能验收矩阵记录为准。",
     )
 
 
 def agent_dialogue_probe_command_text(agent: AgentSpec, model: str) -> str:
-    if agent.id == "gemini_agy":
-        return "配置待开发，请用 Google 账号自行登录进行中文对话"
     if agent.id == "codex":
         return "胖虎AI /v1/chat/completions 最小中文真实任务验证"
     try:
@@ -4315,7 +4834,10 @@ def agent_dialogue_probe_command_text(agent: AgentSpec, model: str) -> str:
 
 def _agent_mode_label(agent: AgentSpec, mode_id: str) -> str:
     mode_labels = {mode.id: mode.label for mode in agent.modes}
-    return mode_labels.get(mode_id, mode_id)
+    # CLI-only Agent 已移除 client 模式，但矩阵仍可能渲染 client scope 行；
+    # 客户可见文案回退到中文标签，不出现原始英文 mode id。
+    fallback_labels = {"cli": "CLI", "client": "客户端"}
+    return mode_labels.get(mode_id, fallback_labels.get(mode_id, mode_id))
 
 
 def _customer_status_label(status: NodeStatus) -> str:
@@ -4382,6 +4904,12 @@ def write_customer_agent_acceptance_matrix(
 
 
 def apply_agent_config(agent: AgentSpec, mode_id: str, api_key: str, model: str, log) -> bool:
+    # 统一快照层：首次接管前留存 original 初始快照；每次写配置前自动快照（保留最近 10 份）
+    try:
+        ensure_original_config_snapshot(agent.id, log)
+        create_config_snapshot(agent.id, f"写入 {mode_id} 配置前自动快照", log=log)
+    except Exception as exc:  # 快照失败不阻断配置，但必须让用户知道
+        log(f"警告：{agent.name} 配置快照创建失败（{exc}）；本次写入仍有单文件备份保护。")
     if agent.id == "codex":
         log("Codex 配置由 Codex 主配置链路写入。")
         return True
@@ -4392,8 +4920,7 @@ def apply_agent_config(agent: AgentSpec, mode_id: str, api_key: str, model: str,
     if agent.id == "hermes":
         return install_hermes_config(api_key, model, log)
     if agent.id == "gemini_agy":
-        log("Gemini / agy 配置待开发：本版不写入胖虎AI API Key、网关或模型，客户通过 Google 账号自行登录。")
-        return False
+        return install_gemini_agy_config(api_key, model, log)
     raise ValueError(f"未知 Agent：{agent.id}/{mode_id}")
 
 
@@ -4420,7 +4947,7 @@ def build_agent_setup_guide_content(selected: list[tuple[AgentSpec, str]], api_k
 4. 只有点击“双态配置”时，才需要用户重新打开 Codex 后自行登录自己的 ChatGPT 账号。
 5. 双态模式下，Codex 会保持用户自己的账号登录态，同时模型调用消耗胖虎AI API Key。本工具不代替登录、不保存 ChatGPT 账号密码。
 6. ClaudeCode/CC、OpenClaw、Hermes 都按官方 CLI 与客户端入口做安装和配置；IDE 插件形态不处理。
-7. Gemini / agy 本版只保留官方安装入口；配置待开发，默认通过 Google 账号自行登录，不计为完整交付。
+7. Gemini / agy（Google Antigravity）按官方 CLI 与客户端入口安装，写入胖虎AI网关 Gemini 格式配置；未通过最小中文对话验收前不计完整交付。
 8. OpenClaw、Hermes 等复杂第三方通道默认跳过，只走能让买家直接对话的最短可用链路。
 9. 已接入配置链路的 Agent 必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付。
 10. 本工具不会把 API Key 明文写入日志。
@@ -4489,6 +5016,7 @@ def agent_choice_help_text() -> str:
             "- Claude Code/CC：覆盖官方 CLI 和客户端入口，写入胖虎AI网关配置。",
             "- OpenClaw：覆盖官方 CLI 和 Hub/客户端入口，第三方通道默认跳过，只保留直接对话链路。",
             "- Hermes：覆盖官方 CLI 和客户端入口，第三方通道默认跳过，只保留直接对话链路。",
+            "- Gemini / agy：覆盖 Google Antigravity 官方 CLI 和客户端入口，写入胖虎AI网关 Gemini 格式配置。",
             "",
             "CLI 和客户端都要做进去；VS Code / IDE 插件形态不作为本轮交付对象。",
         ]
@@ -4627,6 +5155,8 @@ class WebviewApi:
         return {"success": True, "accepted": True, "message": message}
 
     def get_initial_state(self) -> dict:
+        # 前端加载完成后的首次全量拉取；此后才允许 Python 侧 evaluate_js 推送。
+        self.app.webview_ready = True
         is_logged = self.app.logged_in_user is not None and self.app.deployer_auth is not None
         metrics = self.app._commercial_metric_values()
         agent_center_state = self.app.current_agent_center_state()
@@ -4722,20 +5252,35 @@ class WebviewApi:
         }
 
     def login(self, username, password, remember_password=False, auto_login=False):
-        self.app.login_username.set(username)
-        self.app.login_password.set(password)
+        # 登录含网络请求（最长 20s）。必须放后台线程：
+        # 1) 网络请求不能堵 GUI 线程；
+        # 2) 关键——绝不能在 js_api 回调里同步调 evaluate_js（pywebview 会重入死锁）。
+        # 因此本方法只启线程后立刻返回，任何 log/evaluate_js 都由线程里做。
+        threading.Thread(
+            target=self._login_bridge_worker,
+            args=(username, password, bool(remember_password), bool(auto_login)),
+            daemon=True,
+        ).start()
+        return {"success": True, "message": "登录请求已提交", "pending": True}
+
+    def _login_bridge_worker(self, username, password, remember_password, auto_login):
         try:
+            self.app.login_username.set(username)
+            self.app.login_password.set(password)
+            self.app.push_webview_toast("正在登录胖虎AI，请稍候……", "running")
             ok, msg, data = login_panghuai(username, password, self.app.cookie_jar)
             self.app.log(msg)
             if not ok:
                 self.app.status.set("状态：登录失败")
-                return {"success": False, "message": msg}
+                self.app.push_webview_toast(f"登录失败：{msg}", "error")
+                return
 
             auth_ok, auth_msg, auth_data = activate_deployer(data, self.app.cookie_jar)
             self.app.log(auth_msg)
             if not auth_ok:
                 self.app.status.set("状态：部署授权失败")
-                return {"success": False, "message": auth_msg}
+                self.app.push_webview_toast(f"部署授权失败：{auth_msg}", "error")
+                return
 
             self.app.logged_in_user = data
             self.app.deployer_auth = auth_data
@@ -4761,10 +5306,10 @@ class WebviewApi:
             self.app.run_later(1200, self.app.start_auto_update_check)
             self.app.run_later(1600, self.app.start_refresh_commercial_manifest)
             self.app.sync_webview_state()
-            return {"success": True, "message": "登录成功"}
         except Exception as e:
             self.app.status.set("状态：登录错误")
-            return {"success": False, "message": str(e)}
+            self.app.log(f"登录错误：{e}")
+            self.app.push_webview_toast(f"登录错误：{e}", "error")
 
     def login_saved_account(self, username):
         target = login_account_private_entry(username)
@@ -4832,7 +5377,7 @@ class WebviewApi:
 
             self.app.status.set("状态：正在测试 API Key...")
             contexts = deployment_commercial_contexts(self.app.logged_in_user or {})
-            verify_msg = execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.app.deployer_auth)
+            verify_msg = execute_api_key_owner_verify(api_key, contexts, opener=trusted_urlopen, deployer_auth=self.app.deployer_auth)
             self.app.log(verify_msg)
 
             if skip_test:
@@ -4904,6 +5449,72 @@ class WebviewApi:
         try:
             self.app.restore_backups()
             return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    # --- 配置健康：快照 / 一键恢复 / 漂移巡检 / 一键修复 ---
+
+    def list_config_snapshots(self, agentId):
+        try:
+            return {"success": True, "snapshots": list_config_snapshots(str(agentId))}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def restore_config_snapshot(self, agentId, snapshotName):
+        try:
+            restore_config_snapshot(str(agentId), str(snapshotName), self.app.log)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def restore_original_config(self, agentId):
+        try:
+            restore_original_config(str(agentId), self.app.log)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def inspect_config_drift(self):
+        try:
+            model = self.app.model.get().strip() or DEFAULT_MODEL
+            return {"success": True, "report": inspect_all_config_drift(expected_model=model)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def repair_config_drift(self, agentId):
+        try:
+            api_key = self.app.api_key.get().strip()
+            model = self.app.model.get().strip() or DEFAULT_MODEL
+            ok = repair_agent_config_drift(str(agentId), api_key, model, self.app.log)
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def measure_gateway_latency(self):
+        try:
+            return {"success": True, "result": measure_gateway_latency()}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def get_codex_mode_status(self):
+        """一键检测当前 Codex 模式，免手动翻配置文件。"""
+        try:
+            config_text = _read_text_safe(codex_home() / "config.toml")
+            auth_text = _read_text_safe(codex_auth_path())
+            mode = detect_codex_config_mode(config_text, auth_text)
+            mode_labels = {
+                CodexConfigMode.DIRECT_API: "普通模式（走胖虎额度）",
+                CodexConfigMode.DUAL_STATE: "双态模式（保留 ChatGPT 登录态，走胖虎额度）",
+                CodexConfigMode.OFFICIAL_CHATGPT: "官方直登（走你自己的 ChatGPT 账号额度）",
+            }
+            return {
+                "success": True,
+                "configured": bool(config_text or auth_text),
+                "current_mode": mode.value if mode else None,
+                "current_mode_label": mode_labels.get(mode, "未检测到胖虎配置" if not mode else mode.value),
+                "has_chatgpt_login": has_chatgpt_auth_state(auth_text),
+                "gateway_ok": ("aitokenapi.cc" in config_text) if mode in (CodexConfigMode.DIRECT_API, CodexConfigMode.DUAL_STATE) else None,
+            }
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -5168,6 +5779,67 @@ class WebviewApi:
             return {"success": False, "message": str(e)}
 
 
+class WebviewVar:
+    """webview 模式下替代 tk.StringVar/BooleanVar/IntVar 的线程安全变量。
+
+    真机根因（2026-07-04 登录"无反应"）：webview 模式主线程阻塞在
+    webview.start()，Tk mainloop 永远不运行；此时任何 pywebview bridge
+    线程或后台线程访问 Tk 变量都会抛 RuntimeError: main thread is not
+    in main loop，导致 js_api 调用与登录后台线程集体无声失败。
+    业务界面只允许 WebView，这些变量只承担纯数据存取与 trace 回调，
+    因此改用普通线程安全对象，任何线程可读写。
+    """
+
+    def __init__(self, value=None):
+        self._lock = threading.Lock()
+        self._value = value
+        self._traces: list = []
+
+    def get(self):
+        with self._lock:
+            return self._value
+
+    def set(self, value) -> None:
+        with self._lock:
+            self._value = value
+            traces = list(self._traces)
+        for callback in traces:
+            try:
+                callback("", "", "write")
+            except Exception:
+                pass
+
+    def trace_add(self, mode: str, callback) -> str:
+        with self._lock:
+            self._traces.append(callback)
+            return f"webviewtrace{len(self._traces)}"
+
+
+class WebviewStringVar(WebviewVar):
+    def __init__(self, value: str = ""):
+        super().__init__("" if value is None else str(value))
+
+    def get(self) -> str:
+        value = super().get()
+        return "" if value is None else str(value)
+
+
+class WebviewBooleanVar(WebviewVar):
+    def __init__(self, value: bool = False):
+        super().__init__(bool(value))
+
+    def set(self, value) -> None:
+        super().set(bool(value))
+
+
+class WebviewIntVar(WebviewVar):
+    def __init__(self, value: int = 0):
+        super().__init__(int(value))
+
+    def set(self, value) -> None:
+        super().set(int(value))
+
+
 class InstallerApp:
     def __init__(self, root: tk.Tk, webview_mode: bool = False) -> None:
         if not webview_mode:
@@ -5177,6 +5849,16 @@ class InstallerApp:
         self.theme_name = load_theme_preference()
         self.webview_logs = empty_flow_logs()
         self.webview_window = None
+        # 前端就绪门闩：页面加载完成并首次拉取 get_initial_state 前，禁止任何
+        # evaluate_js 推送。evaluate_js 无超时；若与页面加载竞态（如启动时的
+        # 会话恢复线程），会永久锁死 bridge 导致窗口"未响应"。就绪前的状态与
+        # 日志都会在首次拉取时整体带给前端，不会丢失。
+        self.webview_ready = False
+        # 异步 JS 推送队列：所有 evaluate_js 一律经专用线程执行。
+        # 直接在 pywebview js_api 回调里同步 evaluate_js 会重入死锁（save_key/
+        # run_env_check 等同步 bridge 曾整窗卡死）；队列化后调用方立即返回。
+        self._js_push_queue: queue.Queue = queue.Queue()
+        threading.Thread(target=self._js_push_worker, daemon=True).start()
 
         if not getattr(self, 'webview_mode', False):
             root.title(APP_NAME)
@@ -5214,41 +5896,41 @@ class InstallerApp:
         if not getattr(self, 'webview_mode', False):
             self.root.protocol("WM_DELETE_WINDOW", self.close_app)
 
-        self.login_username = tk.StringVar()
-        self.login_password = tk.StringVar()
-        self.registration_invite_code = tk.StringVar()
-        self.remember_password = tk.BooleanVar(value=True)
-        self.auto_login = tk.BooleanVar(value=False)
-        self.buyer_product_id = tk.StringVar()
-        self.buyer_order_id = tk.StringVar()
-        self.communication_software_link_service_product_id = tk.StringVar()
-        self.communication_software_link_order_id = tk.StringVar()
-        self.communication_software_link_session_id = tk.StringVar()
-        self.communication_software_link_agent_id = tk.StringVar(value="codex")
-        self.communication_software_link_channel = tk.StringVar(value="feishu")
-        self.communication_software_link_agent_source = tk.StringVar(value="existing_local_agent")
-        self.communication_software_link_platform_account_id = tk.StringVar()
-        self.communication_software_link_platform_chat_id = tk.StringVar()
-        self.communication_software_link_gateway_mode = tk.StringVar(value="official_bot")
-        self.communication_software_link_test_prompt = tk.StringVar(value=COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT)
-        self.communication_software_link_source_event_id = tk.StringVar()
-        self.communication_software_link_inbound_message_id = tk.StringVar()
-        self.communication_software_link_outbound_message_id = tk.StringVar()
-        self.communication_software_link_response_digest = tk.StringVar()
-        self.communication_software_link_evidence_url = tk.StringVar()
-        self.login_entry_mode = tk.StringVar(value="buyer")
+        self.login_username = WebviewStringVar()
+        self.login_password = WebviewStringVar()
+        self.registration_invite_code = WebviewStringVar()
+        self.remember_password = WebviewBooleanVar(value=True)
+        self.auto_login = WebviewBooleanVar(value=False)
+        self.buyer_product_id = WebviewStringVar()
+        self.buyer_order_id = WebviewStringVar()
+        self.communication_software_link_service_product_id = WebviewStringVar()
+        self.communication_software_link_order_id = WebviewStringVar()
+        self.communication_software_link_session_id = WebviewStringVar()
+        self.communication_software_link_agent_id = WebviewStringVar(value="codex")
+        self.communication_software_link_channel = WebviewStringVar(value="feishu")
+        self.communication_software_link_agent_source = WebviewStringVar(value="existing_local_agent")
+        self.communication_software_link_platform_account_id = WebviewStringVar()
+        self.communication_software_link_platform_chat_id = WebviewStringVar()
+        self.communication_software_link_gateway_mode = WebviewStringVar(value="official_bot")
+        self.communication_software_link_test_prompt = WebviewStringVar(value=COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT)
+        self.communication_software_link_source_event_id = WebviewStringVar()
+        self.communication_software_link_inbound_message_id = WebviewStringVar()
+        self.communication_software_link_outbound_message_id = WebviewStringVar()
+        self.communication_software_link_response_digest = WebviewStringVar()
+        self.communication_software_link_evidence_url = WebviewStringVar()
+        self.login_entry_mode = WebviewStringVar(value="buyer")
         self.buyer_purchase_statuses: dict[BuyerSelfServiceNode, NodeStatus] = {}
-        self.api_key = tk.StringVar()
-        self.base_url = tk.StringVar(value=DEFAULT_BASE_URL)
-        self.model = tk.StringVar(value=DEFAULT_MODEL)
-        self.show_key = tk.BooleanVar(value=False)
-        self.skip_test = tk.BooleanVar(value=False)
-        self.open_app = tk.BooleanVar(value=True)
-        self.selected_system = tk.StringVar(value=current_system_id())
-        self.status = tk.StringVar(value="客服提示：请先登录胖虎AI账号")
-        self.step = tk.IntVar(value=1)
-        self.active_module = tk.StringVar(value=MODULE_AGENT)
-        self.active_subnav = tk.StringVar(value="2")
+        self.api_key = WebviewStringVar()
+        self.base_url = WebviewStringVar(value=DEFAULT_BASE_URL)
+        self.model = WebviewStringVar(value=DEFAULT_MODEL)
+        self.show_key = WebviewBooleanVar(value=False)
+        self.skip_test = WebviewBooleanVar(value=False)
+        self.open_app = WebviewBooleanVar(value=True)
+        self.selected_system = WebviewStringVar(value=current_system_id())
+        self.status = WebviewStringVar(value="客服提示：请先登录胖虎AI账号")
+        self.step = WebviewIntVar(value=1)
+        self.active_module = WebviewStringVar(value=MODULE_AGENT)
+        self.active_subnav = WebviewStringVar(value="2")
         self.agent_enabled: dict[str, tk.BooleanVar] = {}
         self.agent_mode: dict[str, tk.StringVar] = {}
         self.agent_rows: dict[str, tk.Frame] = {}
@@ -5261,8 +5943,8 @@ class InstallerApp:
 
         if getattr(self, 'webview_mode', False):
             for agent in AGENTS:
-                enabled = tk.BooleanVar(value=agent.id == "codex")
-                mode = tk.StringVar(value="cli")
+                enabled = WebviewBooleanVar(value=agent.id == "codex")
+                mode = WebviewStringVar(value="cli")
                 enabled.trace_add("write", self.mark_agent_selection_changed)
                 mode.trace_add("write", self.mark_agent_selection_changed)
                 self.agent_enabled[agent.id] = enabled
@@ -5342,7 +6024,11 @@ class InstallerApp:
         self.login_username.set(str(profile.get("username") or ""))
 
     def sync_webview_state(self) -> None:
-        if not getattr(self, 'webview_mode', False) or not getattr(self, "webview_window", None):
+        if (
+            not getattr(self, 'webview_mode', False)
+            or not getattr(self, "webview_window", None)
+            or not getattr(self, "webview_ready", False)
+        ):
             return
 
         is_logged = self.logged_in_user is not None and self.deployer_auth is not None
@@ -5435,10 +6121,7 @@ class InstallerApp:
             "communicationSoftwareLink": self.current_communication_software_link_web_state(),
         }
 
-        try:
-            self.webview_window.evaluate_js(f"updatePythonState({json.dumps(state_dict)})")
-        except Exception:
-            pass
+        self._push_js(f"updatePythonState({json.dumps(state_dict)})")
 
     def apply_restored_login_state(self) -> None:
         username = self.login_username.get().strip()
@@ -5488,6 +6171,9 @@ class InstallerApp:
             self.cookie_jar = load_buyer_cookie_jar()
 
     def _restore_saved_session_worker(self, user: dict) -> None:
+        # 注意：本 worker 必须在 finally 里 set_busy(False)。
+        # 历史 bug：恢复成功后 worker_running 永远为 True，导致检查更新/保存 Key/
+        # 部署等所有带 `if self.worker_running: return` 守卫的动作静默失效。
         try:
             auth_ok, auth_msg, auth_data = activate_deployer(user, self.cookie_jar)
             self.log_from_worker(f"恢复胖虎AI登录态：{auth_msg}")
@@ -5521,6 +6207,8 @@ class InstallerApp:
             self.run_later(1600, self.start_refresh_commercial_manifest)
         except Exception as exc:
             self.set_status_from_worker(f"状态：恢复登录态失败：{exc}")
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def current_buyer_web_profile_path(self) -> Path:
         if self.commercial_contexts is not None:
@@ -5639,7 +6327,7 @@ class InstallerApp:
         self._build_status_step(
             9,
             "第九步：基础交付验收",
-            "当选定 Agent 的目标链路全部达标后，才进入客户交付收口；Gemini / agy 本版只算安装入口，不算完整交付。",
+            "当选定 Agent 的目标链路全部达标后，才进入客户交付收口；五个 Agent 都按同一验收矩阵门控。",
             "正式发客户前还要重新打包并完成三端包、公钥、Release、下载页授权流程。",
         )
         self._build_communication_software_link_step()
@@ -5708,7 +6396,9 @@ class InstallerApp:
             expiry_text = active[0].valid_until or "以服务端为准"
             device_count_text = str(max(item.device_limit for item in active))
         else:
-            remaining = "待刷新"
+            # 清单已从服务端刷新但没有活跃权益时，如实显示"无可用权益"；
+            # "待刷新"只用于还没拉到服务端清单的阶段，避免误导买家一直等刷新。
+            remaining = "无可用权益" if getattr(self, "deployer_manifest", None) else "待刷新"
             expiry_text = "以服务端为准"
             device_count_text = "以服务端为准"
         return {
@@ -6535,7 +7225,7 @@ class InstallerApp:
         return "muted"
 
     def _show_help(self, title: str, message: str) -> None:
-        messagebox.showinfo(title, message)
+        self.notify_info(title, message)
 
     def _grid_button(
         self,
@@ -6667,7 +7357,7 @@ class InstallerApp:
         self.login_username_entry.focus_set()
 
     def show_agent_center_placeholder(self) -> None:
-        messagebox.showinfo(
+        self.notify_info(
             "代理中心",
             self.agent_center_current_summary_text(),
         )
@@ -6773,7 +7463,7 @@ class InstallerApp:
 
     def _ensure_commercial_contexts(self) -> bool:
         if self.commercial_contexts is None or self.deployer_auth is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号，并获取本次运行的服务端授权。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号，并获取本次运行的服务端授权。")
             return False
         return True
 
@@ -6928,7 +7618,7 @@ class InstallerApp:
             return
         service_product_id = self.communication_software_link_service_product_id.get().strip()
         if not service_product_id:
-            messagebox.showwarning("缺少商品", "请先刷新或填写服务端返回的连接通讯软件服务商品 ID。")
+            self.notify_warning("缺少商品", "请先刷新或填写服务端返回的连接通讯软件服务商品 ID。")
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_order_create",
@@ -6966,7 +7656,7 @@ class InstallerApp:
             return
         order_id = self.communication_software_link_order_id.get().strip()
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            self.notify_warning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_order_get",
@@ -6998,11 +7688,11 @@ class InstallerApp:
             return
         order_id = self.communication_software_link_order_id.get().strip()
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            self.notify_warning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
             return
         order_status = self.communication_software_link_order_statuses.get(order_id)
         if not order_status or not order_status.get("session_allowed"):
-            messagebox.showwarning(
+            self.notify_warning(
                 "订单未确认",
                 "请先查询连接通讯软件订单状态；订单必须已支付，或服务端明确进入人工预售/人工复核后，才能创建配置会话。",
             )
@@ -7080,7 +7770,7 @@ class InstallerApp:
             return
         session_id = self.communication_software_link_session_id.get().strip()
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            self.notify_warning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_session_get",
@@ -7099,7 +7789,7 @@ class InstallerApp:
         session_id = self.communication_software_link_session_id.get().strip()
         test_prompt = self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            self.notify_warning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_session_test",
@@ -7120,13 +7810,13 @@ class InstallerApp:
         order_id = self.communication_software_link_order_id.get().strip()
         agent_id = self.communication_software_link_agent_id.get().strip()
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            self.notify_warning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
             return
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            self.notify_warning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
             return
         if not agent_id:
-            messagebox.showwarning("缺少 Agent", "请选择要接入通讯软件的 Agent。")
+            self.notify_warning("缺少 Agent", "请选择要接入通讯软件的 Agent。")
             return
         self.set_busy(True)
         threading.Thread(target=self._communication_software_link_local_runtime_worker, daemon=True).start()
@@ -7409,7 +8099,7 @@ class InstallerApp:
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
-            messagebox.showwarning("缺少验收证据", "请补齐：" + "、".join(missing))
+            self.notify_warning("缺少验收证据", "请补齐：" + "、".join(missing))
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_session_acceptance",
@@ -7437,7 +8127,7 @@ class InstallerApp:
             return
         session_id = self.communication_software_link_session_id.get().strip()
         if not session_id:
-            messagebox.showwarning("缺少会话", "请先填写要停用的连接通讯软件配置会话 ID。")
+            self.notify_warning("缺少会话", "请先填写要停用的连接通讯软件配置会话 ID。")
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_session_disable",
@@ -7472,11 +8162,11 @@ class InstallerApp:
         if self.worker_running:
             return
         if self.commercial_contexts is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号，再在软件内购买权益。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号，再在软件内购买权益。")
             return
         product_id = self.buyer_product_id.get().strip()
         if not product_id:
-            messagebox.showwarning("缺少商品", "请选择或填写服务端返回的商品 ID。")
+            self.notify_warning("缺少商品", "请选择或填写服务端返回的商品 ID。")
             return
         product = find_orderable_product(
             self.commercial_products,
@@ -7487,7 +8177,7 @@ class InstallerApp:
             buyer_user_id=self.commercial_contexts.target_buyer.user_id,
         )
         if product is None:
-            messagebox.showwarning("商品不匹配", "该商品未在服务端商品清单中上架，或不匹配当前 Codex 普通配置交付。请刷新授权清单后重试。")
+            self.notify_warning("商品不匹配", "该商品未在服务端商品清单中上架，或不匹配当前 Codex 普通配置交付。请刷新授权清单后重试。")
             return
         request = commercial_api_request_with_auth(
             "order_create",
@@ -7524,11 +8214,11 @@ class InstallerApp:
         if self.worker_running:
             return
         if self.commercial_contexts is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号。")
             return
         order_id = self.buyer_order_id.get().strip()
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建订单或填写订单 ID。")
+            self.notify_warning("缺少订单", "请先创建订单或填写订单 ID。")
             return
         request = commercial_api_request_with_auth("payment_poll", self.commercial_contexts, order_id=order_id)
         self.set_busy(True)
@@ -7567,7 +8257,7 @@ class InstallerApp:
         if self.worker_running:
             return
         if self.commercial_contexts is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号。")
             return
         request = commercial_api_request_with_auth("entitlement_query", self.commercial_contexts)
         self.buyer_purchase_statuses[BuyerSelfServiceNode.ENTITLEMENT_REFRESH] = NodeStatus.RUNNING
@@ -8162,7 +8852,7 @@ class InstallerApp:
         self._notice_strip(
             frame,
             "配置范围",
-            "五个 Agent 都必须按五维状态验收；Gemini / agy 配置待开发，只保留安装入口。",
+            "五个 Agent 都必须按五维状态验收；Gemini / agy 走胖虎AI网关 Gemini 格式配置链路。",
             "info",
             compact=True,
         ).pack_configure(pady=(0, 10))
@@ -8187,8 +8877,8 @@ class InstallerApp:
             row.grid_columnconfigure(0, minsize=148)
             row.grid_columnconfigure(1, weight=1)
             row.grid_columnconfigure(2, minsize=112)
-            enabled = tk.BooleanVar(value=agent.id == "codex")
-            mode = tk.StringVar(value="cli")
+            enabled = WebviewBooleanVar(value=agent.id == "codex")
+            mode = WebviewStringVar(value="cli")
             enabled.trace_add("write", self.mark_agent_selection_changed)
             mode.trace_add("write", self.mark_agent_selection_changed)
             self.agent_enabled[agent.id] = enabled
@@ -8531,7 +9221,7 @@ class InstallerApp:
             target_step, message = missing
             self.step.set(target_step)
             self.refresh_steps()
-            messagebox.showwarning("暂时不能进入下一步", message)
+            self.notify_warning("暂时不能进入下一步", message)
 
     def step_button_copy(self, idx: int) -> tuple[str, str, str]:
         copies = {step_idx: (title, subtitle) for step_idx, title, subtitle in FLOW_STEPS}
@@ -8758,7 +9448,7 @@ class InstallerApp:
                         highlightbackground=outline,
                     )
         if hasattr(self, "flow_status_label"):
-            if getattr(self, "active_module", tk.StringVar(value=MODULE_AGENT)).get() == MODULE_AGENT:
+            if getattr(self, "active_module", WebviewStringVar(value=MODULE_AGENT)).get() == MODULE_AGENT:
                 self.flow_status_label.configure(text=self.current_flow_message())
             else:
                 _title, _url, note = self.current_module_page_meta()
@@ -8795,6 +9485,40 @@ class InstallerApp:
     def toggle_key(self) -> None:
         self.key_entry.configure(show="" if self.show_key.get() else "*")
 
+    def _js_push_worker(self) -> None:
+        """专用 evaluate_js 执行线程。所有前端推送经 _push_js 入队后在此执行，
+        保证任何线程（含 js_api 回调）调用推送都不会重入死锁。
+        注意用 getattr 读 app_closed：本线程在 __init__ 早期启动，属性可能尚未赋值。"""
+        while not getattr(self, "app_closed", False):
+            try:
+                script = self._js_push_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            window = getattr(self, "webview_window", None)
+            if window is None or not getattr(self, "webview_ready", False):
+                continue  # 未就绪：丢弃，内容会随首次全量拉取带给前端
+            try:
+                window.evaluate_js(script)
+            except Exception:
+                pass
+
+    def _push_js(self, script: str) -> None:
+        if not getattr(self, "webview_mode", False):
+            return
+        try:
+            self._js_push_queue.put_nowait(script)
+        except Exception:
+            pass
+
+    def push_webview_toast(self, message: str, level: str = "info") -> None:
+        """向 WebView 前端弹一条提示（异步入队，任何线程可安全调用）。"""
+        if not getattr(self, "webview_mode", False):
+            return
+        safe = sanitize_log_text(message, self.api_key.get().strip())
+        self._push_js(
+            f"(window.showToast||window.appendPythonLog)({json.dumps(safe)}, {json.dumps(level)})"
+        )
+
     def log(self, message: str, replace: bool = False) -> None:
         safe = sanitize_log_text(message, self.api_key.get().strip())
         tag = self._log_tag_for_message(safe)
@@ -8808,10 +9532,9 @@ class InstallerApp:
                 self.webview_logs[current_step] = [log_line]
             else:
                 self.webview_logs[current_step].append(log_line)
-            if getattr(self, "webview_window", None):
-                if replace:
-                    self.webview_window.evaluate_js(f"logsData[{current_step}] = []; renderLogs();")
-                self.webview_window.evaluate_js(f"appendPythonLog({json.dumps(log_line)})")
+            if replace:
+                self._push_js(f"logsData[{current_step}] = []; renderLogs();")
+            self._push_js(f"appendPythonLog({json.dumps(log_line)})")
         else:
             self.log_box.configure(state="normal")
             if replace:
@@ -8890,14 +9613,40 @@ class InstallerApp:
     def set_status_from_worker(self, message: str) -> None:
         self.run_on_ui(lambda: self.status.set(sanitize_worker_message(message)))
 
+    def notify_user(self, title: str, message: str, level: str = "info") -> None:
+        """统一用户提示出口（webview 安全）。
+
+        webview 模式下 Tk messagebox 不可用：主线程阻塞在 webview.start()，
+        Tk mainloop 永远不运行，bridge/后台线程调 messagebox 直接抛
+        RuntimeError 并被上层 try/except 吞掉，表现为"点了无反应"。
+        因此 webview 模式统一改为：写入运行日志 + 前端全局 toast。
+        """
+        safe = sanitize_worker_message(str(message))
+        text = f"{title}：{safe}" if title else safe
+        if getattr(self, 'webview_mode', False):
+            self.log(text)
+            self.push_webview_toast(text, level)
+            return
+        shows = {"info": messagebox.showinfo, "error": messagebox.showerror}
+        shows.get(level, messagebox.showwarning)(title, safe)
+
+    def notify_info(self, title: str, message: str) -> None:
+        self.notify_user(title, message, "info")
+
+    def notify_warning(self, title: str, message: str) -> None:
+        self.notify_user(title, message, "warning")
+
+    def notify_error(self, title: str, message: str) -> None:
+        self.notify_user(title, message, "error")
+
     def show_info_from_worker(self, title: str, message: str) -> None:
-        self.run_on_ui(lambda: messagebox.showinfo(title, sanitize_worker_message(message)))
+        self.run_on_ui(lambda: self.notify_info(title, message))
 
     def show_warning_from_worker(self, title: str, message: str) -> None:
-        self.run_on_ui(lambda: messagebox.showwarning(title, sanitize_worker_message(message)))
+        self.run_on_ui(lambda: self.notify_warning(title, message))
 
     def show_error_from_worker(self, title: str, message: str) -> None:
-        self.run_on_ui(lambda: messagebox.showerror(title, sanitize_worker_message(message)))
+        self.run_on_ui(lambda: self.notify_error(title, message))
 
     def set_busy(self, busy: bool) -> None:
         self.worker_running = busy
@@ -8970,7 +9719,8 @@ class InstallerApp:
             )
 
             display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
-            self.run_on_ui(lambda: self.user_label.configure(text=f"已登录：{display_username}"))
+            if hasattr(self, "user_label"):
+                self.run_on_ui(lambda: self.user_label.configure(text=f"已登录：{display_username}"))
             self.run_on_ui(self.show_wizard)
             self.run_later(1200, self.start_auto_update_check)
             self.run_later(1600, self.start_refresh_commercial_manifest)
@@ -9024,6 +9774,15 @@ class InstallerApp:
             "工具会下载对应系统安装包，自动覆盖当前程序并重新打开。"
             "你的登录状态、API Key、Codex 配置和工作区资料都会保留。"
         )
+        if getattr(self, 'webview_mode', False):
+            # webview 模式无法用 Tk askyesno 阻塞等待用户确认；打包发布当前叫停中，
+            # 先只提示不自动更新（后续接前端确认对话框后再放开自动更新链路）。
+            self.notify_info(
+                "发现新版本",
+                f"检测到新版本 {update.latest_tag}（当前 {APP_VERSION}）。当前版本可继续使用，暂不自动更新。",
+            )
+            self.set_busy(False)
+            return
         if not messagebox.askyesno("发现新版本", message):
             if auto:
                 self.status.set("状态：已跳过本次自动更新")
@@ -9048,20 +9807,20 @@ class InstallerApp:
     def confirm_and_start_online_update(self, path: Path) -> None:
         try:
             start_online_update(path, self.log)
-            messagebox.showinfo("开始在线更新", "更新程序已启动。本工具将退出，更新完成后会自动重新打开。")
+            self.notify_info("开始在线更新", "更新程序已启动。本工具将退出，更新完成后会自动重新打开。")
             self.run_later(200, self.close_app)
         except Exception as exc:
             self.set_busy(False)
-            messagebox.showerror("在线更新失败", sanitize_worker_message(str(exc)))
+            self.notify_error("在线更新失败", sanitize_worker_message(str(exc)))
 
     def start_save_key(self) -> None:
         if self.worker_running:
             return
         if not self.logged_in_user:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI账号。")
             return
         if not self.deployer_auth:
-            messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
+            self.notify_warning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
             return
         api_key = self.api_key.get()
         self.base_url.set(DEFAULT_BASE_URL)
@@ -9079,7 +9838,7 @@ class InstallerApp:
             if not api_key.strip():
                 raise ValueError("请先填写胖虎AI API Key。")
             contexts = deployment_commercial_contexts(self.logged_in_user or {})
-            self.log_from_worker(execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.deployer_auth))
+            self.log_from_worker(execute_api_key_owner_verify(api_key, contexts, opener=trusted_urlopen, deployer_auth=self.deployer_auth))
             if skip_test:
                 ok, msg = True, "已保存 Key，接口测试被跳过。"
             else:
@@ -9113,15 +9872,17 @@ class InstallerApp:
 
     def run_environment_check(self) -> None:
         if not self.has_valid_key():
-            messagebox.showwarning("请先完成第一步", "请先保存并测试胖虎AI API Key，再检测环境。")
+            self.notify_warning("请先完成第一步", "请先保存并测试胖虎AI API Key，再检测环境。")
             self.step.set(1)
             self.refresh_steps()
             return
         lines = detect_environment()
-        self.env_text.configure(state="normal")
-        self.env_text.delete("1.0", "end")
-        self.env_text.insert("end", "\n".join(lines))
-        self.env_text.configure(state="disabled")
+        if not getattr(self, 'webview_mode', False):
+            # env_text 是旧 Tk 界面控件，webview 模式不存在；结果统一走日志。
+            self.env_text.configure(state="normal")
+            self.env_text.delete("1.0", "end")
+            self.env_text.insert("end", "\n".join(lines))
+            self.env_text.configure(state="disabled")
         for line in lines:
             self.log(line)
         self.environment_checked = True
@@ -9132,7 +9893,7 @@ class InstallerApp:
             self.step.set(3)
         else:
             self.status.set("状态：发现第三方配置插件，请先处理")
-            messagebox.showwarning("环境检测未通过", format_risk_plugin_block_message(risk_findings))
+            self.notify_warning("环境检测未通过", format_risk_plugin_block_message(risk_findings))
         self.refresh_steps()
 
     def selected_agents(self) -> list[tuple[AgentSpec, str]]:
@@ -9146,21 +9907,21 @@ class InstallerApp:
         if self.worker_running:
             return False, None
         if not self.logged_in_user:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI账号。")
             return False, None
         if not self.deployer_auth:
-            messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
+            self.notify_warning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
             return False, None
         if not codex_config_mode_requires_panghu_key(mode):
             return True, self.current_key_signature()
         current_key_signature = self.current_key_signature()
         if not current_key_signature[0]:
-            messagebox.showwarning("请先填写 Key", "请先在第一步填写胖虎AI API Key。")
+            self.notify_warning("请先填写 Key", "请先在第一步填写胖虎AI API Key。")
             self.step.set(1)
             self.refresh_steps()
             return False, None
         if not self.saved_key_ok or self.saved_key_signature != current_key_signature:
-            messagebox.showwarning("请先保存 Key", "请先在第一步保存当前胖虎AI API Key，然后再开始部署。")
+            self.notify_warning("请先保存 Key", "请先在第一步保存当前胖虎AI API Key，然后再开始部署。")
             self.step.set(1)
             self.refresh_steps()
             return False, None
@@ -9170,7 +9931,7 @@ class InstallerApp:
         actual_system = current_system_id()
         if self.selected_system.get() != actual_system:
             readable = {"windows": "Windows", "mac": "Mac", "other": "其他系统"}
-            messagebox.showwarning(
+            self.notify_warning(
                 "系统选择不一致",
                 f"当前电脑识别为 {readable.get(actual_system, actual_system)}，"
                 f"但你选择的是 {readable.get(self.selected_system.get(), self.selected_system.get())}。请回到第二步选择当前电脑系统。",
@@ -9182,7 +9943,7 @@ class InstallerApp:
         if risk_findings:
             for line in risk_plugin_report_lines(risk_findings):
                 self.log(line)
-            messagebox.showwarning("请先卸载第三方插件", format_risk_plugin_block_message(risk_findings))
+            self.notify_warning("请先卸载第三方插件", format_risk_plugin_block_message(risk_findings))
             self.status.set("状态：发现第三方配置插件，请先卸载后再部署")
             self.step.set(2)
             self.refresh_steps()
@@ -9198,7 +9959,7 @@ class InstallerApp:
             return
         selected = self.selected_agents()
         if not selected:
-            messagebox.showwarning("请选择 Agent", "请至少选择一个 Agent。")
+            self.notify_warning("请选择 Agent", "请至少选择一个 Agent。")
             return
         if not self.validate_system_and_risk_plugins():
             return
@@ -9236,7 +9997,7 @@ class InstallerApp:
         if not codex_config_mode_requires_panghu_key(mode) and not self.environment_ok:
             self.step.set(2)
             self.refresh_steps()
-            messagebox.showwarning("请先检测环境", "请先完成第二步环境检测，再切换官方直登模式。")
+            self.notify_warning("请先检测环境", "请先完成第二步环境检测，再切换官方直登模式。")
             return
         if not self.can_access_step(4) and codex_config_mode_requires_panghu_key(mode):
             self.go_to_step(4)
@@ -9809,7 +10570,7 @@ class InstallerApp:
     def open_acceptance_matrix(self) -> None:
         path = customer_acceptance_matrix_path()
         if not path.exists():
-            messagebox.showwarning("功能验收矩阵", "还没有生成验收矩阵。请先执行一次部署或配置验收。")
+            self.notify_warning("功能验收矩阵", "还没有生成验收矩阵。请先执行一次部署或配置验收。")
             return
         open_path(path)
 
@@ -9819,10 +10580,10 @@ class InstallerApp:
         ok = restore_latest_backups(self.log)
         if ok:
             self.status.set("状态：已恢复最近备份")
-            messagebox.showinfo("恢复备份", "已恢复找到的最近备份。")
+            self.notify_info("恢复备份", "已恢复找到的最近备份。")
         else:
             self.status.set("状态：未找到可恢复备份")
-            messagebox.showwarning("恢复备份", "未找到可恢复的配置备份。")
+            self.notify_warning("恢复备份", "未找到可恢复的配置备份。")
 
     def copy_logs(self) -> None:
         text = sanitize_worker_message(self.log_box.get("1.0", "end").strip())
@@ -9832,13 +10593,14 @@ class InstallerApp:
 
 
 def self_test() -> None:
-    assert APP_VERSION == "1.0.15"
+    assert APP_VERSION == "1.0.16"
     assert any(agent.id == "codex" for agent in AGENTS)
     assert any(agent.id == "claude_code" for agent in AGENTS)
     assert [agent.id for agent in AGENTS] == ["codex", "claude_code", "openclaw", "hermes", "gemini_agy"]
     gemini = next(agent for agent in AGENTS if agent.id == "gemini_agy")
-    assert not any(mode.supports_config for mode in gemini.modes)
-    assert "配置待开发" in agent_dialogue_probe_command_text(gemini, DEFAULT_MODEL)
+    assert all(mode.supports_config for mode in gemini.modes)
+    assert "agy" in agent_dialogue_probe_command_text(gemini, DEFAULT_MODEL)
+    assert "GEMINI_API_KEY=sk-test" in build_gemini_agy_env("", "sk-test", DEFAULT_MODEL)
     assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)
     assert any(spec.id == "codex_plus_plus" for spec in RISK_PLUGIN_SPECS)
     assert LOGIN_URL.endswith("/api/user/login?turnstile=")
@@ -10072,7 +10834,7 @@ requires_openai_auth = true
         title for _idx, title, _subtitle in FLOW_STEPS
     ]
     assert MODULE_PAGE_META[MODULE_SITE]["key"][1] == KEY_CREATE_URL
-    assert DEFAULT_BASE_URL == "https://aitokenapi.cc"
+    assert DEFAULT_BASE_URL == (PANGHU_DEV_BASE_URL_OVERRIDE or "https://aitokenapi.cc")
     assert normalize_version("v1.2.3") > normalize_version("1.0.9")
     merged = merge_agents_rules("# old")
     assert PANGHU_AGENTS_START in merged and PANGHU_AGENTS_END in merged
@@ -10146,8 +10908,13 @@ def main() -> int:
 
         app = InstallerApp(root, webview_mode=True)
 
+        window_title = APP_NAME
+        if PANGHU_DEV_BASE_URL_OVERRIDE:
+            # 联调覆盖生效时窗口标题醒目提示，防止误当生产环境使用。
+            window_title = f"{APP_NAME}【本地联调 {PANGHU_DEV_BASE_URL_OVERRIDE}】"
+            print(f"[联调] 服务端地址已覆盖为 {PANGHU_DEV_BASE_URL_OVERRIDE}", flush=True)
         window = webview_runtime.create_window(
-            title=APP_NAME,
+            title=window_title,
             url=str(bundled_webview_shell.absolute()),
             js_api=WebviewApi(app),
             width=1400,

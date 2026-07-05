@@ -61,6 +61,10 @@ def configure_isolated_acceptance_env(api_key: str, model: str) -> tempfile.Temp
     os.environ["OPENCLAW_CONFIG_PATH"] = str(openclaw_config)
     os.environ["HERMES_HOME"] = str(hermes_home)
 
+    os.environ["GOOGLE_GEMINI_BASE_URL"] = installer.DEFAULT_BASE_URL
+    os.environ["GEMINI_API_KEY"] = api_key.strip()
+    os.environ["GEMINI_MODEL"] = model.strip()
+
     logs: list[str] = []
     installer.install_claude_code_config(api_key, model, logs.append)
     installer.install_openclaw_config(api_key, model, logs.append)
@@ -77,7 +81,9 @@ def dialogue_uses_untrusted_local_config(agent_id: str) -> bool:
         return False
     if agent_id == "hermes" and os.environ.get("HERMES_HOME"):
         return False
-    return agent_id in {"claude_code", "openclaw", "hermes"}
+    if agent_id == "gemini_agy" and os.environ.get("GEMINI_API_KEY"):
+        return False
+    return agent_id in {"claude_code", "openclaw", "hermes", "gemini_agy"}
 
 
 def agent_mode_summary(agent: installer.AgentSpec, mode: installer.AgentMode, cli_ok: bool, client_ok: bool) -> dict:
@@ -99,10 +105,10 @@ def agent_mode_summary(agent: installer.AgentSpec, mode: installer.AgentMode, cl
 def initial_mode_statuses(agent_id: str, selected_modes: set[str], cli_ok: bool, client_ok: bool) -> dict[str, str]:
     statuses: dict[str, str] = {}
     if "cli" in selected_modes:
-        statuses["cli"] = "not_supported" if agent_id == "gemini_agy" else ("ready" if cli_ok else "not_detected")
+        statuses["cli"] = "ready" if cli_ok else "not_detected"
     if "client" in selected_modes:
-        statuses["client"] = "not_supported" if agent_id == "gemini_agy" else ("ready" if client_ok else "not_confirmed")
-    statuses["dialogue"] = "not_supported" if agent_id == "gemini_agy" else "not_run"
+        statuses["client"] = "ready" if client_ok else "not_confirmed"
+    statuses["dialogue"] = "not_run"
     return statuses
 
 
@@ -115,8 +121,6 @@ def agent_delivery_status(mode_statuses: dict[str, str]) -> str:
 
 
 def run_agent_dialogue_probe_with_timeout(agent: installer.AgentSpec, mode_id: str, model: str, timeout: int) -> tuple[bool, str]:
-    if agent.id == "gemini_agy":
-        return installer.run_agent_dialogue_probe(agent, mode_id, model)
     if agent.id == "codex":
         return installer.run_agent_dialogue_probe(agent, mode_id, model)
     try:
@@ -199,7 +203,8 @@ def main() -> int:
 
     for agent in selected_agents:
         cli_ok, cli_version = installer.version_for(agent.verify_command)
-        client_ok, client_detail = installer.agent_client_status(agent)
+        # 用户决策（修正版）：有官方客户端的按真实客户端检测；没有的（CLI-only）明确不适用
+        client_ok, client_detail = installer.verify_agent_client_scope(agent, "client")
         playbook = installer.agent_delivery_playbook(agent.id)
         selected_agent_modes = [
             mode for mode in agent.modes
@@ -226,8 +231,6 @@ def main() -> int:
             "modes": [agent_mode_summary(agent, mode, cli_ok, client_ok) for mode in selected_agent_modes],
         }
 
-        if agent.id == "gemini_agy":
-            report["blocking_gaps"].append("Gemini / agy 配置待开发，只保留官方入口；当前不计入完整 CLI 或客户端交付。")
         if "cli" in selected_modes and not cli_ok:
             report["blocking_gaps"].append(f"{agent.name} CLI 未检测到，不能确认安装/启动/对话链路。")
         if "client" in selected_modes and not client_ok:
@@ -255,10 +258,6 @@ def main() -> int:
                     "请先由部署流程写入客户配置，或显式设置隔离配置/验收环境后再运行。"
                 )
                 report["blocking_gaps"].append(f"{agent.name} 最小中文对话未执行；缺少隔离配置或显式本机配置授权。")
-            elif agent.id == "gemini_agy":
-                item["dialogue_probe_status"] = "not_supported"
-                item["mode_statuses"]["dialogue"] = "not_supported"
-                item["dialogue_probe_output"] = "Gemini / agy 配置待开发，本版只保留安装入口，不执行胖虎AI网关最小中文对话。"
             elif cli_ok:
                 ok, output = run_agent_dialogue_probe_with_timeout(agent, "cli", args.model, max(5, args.dialogue_timeout))
                 item["dialogue_probe_status"] = "pass" if ok else "failed"
@@ -271,10 +270,6 @@ def main() -> int:
                 item["mode_statuses"]["dialogue"] = "blocked"
                 item["dialogue_probe_output"] = "CLI 未检测到，无法运行最小对话。"
         else:
-            if agent.id == "gemini_agy":
-                item["dialogue_probe_status"] = "not_supported"
-                item["mode_statuses"]["dialogue"] = "not_supported"
-                item["dialogue_probe_output"] = "Gemini / agy 配置待开发，本版只保留官方入口，不执行胖虎AI网关最小中文对话。"
             report["blocking_gaps"].append(f"{agent.name} 最小中文对话未执行；默认只做只读安装状态检查。")
 
         item["delivery_status"] = agent_delivery_status(item["mode_statuses"])
