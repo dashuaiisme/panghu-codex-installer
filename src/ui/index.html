@@ -1651,6 +1651,107 @@
         transition-duration: 0.01ms !important;
       }
     }
+
+  /* ================= COCKPIT REFRESH v2  (scoped: .gm-cockpit) =================
+     登录后驾驶舱视觉打磨 —— 保留原深色/青绿/HUD 科技风与顶部父级+侧边子级导航
+     只作用于 .gm-cockpit 内；不影响登录页(gm-login-*)；不改任何 JS / id / 逻辑
+     v2：字号统一 / 去掉多余横带 / 卡片限宽居中 / 强调色收敛 / 栅格对齐
+     回退：删掉本注释到 </style> 前的整块即可，登录页与逻辑零影响
+     ========================================================================== */
+
+  /* 1. 作用域内重定义令牌：提升对比 + 统一栅格 */
+  .gm-cockpit{
+    --g-text-muted:#c4cdda; --g-text-subtle:#929cad;
+    --g-line:rgba(0,242,196,.09); --g-line-strong:rgba(255,255,255,.12);
+    --ck-hair:rgba(255,255,255,.06); --ck-gutter:28px;
+  }
+
+  /* 2. 大屏/最大化等比放大（解决“放大后字太小”）；width/height 反补偿防溢出 */
+  .gm-cockpit{ zoom:var(--ck-zoom,1); width:calc(100vw/var(--ck-zoom,1)); height:calc(100vh/var(--ck-zoom,1)); }
+  @media(min-width:1500px){ .gm-cockpit{ --ck-zoom:1.08 } }
+  @media(min-width:1700px){ .gm-cockpit{ --ck-zoom:1.15 } }
+  @media(min-width:2000px){ .gm-cockpit{ --ck-zoom:1.25 } }
+  @media(min-width:2400px){ .gm-cockpit{ --ck-zoom:1.38 } }
+
+  /* 3. 顶部一级导航 */
+  .gm-cockpit .gm-primary-header{ height:64px; padding:0 var(--ck-gutter); border-bottom:1px solid var(--ck-hair); background:rgba(4,6,10,.9); }
+  .gm-cockpit .gm-header-left{ gap:14px; min-width:200px; }
+  .gm-cockpit .gm-header-left h2{ font-size:16.5px; font-weight:800; letter-spacing:.01em; }
+  .gm-cockpit .gm-dock-btn{ padding:0 22px; }
+  .gm-cockpit .gm-dock-btn span:first-child{ font-size:15px; font-weight:700; }
+  .gm-cockpit .gm-dock-btn span:last-child{ font-size:9.5px; opacity:.55; margin-top:3px; letter-spacing:.06em; }
+  .gm-cockpit .gm-dock-btn.active{ background:linear-gradient(180deg,rgba(0,242,196,.05),transparent); }
+
+  /* 4. 状态中枢（连接/算力/确权） */
+  .gm-cockpit .gm-status-hub{ gap:18px; height:40px; padding:4px 18px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03); }
+  .gm-cockpit .gm-status-pill{ font-size:12.5px; gap:7px; }
+  .gm-cockpit .gm-status-pill strong{ font-size:13px; font-weight:700; }
+  .gm-cockpit .gm-status-label{ font-size:12px; }
+  .gm-cockpit .gm-status-dot{ width:8px; height:8px; }
+  .gm-cockpit .gm-header-actions .gm-btn{ min-height:34px!important; font-size:12px!important; padding:0 13px!important; }
+
+  /* 5. 左侧二级导航 / 步骤时间轴 */
+  .gm-cockpit .gm-context-sidebar{ padding:22px 14px; }
+  .gm-cockpit .gm-sidebar-subnav-title{ font-size:11px; letter-spacing:.09em; margin-bottom:16px; }
+  .gm-cockpit .gm-subnav-list{ gap:3px; }
+  .gm-cockpit .gm-timeline-node{ padding:10px 13px; border-radius:9px; }
+  .gm-cockpit .gm-node-label{ font-size:13px; font-weight:600; }
+  .gm-cockpit .gm-timeline-node.active .gm-node-label{ font-size:13.5px; font-weight:800; }
+  .gm-cockpit .gm-node-dot{ width:22px; height:22px; font-size:10.5px; }
+  .gm-cockpit .gm-timeline-node.active{ background:linear-gradient(90deg,rgba(0,242,196,.09),transparent),var(--g-surface-2); border-color:rgba(0,242,196,.22); box-shadow:inset 3px 0 0 var(--g-primary); }
+  .gm-cockpit .gm-subnav-list::before{ left:27px; }
+
+  /* 6. 视口语境条：去掉整条横带，与内容融合（减少顶部“斑马纹”堆叠） */
+  .gm-cockpit .gm-viewport-header{ padding:12px var(--ck-gutter); border-bottom:none; background:transparent; }
+  .gm-cockpit .gm-viewport-header h1{ font-size:12.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--g-text-subtle); }
+  .gm-cockpit .gm-viewport-header p{ font-size:11.5px; margin-top:2px; color:var(--g-text-subtle); }
+
+  /* 7. 主内容区：卡片限宽 + 居中 + 统一 gutter（治“中间一大块摊平”） */
+  .gm-cockpit .gm-content-pane{ padding:6px var(--ck-gutter) var(--ck-gutter); align-items:center; }
+  .gm-cockpit .gm-mission-card{ width:100%; max-width:1080px; margin:0 auto; padding:28px 30px; min-height:auto; border:1px solid rgba(255,255,255,.055); border-radius:16px; }
+  .gm-cockpit .gm-mission-card::before{ height:2px; opacity:.85; }
+  .gm-cockpit .gm-mission-header{ margin-bottom:22px; padding-bottom:16px; border-bottom:1px solid var(--ck-hair); }
+  .gm-cockpit .gm-canvas-meta{ font-size:10.5px; letter-spacing:.12em; padding:3px 9px; margin-bottom:9px; }
+  .gm-cockpit .gm-mission-header h2{ font-size:24px; font-weight:800; letter-spacing:-.02em; }
+  .gm-cockpit .gm-canvas-desc{ font-size:13px; line-height:1.6; margin-top:7px; color:var(--g-text-muted); }
+  .gm-cockpit .gm-mission-body{ gap:15px; }
+
+  /* 8. 内容组件统一字号（!important 压过注入 HTML 的内联像素） */
+  .gm-cockpit .gm-canvas-card{ padding:18px; border-radius:13px; }
+  .gm-cockpit .gm-canvas-card b{ font-size:14px!important; }
+  .gm-cockpit .gm-canvas-card small{ font-size:12.5px!important; line-height:1.55; }
+  .gm-cockpit .gm-canvas-card label{ font-size:11.5px!important; }
+  .gm-cockpit .gm-command-deck-status{ padding:14px; gap:9px; }
+  .gm-cockpit .gm-command-deck-status span{ font-size:12.5px!important; }
+  .gm-cockpit .gm-command-deck-status label{ font-size:12px!important; }
+  .gm-cockpit .gm-command-deck-status strong{ font-size:13px!important; }
+  .gm-cockpit .gm-form-field label{ font-size:13px; }
+  .gm-cockpit .gm-input,.gm-cockpit .gm-select{ min-height:42px; font-size:14px; }
+  .gm-cockpit .gm-btn{ font-size:13.5px; min-height:40px; }
+  .gm-cockpit .gm-btn-primary{ font-weight:700; }
+  .gm-cockpit .gm-chip{ font-size:12px; padding:5px 11px; }
+
+  /* 9. 强调色收敛：装饰性辉光压低，青绿留给主操作/当前选中 */
+  .gm-cockpit .gm-hud-corners::before{ opacity:.32; }
+  .gm-cockpit .gm-hud-corners:hover::before{ opacity:.7; }
+  .gm-cockpit .gm-canvas-card:hover{ border-color:rgba(0,242,196,.16); }
+
+  /* 10. 底部诊断抽屉 / 交付矩阵 / 巡检 / 日志 */
+  .gm-cockpit .gm-drawer-tab{ font-size:13px; padding:12px; }
+  .gm-cockpit #deliveryInspector{ padding:20px var(--ck-gutter); gap:24px; }
+  .gm-cockpit .gm-inspector-col h3{ font-size:12px; }
+  .gm-cockpit .gm-inspector-kv div{ font-size:12px; }
+  .gm-cockpit .gm-matrix-header{ font-size:10px; }
+  .gm-cockpit .gm-matrix-row strong{ font-size:12px; }
+  .gm-cockpit .gm-matrix-pill{ height:20px; font-size:10px; }
+  .gm-cockpit .gm-console-screen{ font-size:12px; padding:14px; }
+
+  /* 11. 空状态 / 滚动条 */
+  .gm-cockpit .gm-empty-state-banner{ padding:26px; border-color:rgba(255,255,255,.08); }
+  .gm-cockpit ::-webkit-scrollbar{ width:9px; height:9px; }
+  .gm-cockpit ::-webkit-scrollbar-thumb{ background:var(--g-surface-3); border-radius:5px; border:2px solid var(--g-bg-deep); }
+  .gm-cockpit ::-webkit-scrollbar-thumb:hover{ background:rgba(0,242,196,.35); }
+  /* ================= END COCKPIT REFRESH v2 ================= */
   </style>
 </head>
 <body>
@@ -2287,7 +2388,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px;">
               <div>
                 <b style="font-size: 15px; color: var(--g-primary);">AI 环境诊断与协同控制舱</b>
-                <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">检测本机依赖项及协同并发状态</div>
+                <div style="font-size: 12.5px; color: var(--g-text-subtle); margin-top: 2px;">检测本机依赖项及协同并发状态</div>
               </div>
               <span class="gm-status-lock">诊断</span>
             </div>
@@ -2308,7 +2409,7 @@
             </div>
 
             <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
-              <div style="font-size: 11px; color: var(--g-text-muted);">
+              <div style="font-size: 12.5px; color: var(--g-text-muted);">
                 诊断结果: ${state.environmentOk ? '<span style="color: var(--g-success); font-weight: bold;">环境及运行规则通过校验，可启动部署。</span>' : '等待用户触发本地探针检测指令。'}
               </div>
               <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="runDiagnosticsCheck()" style="min-width: 160px; height: 38px;">
@@ -2318,7 +2419,7 @@
           </div>
 
           <div class="gm-canvas-card gm-hud-corners" style="padding: 16px; background: rgba(255,255,255,0.01); display: flex; flex-direction: column; gap: 10px;">
-            <b style="font-size: 11px; color: var(--g-text); text-transform: uppercase; letter-spacing: 0.05em;">交付矩阵与执行队列诊断状态</b>
+            <b style="font-size: 12.5px; color: var(--g-text); text-transform: uppercase; letter-spacing: 0.05em;">交付矩阵与执行队列诊断状态</b>
             <div class="gm-canvas-grid" style="grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 0;">
               <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
                 <b style="font-size: 10.5px;">依赖项探针结论</b>
@@ -2359,7 +2460,7 @@
                   <b>${name}</b>
                   <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.02); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--g-line);">
                     <input type="checkbox" ${isAgentEnabled(id) ? "checked" : ""} onchange="toggleAgentEnabled('${id}', this.checked)">
-                    <span style="font-size: 11px; font-weight: bold;">选入队列</span>
+                    <span style="font-size: 12.5px; font-weight: bold;">选入队列</span>
                   </label>
                 </div>
                 <select class="gm-select" onchange="setAgentMode('${id}', this.value)" style="margin-top: 12px;">
@@ -2425,7 +2526,7 @@
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
             <b>业务边界提示</b>
-            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+            <p style="font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
               API Key 仅用于本地客户端与云端做连通性鉴权。注册、购买、结算和数据规则完全以服务端页面为准。
             </p>
           </div>`;
@@ -2443,7 +2544,7 @@
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
             <b>五维交付验收指引</b>
-            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+            <p style="font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
               本地诊断通过后，将正式拉取所选智能体。交付全流程需依次经历 [部署] -> [拉起] -> [中文连通] -> [验收] -> [确权] 五维校验，以云端账本最终签名为准。
             </p>
           </div>`;
@@ -2459,7 +2560,7 @@
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
             <b>智能体多开说明</b>
-            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+            <p style="font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
               系统支持选入多个交付智能体，在多实例模式下，各进程分配独立端口，确保测试互不干扰。
             </p>
           </div>`;
@@ -2475,7 +2576,7 @@
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
             <b>下一步操作指引</b>
-            <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
+            <p style="font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
               请密切关注底部日志与诊断状态。本地预检不能替代通讯软件平台回调；真实入站、Agent 调用和出站回复证据齐全后，再提交验收证据。
             </p>
           </div>`;
@@ -2510,9 +2611,9 @@
     }
 
     const DRIFT_META = {
-      ok: { label: "正常", color: "#1A7F37", bg: "#e6f4ea" },
-      yellow: { label: "注意", color: "#B06000", bg: "#FFF7DF" },
-      red: { label: "异常", color: "#c0392b", bg: "#fdecea" }
+      ok: { label: "正常", color: "#00f2a9", bg: "rgba(0,242,169,.10)" },
+      yellow: { label: "注意", color: "#fdd663", bg: "rgba(253,214,99,.10)" },
+      red: { label: "异常", color: "#f28b82", bg: "rgba(242,139,130,.10)" }
     };
 
     function agentLabel(id) {
@@ -2531,13 +2632,13 @@
         const overall = DRIFT_META[report.overall_level] || DRIFT_META.ok;
         driftHtml = `<div style="margin-bottom:10px"><span class="gm-tech-num" style="background:${overall.bg};color:${overall.color};padding:2px 10px;border-radius:10px">总体：${overall.label}</span></div>`;
         if ((report.risk_plugins || []).length) {
-          driftHtml += `<small style="color:#c0392b">⚠ 检测到风险切换工具：${report.risk_plugins.map(p => p.name).join("、")}，可能持续改写配置。</small>`;
+          driftHtml += `<small style="color:#f28b82">⚠ 检测到风险切换工具：${report.risk_plugins.map(p => p.name).join("、")}，可能持续改写配置。</small>`;
         }
         driftHtml += `<table class="gm-status-table" style="margin-top:8px">` + (report.agents || []).map(a => {
           const meta = DRIFT_META[a.level] || DRIFT_META.ok;
           const detail = a.configured ? (a.findings || []).map(f => f.detail).join("；") || "配置正常" : "未配置";
-          const repair = a.repairable ? `<button class="gm-btn gm-btn-primary" style="min-height:24px;padding:0 8px;font-size:11px" onclick="repairDrift('${a.agent_id}')">一键修复</button>` : "";
-          return `<tr class="gm-handshake-row"><td>${agentLabel(a.agent_id)}</td><td><span class="gm-tech-num" style="background:${meta.bg};color:${meta.color};padding:1px 8px;border-radius:8px">${meta.label}</span> <span style="color:#6e6e73">${detail}</span></td><td>${repair}</td></tr>`;
+          const repair = a.repairable ? `<button class="gm-btn gm-btn-primary" style="min-height:24px;padding:0 8px;font-size:12.5px" onclick="repairDrift('${a.agent_id}')">一键修复</button>` : "";
+          return `<tr class="gm-handshake-row"><td>${agentLabel(a.agent_id)}</td><td><span class="gm-tech-num" style="background:${meta.bg};color:${meta.color};padding:1px 8px;border-radius:8px">${meta.label}</span> <span style="color:#929cad">${detail}</span></td><td>${repair}</td></tr>`;
         }).join("") + `</table>`;
       }
 
@@ -2546,8 +2647,8 @@
       const snapHtml = snaps.length ? `<table class="gm-status-table">` + snaps.map(s => `
         <tr class="gm-handshake-row">
           <td>${s.is_original ? "🔒 官方初始" : s.created_at.slice(0,19).replace("T"," ")}</td>
-          <td style="color:#6e6e73">${s.reason}（${s.file_count} 文件）</td>
-          <td><button class="gm-btn" style="min-height:24px;padding:0 8px;font-size:11px" onclick="restoreSnapshot('${selAgent}','${s.name}')">回滚到此</button></td>
+          <td style="color:#929cad">${s.reason}（${s.file_count} 文件）</td>
+          <td><button class="gm-btn" style="min-height:24px;padding:0 8px;font-size:12.5px" onclick="restoreSnapshot('${selAgent}','${s.name}')">回滚到此</button></td>
         </tr>`).join("") + `</table>` : `<small>选择 Agent 后点击“查看配置快照”。</small>`;
 
       return `
@@ -2583,7 +2684,7 @@
                 ${agentNames.map(id => `<option value="${id}" ${id===selAgent?"selected":""}>${agentLabel(id)}</option>`).join("")}
               </select>
               <button class="gm-btn" onclick="loadSnapshots()">查看配置快照</button>
-              <button class="gm-btn" style="border-color:#c0392b;color:#c0392b" onclick="restoreOriginal('${selAgent}')">恢复官方初始配置</button>
+              <button class="gm-btn" style="border-color:rgba(242,139,130,.4);color:#f28b82" onclick="restoreOriginal('${selAgent}')">恢复官方初始配置</button>
             </div>
             <div style="margin-top:10px">${snapHtml}</div>
           </div>
@@ -2597,8 +2698,8 @@
       return `<table class="gm-status-table">` + eps.map(e => {
         const ok = e.reachable;
         const val = ok ? `${e.latency_ms} ms` : "不可达";
-        const color = ok ? (e.latency_ms < 300 ? "#1A7F37" : "#B06000") : "#c0392b";
-        const rec = e.id === lat.recommended_id ? ` <span class="gm-tech-num" style="background:#e6f4ea;color:#1A7F37;padding:1px 6px;border-radius:6px">推荐</span>` : "";
+        const color = ok ? (e.latency_ms < 300 ? "#00f2a9" : "#fdd663") : "#f28b82";
+        const rec = e.id === lat.recommended_id ? ` <span class="gm-tech-num" style="background:rgba(0,242,169,.10);color:#00f2a9;padding:1px 6px;border-radius:6px">推荐</span>` : "";
         return `<tr class="gm-handshake-row"><td>${e.label || e.id}</td><td style="color:${color}">${val}${rec}</td></tr>`;
       }).join("") + `</table>`;
     }
@@ -2614,13 +2715,13 @@
     function renderCodexModeBody(health) {
       const cm = health.codexMode;
       if (!cm) return `<small>点击“检测当前模式”查看 Codex 现在是哪种模式。</small>`;
-      if (!cm.configured) return `<small style="color:#B06000">未检测到胖虎 Codex 配置，请先在上面完成 Codex 配置。</small>`;
+      if (!cm.configured) return `<small style="color:#fdd663">未检测到胖虎 Codex 配置，请先在上面完成 Codex 配置。</small>`;
       const login = cm.has_chatgpt_login
-        ? `<span class="gm-tech-num" style="background:#e6f4ea;color:#1A7F37;padding:1px 8px;border-radius:8px">ChatGPT 登录态：保留 ✓</span>`
-        : `<span class="gm-tech-num" style="background:#f5f5f7;color:#6e6e73;padding:1px 8px;border-radius:8px">ChatGPT 登录态：无</span>`;
+        ? `<span class="gm-tech-num" style="background:rgba(0,242,169,.10);color:#00f2a9;padding:1px 8px;border-radius:8px">ChatGPT 登录态：保留 ✓</span>`
+        : `<span class="gm-tech-num" style="background:rgba(255,255,255,.05);color:#929cad;padding:1px 8px;border-radius:8px">ChatGPT 登录态：无</span>`;
       const gw = cm.gateway_ok === false
-        ? ` <span class="gm-tech-num" style="background:#fdecea;color:#c0392b;padding:1px 8px;border-radius:8px">网关异常</span>` : "";
-      return `<div><span class="gm-tech-num" style="background:#eef;color:#0071E3;padding:2px 10px;border-radius:10px">当前：${cm.current_mode_label}</span> ${login}${gw}</div>`;
+        ? ` <span class="gm-tech-num" style="background:rgba(242,139,130,.10);color:#f28b82;padding:1px 8px;border-radius:8px">网关异常</span>` : "";
+      return `<div><span class="gm-tech-num" style="background:rgba(0,242,196,.10);color:#00f2c4;padding:2px 10px;border-radius:10px">当前：${cm.current_mode_label}</span> ${login}${gw}</div>`;
     }
     function detectCodexMode() {
       ensureConfigHealth();
@@ -2724,7 +2825,7 @@
 
           <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
             ${officialRobotPages.map(([label, url]) => `
-              <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${url}')" style="min-height: 32px; padding: 0 10px; font-size: 11px;">${label}</button>
+              <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${url}')" style="min-height: 32px; padding: 0 10px; font-size: 12.5px;">${label}</button>
             `).join("")}
           </div>
 
@@ -2889,26 +2990,26 @@
               <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
                 <div>
                   <b style="font-size: 15px; color: var(--g-warning);">云端代理业务快照 (等待同步)</b>
-                  <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">未同步资产信息与结算快照，资产归属及收益确权完全以云端记账为准</div>
+                  <div style="font-size: 12.5px; color: var(--g-text-subtle); margin-top: 2px;">未同步资产信息与结算快照，资产归属及收益确权完全以云端记账为准</div>
                 </div>
                 <span class="gm-status-lock" style="color: var(--g-warning); border-color: rgba(253, 214, 99, 0.3); background: rgba(253, 214, 99, 0.05);">等待同步</span>
               </div>
 
               <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">下游客户总数</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">下游客户总数</label>
                   <div class="gm-skeleton-bar" style="width: 80px; height: 18px;"></div>
                 </div>
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">已结算可提现</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">已结算可提现</label>
                   <div class="gm-skeleton-bar" style="width: 100px; height: 18px;"></div>
                 </div>
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">待审核未结算</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">待审核未结算</label>
                   <div class="gm-skeleton-bar" style="width: 100px; height: 18px;"></div>
                 </div>
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">审核冻结金额</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle); display: block; margin-bottom: 8px;">审核冻结金额</label>
                   <div class="gm-skeleton-bar" style="width: 100px; height: 18px;"></div>
                 </div>
               </div>
@@ -2916,13 +3017,13 @@
               <div class="gm-empty-state-banner" style="padding: 24px; border: 1px dashed rgba(253, 214, 99, 0.2); background: rgba(253, 214, 99, 0.005); margin-bottom: 20px; border-radius: var(--g-radius-control);">
                 <div style="font-size: 24px; margin-bottom: 8px; animation: ledPulse 2s infinite ease-in-out; color: var(--g-warning);">✦</div>
                 <h4 style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--g-text);">云端资产快照未同步</h4>
-                <p style="font-size: 11px; color: var(--g-text-subtle); max-width: 420px; line-height: 1.6; margin: 0 auto;">
+                <p style="font-size: 12.5px; color: var(--g-text-subtle); max-width: 420px; line-height: 1.6; margin: 0 auto;">
                   代理权级、结算比率与账目流水全部托管在云端。本地不作计算缓存。请点击下方同步按钮发起服务端快照同步。
                 </p>
               </div>
 
               <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
-                <span style="font-size: 11px; color: var(--g-text-subtle);">上次同步: <strong class="gm-tech-num">${lastSync}</strong></span>
+                <span style="font-size: 12.5px; color: var(--g-text-subtle);">上次同步: <strong class="gm-tech-num">${lastSync}</strong></span>
                 <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
                   同步云端资产快照
                 </button>
@@ -2931,7 +3032,7 @@
 
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
               <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近确权同步流水</b>
-              <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
+              <div class="gm-console-screen" style="padding: 12px; font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
                 <div class="gm-log-row muted">[04:27:56] 系统：代理中心连接器已初始化</div>
                 <div class="gm-log-row muted">[04:27:56] 系统：等待服务端快照同步指令</div>
                 <div class="gm-log-row muted">[04:27:56] 规则：当前仅展示标准确权状态</div>
@@ -2948,32 +3049,32 @@
               <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
                 <div>
                   <b style="font-size: 15px; color: var(--g-success);">云端代理业务快照 (已同步)</b>
-                  <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">当前记账代理等级: <strong style="color: var(--g-primary);">${level}</strong></div>
+                  <div style="font-size: 12.5px; color: var(--g-text-subtle); margin-top: 2px;">当前记账代理等级: <strong style="color: var(--g-primary);">${level}</strong></div>
                 </div>
                 <span class="gm-status-lock" style="color: var(--g-success); border-color: rgba(129, 201, 149, 0.3); background: rgba(129, 201, 149, 0.05);">CLOUD SNAPSHOT</span>
               </div>
 
               <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">下游客户总数</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle);">下游客户总数</label>
                   <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-primary); margin-top: 4px; display: block;">${displayCount}</strong>
                 </div>
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">已结算可提现</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle);">已结算可提现</label>
                   <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-success); margin-top: 4px; display: block;">${displayAvail}</strong>
                 </div>
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">待审核未结算</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle);">待审核未结算</label>
                   <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-warning); margin-top: 4px; display: block;">${displayPend}</strong>
                 </div>
                 <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); padding: 14px;">
-                  <label style="font-size: 10px; text-transform: uppercase; color: var(--g-text-subtle);">审核冻结金额</label>
+                  <label style="font-size: 12px; text-transform: uppercase; color: var(--g-text-subtle);">审核冻结金额</label>
                   <strong class="gm-tech-num" style="font-size: 18px; color: var(--g-danger); margin-top: 4px; display: block;">${displayFroz}</strong>
                 </div>
               </div>
 
               <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
-                <span style="font-size: 11px; color: var(--g-text-subtle);">更新时间: <strong class="gm-tech-num">${lastSync}</strong></span>
+                <span style="font-size: 12.5px; color: var(--g-text-subtle);">更新时间: <strong class="gm-tech-num">${lastSync}</strong></span>
                 <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
                   重新拉取快照
                 </button>
@@ -2982,7 +3083,7 @@
 
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
               <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近确权同步流水</b>
-              <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
+              <div class="gm-console-screen" style="padding: 12px; font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
                 <div class="gm-log-row success">[04:27:56] 系统：代理中心连接器已初始化</div>
                 <div class="gm-log-row success">[04:27:57] 系统：已请求快照同步授权</div>
                 <div class="gm-log-row success">[04:27:58] 系统：服务端快照已同步</div>
@@ -2995,10 +3096,10 @@
         const rightCol = `
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
             <b>云端授权与规则契约</b>
-            <div style="font-size: 11px; margin-top: 8px; color: var(--g-text-muted);">
+            <div style="font-size: 12.5px; margin-top: 8px; color: var(--g-text-muted);">
               <span>当前等级: </span><strong style="color: var(--g-primary);">${level}</strong>
             </div>
-            <ul style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 10px; padding-left: 14px;">
+            <ul style="font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 10px; padding-left: 14px;">
               <li>业务合作及收益清算遵循服务端规则。</li>
               <li>一切返利与结算金额完全托管在云端服务器。</li>
               <li>在诊断矩阵未通过前，代理确权受运行规则限制处于受限状态。</li>
@@ -3068,18 +3169,18 @@
                 <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 12px;">等待确权数据通道</b>
                 <div class="gm-tunnel-diagram" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid var(--g-line);">
                   <div style="text-align: center;">
-                    <div style="font-size: 11px; font-weight: bold; color: var(--g-text);">本地客户端</div>
-                    <div style="font-size: 9px; color: var(--g-text-subtle); margin-top: 2px;">Local Node</div>
+                    <div style="font-size: 12.5px; font-weight: bold; color: var(--g-text);">本地客户端</div>
+                    <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">Local Node</div>
                   </div>
                   <div style="flex: 1; display: flex; flex-direction: column; align-items: center; margin: 0 16px; position: relative;">
-                    <div style="font-size: 9px; color: var(--g-success); margin-bottom: 4px; font-family: var(--g-mono);">服务端数据通道</div>
+                    <div style="font-size: 11px; color: var(--g-success); margin-bottom: 4px; font-family: var(--g-mono);">服务端数据通道</div>
                     <div style="width: 100%; height: 2px; background: var(--g-line); position: relative; overflow: hidden; border-radius: 1px;">
                       <div style="position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg, transparent, var(--g-success), transparent); animation: gm-tunnel-flow 2s infinite linear;"></div>
                     </div>
                   </div>
                   <div style="text-align: center;">
-                    <div style="font-size: 11px; font-weight: bold; color: var(--g-primary);">胖虎AI云端网关</div>
-                    <div style="font-size: 9px; color: var(--g-text-subtle); margin-top: 2px;">aitokenapi.cc</div>
+                    <div style="font-size: 12.5px; font-weight: bold; color: var(--g-primary);">胖虎AI云端网关</div>
+                    <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">aitokenapi.cc</div>
                   </div>
                 </div>
               </div>
@@ -3088,7 +3189,7 @@
             <div class="gm-workbench-sidebar">
               <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
                 <b>服务端边界提示</b>
-                <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 8px;">
+                <p style="font-size: 12.5px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 8px;">
                   您正通过内置网关访问外部业务。客户端不存储您的支付账号或交易快照。所有支付、退款及确权行为均以目标云端服务的最终记账数据为准。
                 </p>
               </div>
@@ -3123,14 +3224,14 @@
           <div class="gm-inspector-col">
             <h3>交付确权状态</h3>
             <div style="margin-bottom: 12px;">
-              <span class="gm-chip warn" style="padding: 6px 12px; font-size: 11px; width: 100%; justify-content: center; border-radius: 6px;">
+              <span class="gm-chip warn" style="padding: 6px 12px; font-size: 12.5px; width: 100%; justify-content: center; border-radius: 6px;">
                 未同步 / 等待服务端数据
               </span>
             </div>
             <div class="gm-empty-state-banner">
               <div style="font-size: 20px; margin-bottom: 6px; color: var(--g-warning);">✦</div>
               <h4 style="font-size: 12px; font-weight: 700; margin-bottom: 4px;">等待服务端快照</h4>
-              <p style="font-size: 11px; color: var(--g-text-subtle);">未同步环境及资产信息<br>确权以服务端为准</p>
+              <p style="font-size: 12.5px; color: var(--g-text-subtle);">未同步环境及资产信息<br>确权以服务端为准</p>
             </div>
           </div>
 
@@ -3176,7 +3277,7 @@
         <div class="gm-inspector-col">
           <h3>交付确权状态</h3>
           <div style="margin-bottom: 12px;">
-            <span class="gm-chip ${conclusionClass}" style="padding: 6px 12px; font-size: 11px; width: 100%; justify-content: center; border-radius: 6px;">
+            <span class="gm-chip ${conclusionClass}" style="padding: 6px 12px; font-size: 12.5px; width: 100%; justify-content: center; border-radius: 6px;">
               ${conclusionLabel}
             </span>
           </div>
