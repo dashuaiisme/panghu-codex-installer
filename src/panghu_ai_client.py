@@ -5825,6 +5825,18 @@ class WebviewApi:
 
     def switch_subnav(self, itemId):
         try:
+            # agent 模块的子导航就是 11 步流程；跳步必须过 can_access_step 门禁，
+            # 否则买家没做完前置步骤(Key/环境/选 Agent)也能直接跳到"写入配置/功能验收"。
+            # 统一走 go_to_step：越权时自动回退到 first_missing_step 并提示。
+            if self.app.active_module.get() == MODULE_AGENT:
+                try:
+                    idx = int(itemId)
+                except (TypeError, ValueError):
+                    idx = None
+                if idx is not None:
+                    self.app.go_to_step(idx)
+                    self.app.sync_webview_state()
+                    return {"success": True}
             self.app.active_subnav.set(str(itemId))
             self.app.sync_webview_state()
             return {"success": True}
@@ -9505,22 +9517,35 @@ class InstallerApp:
     def refresh_recommended_agent_product(self) -> None:
         if not hasattr(self, "buyer_product_id"):
             return
+        # 按买家在第 3 步实际勾选的 Agent 推荐要购买的商品，而不是写死 codex——
+        # 否则选了 Claude/OpenClaw 等的买家扫码付款却买成 Codex 权益，回来仍装不了自己要的，白花钱。
+        target_agent_id = "codex"
+        target_mode_key = CodexConfigMode.DIRECT_API.value
+        try:
+            selected = self.selected_agents()
+        except Exception:
+            selected = []
+        if selected:
+            agent, mode = selected[0]
+            target_agent_id = agent.id
+            target_mode_key = commercial_mode_key_for_deployment(agent.id, mode)
         product = find_listed_product(
             self.commercial_products,
-            agent_id="codex",
-            mode_key=CodexConfigMode.DIRECT_API.value,
+            agent_id=target_agent_id,
+            mode_key=target_mode_key,
         )
-        if product and not self.buyer_product_id.get().strip():
-            self.buyer_product_id.set(product.product_id)
-        if getattr(self, 'webview_mode', False):
-            self.sync_webview_state()
-        product = find_listed_product(
-            self.commercial_products,
-            agent_id="codex",
-            mode_key=CodexConfigMode.DIRECT_API.value,
-        )
-        if product and not self.buyer_product_id.get().strip():
-            self.buyer_product_id.set(product.product_id)
+        if not product:
+            return
+        current = self.buyer_product_id.get().strip()
+        last_auto = getattr(self, "_auto_recommended_product_id", "")
+        # 仅当"未填"或"仍是上次自动推荐值"时更新，保留买家手工填写的商品号；
+        # 随选择变化自动改写推荐商品，避免停留在旧的(codex)商品上。
+        if not current or current == last_auto:
+            if product.product_id != current:
+                self.buyer_product_id.set(product.product_id)
+                if getattr(self, 'webview_mode', False):
+                    self.sync_webview_state()
+            self._auto_recommended_product_id = product.product_id
 
     def update_step_hints(self) -> None:
         hint_data = {
@@ -10215,6 +10240,10 @@ class InstallerApp:
     def start_install(self) -> None:
         """第 4 步「安装」：仅下载安装所选 Agent，不写配置、不做商业权益预占/扣次。
         配置写入与交付计费在第 5 步「写入配置」（start_deploy）完成。"""
+        # 与 start_deploy/validate_config_ready 一致的并发护栏：已有后台任务在跑时直接返回，
+        # 避免第二个安装线程与部署/安装线程并发抢写同一批 ~/.codex、~/.claude、快照/备份文件而损坏。
+        if self.worker_running:
+            return
         if not self.can_access_step(4):
             self.go_to_step(4)
             return
@@ -10558,12 +10587,19 @@ class InstallerApp:
                     except Exception as exc:
                         progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
                         self.log_from_worker(f"{agent.name}/{mode} 配置写入失败：{exc}")
-                    success_count += 1
+                    # 只有配置真正写入成功才算"成功处理"，否则顶栏"成功 N/M"会虚高误导买家。
+                    if progress.status_for(DeploymentNode.CONFIG_WRITE) == NodeStatus.PASS:
+                        success_count += 1
                 else:
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.FAILED)
                     progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
             if any(agent.id == "codex" for agent, _ in selected):
                 codex_key, codex_model = self.key_model_for_agent("codex", api_key, model)
+                codex_progress = agent_progress.setdefault(("codex", CodexConfigMode.DIRECT_API.value), DeploymentProgress())
+                # 真实二进制安装结果来自上面的 install_agent；install_codex_config 只写配置+打网关，
+                # 不能证明 Codex 命令/客户端真的装上了。若二进制没装上仍判 INSTALL=PASS，会造成
+                # "没装也扣次"的假交付，因此扣次前必须以真实安装结果为准。
+                codex_binary_ok = codex_progress.status_for(DeploymentNode.INSTALL) == NodeStatus.PASS
                 ok = install_codex_config(
                     codex_key,
                     base_url,
@@ -10573,18 +10609,22 @@ class InstallerApp:
                     self.log_from_worker,
                     temporary_access,
                 )
-                codex_progress = agent_progress.setdefault(("codex", CodexConfigMode.DIRECT_API.value), DeploymentProgress())
                 if ok:
-                    codex_progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS)
+                    codex_progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS if codex_binary_ok else NodeStatus.NEEDS_MANUAL)
                     codex_progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS)
                     codex_progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.NEEDS_MANUAL)
                     self.log_from_worker("Codex 胖虎AI配置已应用。")
-                    probe_ok, probe_excerpt = run_real_task_probe(base_url, codex_key, codex_model)
+                    if codex_binary_ok:
+                        probe_ok, probe_excerpt = run_real_task_probe(base_url, codex_key, codex_model)
+                    else:
+                        probe_ok = False
+                        probe_excerpt = "未在本机检测到 Codex 命令/客户端，跳过真实任务验证；判为未完整交付、不扣次。请重开终端或按安装指引装好 Codex 后重试。"
+                        self.log_from_worker(probe_excerpt)
                     real_task = verify_real_task_evidence(
                         diagnostic_code=diagnostic_code,
                         agent_id="codex",
                         mode_key=CodexConfigMode.DIRECT_API.value,
-                        request_ok=True,
+                        request_ok=codex_binary_ok,
                         response_ok=probe_ok,
                         response_excerpt=probe_excerpt,
                     )

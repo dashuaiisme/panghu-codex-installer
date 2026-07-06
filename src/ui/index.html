@@ -2163,6 +2163,7 @@
       window.pywebview.api.get_initial_state().then(data => {
         // Safe backend merging. Force hasSynced on actual successful API bridge return.
         state = { ...state, ...data, hasSynced: true };
+        seedLogsFromState();
         refreshAll();
       }).catch(() => {
         state = buildPreviewState();
@@ -2258,9 +2259,32 @@
       }
     }
 
+    function agentStepComplete(n) {
+      // 用真实完成信号判断步骤是否完成，取代"编号 < 当前步"的假勾。
+      const keyOk = !!state.savedKeyOk;
+      const envOk = !!state.environmentOk;
+      const agentsSelected = Object.values(state.agentEnabled || {}).some(Boolean);
+      if (n === 1) return keyOk;
+      if (n === 2) return keyOk && envOk;
+      if (n === 3) return keyOk && envOk && agentsSelected;
+      // 第 4 步起(安装/写配置/验收)后端未暴露逐步完成标志：仅当前 3 步真实完成、
+      // 且已导航越过该步时才显示已完成，避免在前置步骤没做时就打勾。
+      const prereqOk = keyOk && envOk && agentsSelected;
+      return prereqOk && Number(n) < Number(state.currentStep || state.activeSubnav || 1);
+    }
+
+    function seedLogsFromState() {
+      // 用后端真实日志历史（state.logs: {步骤: [{t,c,m}]}）覆盖 logsData，
+      // 让首屏/刷新/切换步骤看到的是真实日志，而不是写死的占位文本。
+      if (state && state.logs && typeof state.logs === "object") {
+        Object.keys(state.logs).forEach(k => { logsData[k] = state.logs[k]; });
+      }
+    }
+
     window.updatePythonState = function(data) {
       // Mark as synced upon state updates from python script.
       state = { ...state, ...data, hasSynced: true };
+      seedLogsFromState();
       if (state.activeModule === "value_added") {
         const items = currentSubnavItems("value_added");
         if (items.length && !items.some(item => String(item[0]) === String(state.activeSubnav))) {
@@ -2292,7 +2316,7 @@
 
       items.forEach((item, idx) => {
         const active = String(state.activeSubnav) === String(item[0]);
-        const done = mod === "agent" && Number(item[0]) < Number(state.activeSubnav || 1);
+        const done = mod === "agent" && agentStepComplete(Number(item[0]));
 
         if (mod === "agent" && phaseAt[item[0]]) {
           const g = document.createElement("div");
@@ -2380,9 +2404,9 @@
               </div>
               <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
                 <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">端口与进程检查</b>
-                <span><label>进程冲突检查</label><strong>${state.environmentOk ? "无冲突 ✓" : "未扫描"}</strong></span>
-                <span><label>端口状态</label><strong>${state.environmentOk ? "端口闲置 ✓" : "待探活"}</strong></span>
-                <span><label>网络通道</label><strong>${state.environmentOk ? "隧道已建立 ✓" : "未就绪"}</strong></span>
+                <span><label>风险插件检查</label><strong>${state.environmentOk ? "无风险插件 ✓" : "未扫描"}</strong></span>
+                <span><label>端口状态</label><strong>部署时校验</strong></span>
+                <span><label>网络通道</label><strong>部署时校验</strong></span>
               </div>
             </div>
 
@@ -2456,7 +2480,7 @@
                   `).join("")}
                 </select>
                 <small style="margin-top: auto; display: block; line-height: 1.4;">
-                  ${id === "codex" ? "支持 CLI 和客户端两种方式。" : "以 CLI 方式自动安装、配置并验收。"}
+                  ${(agentModeOptions[id] || []).some(([m]) => m === "client") ? "支持 CLI 和客户端两种方式。" : "以 CLI 方式自动安装、配置并验收。"}
                 </small>
               </div>
             `).join("")}
@@ -2480,11 +2504,13 @@
           "4": [["开始安装","start_install"]],
           "5": [["查看配置目录","open_config_dir"],["载入备份快照","restore_backups"]],
           "6": [["打开 Agent 工作空间","open_workspace"],["打开配置目录","open_config_dir"]],
-          "7": [["运行连通测试","start_deploy"]],
+          "7": [["复制对话测试日志","copy_logs"]],
           "8": [["打开验收矩阵页","open_url"]],
           "9": [["复制日志存档","copy_logs"]]
         };
-        const actions = actionMap[step] || [["继续下一步","start_deploy"]];
+        // 第 7 步是"查看中文对话测试结果"，不应再触发完整付费部署(start_deploy 会重新预占权益会话+再扣次)。
+        // 真正的写配置+验收+扣费只在第 5 步「写入配置」；这里及兜底动作均改为不计费的查看类操作。
+        const actions = actionMap[step] || [["复制运行日志","copy_logs"]];
         stepBody = `
           <div class="gm-canvas-grid" style="grid-template-columns: 1fr; gap: 12px; margin-bottom: 20px;">
             <div class="gm-canvas-card gm-hud-corners">
@@ -2963,10 +2989,39 @@
         </div>`;
     }
 
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+    function safeHttpUrl(s) {
+      const u = String(s == null ? "" : s).trim();
+      return /^https?:\/\//i.test(u) ? u : "";
+    }
+    function jsStringInAttr(s) {
+      // 供内联 on* 属性里的单引号 JS 字符串使用：先做 JS 转义(反斜杠/单引号)，
+      // 再对可能破坏双引号 HTML 属性的字符做 HTML 转义。
+      return String(s == null ? "" : s)
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/[\r\n]+/g, " ");
+    }
+
     function renderServiceCanvas() {
       const mod = state.activeModule;
       const key = state.activeSubnav || defaultSubnav(mod);
       const meta = currentPageMeta(mod, key);
+      // 服务端目录(增值业务)数据可能含引号/HTML，进 innerHTML/onclick 前必须转义，
+      // 防止和已修的支付二维码同类的 XSS/属性击穿。
+      const safeMetaTitle = escapeHtml(meta[0]);
+      const safeMetaDesc = escapeHtml(meta[2]);
+      const safeMetaOpenUrl = jsStringInAttr(safeHttpUrl(meta[1]));
 
       document.getElementById("canvasKicker").innerText = modules.find(m => m[0] === mod)?.[1] || "云端";
       document.getElementById("canvasTitle").innerText = meta[0];
@@ -3128,7 +3183,7 @@
           <div class="gm-activity-strip gm-scanline" style="margin-top: auto;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="gm-activity-badge gm-tech-num">服务端入口</span>
-              <span class="gm-activity-text gm-tech-num">业务端 [${meta[0]}] 需要打开服务端页面后完成确权与数据同步。</span>
+              <span class="gm-activity-text gm-tech-num">业务端 [${safeMetaTitle}] 需要打开服务端页面后完成确权与数据同步。</span>
             </div>
             <span class="gm-activity-time gm-tech-num">待命</span>
           </div>`;
@@ -3138,12 +3193,12 @@
             <div class="gm-workbench-main">
               <div class="gm-canvas-card gm-hud-corners" style="background: var(--g-surface-2); padding: 24px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
-                  <b style="font-size: 15px; color: var(--g-primary);">服务入口: ${meta[0]}</b>
+                  <b style="font-size: 15px; color: var(--g-primary);">服务入口: ${safeMetaTitle}</b>
                   <span class="gm-status-lock">等待服务端</span>
                 </div>
 
                 <p style="font-size: 12px; color: var(--g-text-muted); line-height: 1.6; margin-bottom: 20px;">
-                  ${meta[2]}
+                  ${safeMetaDesc}
                 </p>
 
                 <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--g-line); border-radius: var(--g-radius-control); padding: 12px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
@@ -3158,7 +3213,7 @@
                 </div>
 
                 <div style="display: flex; gap: 12px;">
-                  <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.open_url('${meta[1]}')" style="min-width: 180px; height: 38px;">
+                  <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.open_url('${safeMetaOpenUrl}')" style="min-width: 180px; height: 38px;">
                     打开云端业务控制台
                   </button>
                 </div>
@@ -3206,7 +3261,7 @@
           <div class="gm-activity-strip gm-scanline" style="margin-top: auto;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="gm-activity-badge gm-tech-num">服务端入口</span>
-              <span class="gm-activity-text gm-tech-num">业务端 [${meta[0]}] 需要打开服务端页面后完成确权与数据同步。</span>
+              <span class="gm-activity-text gm-tech-num">业务端 [${safeMetaTitle}] 需要打开服务端页面后完成确权与数据同步。</span>
             </div>
             <span class="gm-activity-time gm-tech-num">待命</span>
           </div>`;
@@ -3739,17 +3794,30 @@
       const el = document.getElementById("logViewport");
       if (!el) return;
 
-      const div = document.createElement("div");
-      const lower = String(line).toLowerCase();
-      const tone = cls || (
+      // 后端推送的实时/历史日志是 {t,c,m} 对象（t=时间, c=log-text-* 样式, m=文本）；
+      // 也兼容纯字符串（浏览器预览桩）。之前把对象直接当字符串 → 满屏 [object Object]，
+      // 买家点安装/写配置后看不到任何真实结果。
+      let text, tone = cls;
+      if (line && typeof line === "object") {
+        text = (line.t ? "[" + line.t + "] " : "") + (line.m == null ? "" : line.m);
+        if (!tone) {
+          tone = { "log-text-bad": "failed", "log-text-ok": "success", "log-text-run": "running", "log-text-info": "muted" }[line.c] || "muted";
+        }
+      } else {
+        text = String(line);
+      }
+
+      const lower = text.toLowerCase();
+      const finalTone = tone || (
         lower.includes("失败") || lower.includes("error") ? "failed" :
         lower.includes("成功") || lower.includes("ok") || lower.includes("通过") || lower.includes("check ✓") ? "success" :
         lower.includes("正在") || lower.includes("检测") || lower.includes("诊断") || lower.includes("启动") ? "running" :
         "muted"
       );
 
-      div.className = `gm-log-row ${tone}`;
-      div.innerText = line;
+      const div = document.createElement("div");
+      div.className = `gm-log-row ${finalTone}`;
+      div.innerText = text;
       el.appendChild(div);
       el.scrollTop = el.scrollHeight;
     };
@@ -3759,7 +3827,8 @@
       if (!el) return;
       el.innerHTML = "";
       const active = state.activeModule === "agent" ? parseInt(state.activeSubnav || "1", 10) : 1;
-      (logsData[active] || ["[19:40:00] 等待系统发出同步协同握手命令..."]).forEach(line => appendPythonLog(line));
+      const rows = (logsData[active] && logsData[active].length) ? logsData[active] : ["[--:--:--] 暂无日志。"];
+      rows.forEach(line => appendPythonLog(line));
     };
   </script>
 </body>

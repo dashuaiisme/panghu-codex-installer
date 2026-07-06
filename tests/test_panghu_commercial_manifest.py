@@ -2177,6 +2177,108 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("Hermes/cli 启动检测通过", log_text)
         self.assertIn("最小对话已通过；商业交付成功已提交", log_text)
 
+    def test_deploy_worker_does_not_charge_codex_when_binary_not_installed(self) -> None:
+        # 回归：Codex 二进制未真正装上(install_agent=False)，但配置写入成功且网关探测本会通过时，
+        # 不得判 INSTALL=PASS、不得 complete/扣次——否则"没装也扣次"的假交付。
+        app = InstallerApp.__new__(InstallerApp)
+        app.cookie_jar = None
+        app.next_diagnostic_code = lambda: "PH-CFG-CODEX"
+        logs = []
+        app.log_from_worker = logs.append
+        app.set_status_from_worker = lambda _message: None
+        app.run_on_ui = lambda callback: callback()
+        app.set_busy = lambda _busy: None
+        app.show_error_from_worker = lambda _title, _message: None
+        app.show_info_from_worker = lambda _title, _message: None
+        app.deployer_manifest = {}
+        app.commercial_capabilities = {}
+        app.commercial_products = []
+        app.commercial_entitlements = []
+        app.refresh_commercial_summary = lambda: None
+        contexts = deployment_commercial_contexts({"id": "buyer-1"})
+        codex = next(agent for agent in installer_module.AGENTS if agent.id == "codex")
+        completed = []
+        failed = []
+        probe_calls = []
+
+        original_fetch = installer_module.fetch_deployer_manifest
+        original_trust = installer_module.ensure_commercial_manifest_trusted
+        original_install = installer_module.install_agent
+        original_apply_config = installer_module.apply_agent_config
+        original_codex_config = installer_module.install_codex_config
+        original_probe = installer_module.run_real_task_probe
+        original_reserve = installer_module.execute_config_session_reserve
+        original_complete = installer_module.execute_config_session_complete
+        original_fail = installer_module.execute_config_session_fail
+        try:
+            installer_module.fetch_deployer_manifest = lambda *_args, **_kwargs: (
+                True,
+                "manifest ok",
+                {
+                    "agents": [{"id": "codex", "delivery_scope": "full_config", "full_config_allowed": True}],
+                    "entitlements": [
+                        {
+                            "entitlement_id": "ent-codex",
+                            "buyer_user_id": "buyer-1",
+                            "agent_id": "codex",
+                            "mode_key": "direct_api",
+                            "valid_until": "2099-01-01",
+                            "delivery_scope": "full_config",
+                            "status": "active",
+                            "remaining_uses": 1,
+                            "device_limit": 1,
+                        }
+                    ],
+                },
+            )
+            installer_module.ensure_commercial_manifest_trusted = lambda _manifest: None
+            # 关键：二进制安装失败（如无 npm/node、权限、下载不全）。
+            installer_module.install_agent = lambda _agent, _mode, _log: False
+            installer_module.apply_agent_config = lambda _agent, _mode, _api_key, _model, _log: True
+            # 配置写入成功（只写文件 + 打网关），且网关探测本会通过——但都不代表 Codex 命令装上了。
+            installer_module.install_codex_config = lambda *args, **kwargs: True
+            installer_module.run_real_task_probe = lambda *args, **kwargs: (
+                probe_calls.append(args),
+                (True, "胖虎AI配置验证成功"),
+            )[1]
+            installer_module.execute_config_session_reserve = lambda **_kwargs: ("cfg-codex", "reserved")
+            installer_module.execute_config_session_complete = lambda *args, **_kwargs: (
+                completed.append(args[0]),
+                "completed-with-deduct",
+            )
+            installer_module.execute_config_session_fail = lambda *args, **_kwargs: (
+                failed.append(args[0]),
+                "failed-without-deduct",
+            )
+
+            app._deploy_worker(
+                selected=[(codex, "cli")],
+                user={"id": "buyer-1"},
+                deployer_auth={"token": "buyer-token"},
+                contexts=contexts,
+                api_key="sk-live-secret",
+                base_url="https://aitokenapi.cc",
+                model="gpt-5.5",
+                skip_test=True,
+                open_app=False,
+            )
+        finally:
+            installer_module.fetch_deployer_manifest = original_fetch
+            installer_module.ensure_commercial_manifest_trusted = original_trust
+            installer_module.install_agent = original_install
+            installer_module.apply_agent_config = original_apply_config
+            installer_module.install_codex_config = original_codex_config
+            installer_module.run_real_task_probe = original_probe
+            installer_module.execute_config_session_reserve = original_reserve
+            installer_module.execute_config_session_complete = original_complete
+            installer_module.execute_config_session_fail = original_fail
+
+        log_text = "\n".join(logs)
+        # 不得扣次；网关探测应被跳过（二进制没装上时不该把"网关通"当成交付通过）。
+        self.assertEqual(completed, [])
+        self.assertEqual(probe_calls, [])
+        self.assertIn("未在本机检测到 Codex 命令", log_text)
+
     def test_deploy_worker_does_not_complete_client_scope_with_cli_probe(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
         app.cookie_jar = None
