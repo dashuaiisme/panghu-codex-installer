@@ -2465,7 +2465,7 @@
         stepBody = renderConfigHealth();
       } else {
         const actionMap = {
-          "4": [["开始安装并配置","start_deploy"]],
+          "4": [["开始部署与配置","start_deploy"]],
           "5": [["查看配置目录","open_config_dir"],["载入备份快照","restore_backups"]],
           "6": [["打开 Agent 工作空间","open_workspace"],["打开配置目录","open_config_dir"]],
           "7": [["运行连通测试","start_deploy"]],
@@ -2813,15 +2813,15 @@
 
           <div class="gm-canvas-grid" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px;">
             <div class="gm-form-field">
-              <label>平台账号 / 机器人 ID</label>
+              <label>platform_account_id</label>
               <small>机器人 ID / 应用 ID / Bot AppID，从官方控制台复制。</small>
             </div>
             <div class="gm-form-field">
-              <label>聊天 / 群组 / 会话 ID</label>
+              <label>platform_chat_id</label>
               <small>群聊、会话、频道或企业内部 Chat ID。</small>
             </div>
             <div class="gm-form-field">
-              <label>连接方式</label>
+              <label>gateway_mode</label>
               <small>选择官方机器人、客户自有机器人或人工桥接。</small>
             </div>
           </div>
@@ -2882,15 +2882,15 @@
               <input class="gm-input" id="cslSessionId" placeholder="创建会话后自动回填，也可手动填入" value="${sessionId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>平台账号 / 机器人 ID</label>
+              <label>platform_account_id</label>
               <input class="gm-input" id="cslPlatformAccountId" placeholder="如飞书机器人、QQ Bot、企业微信应用 ID" value="${platformAccountId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>聊天 / 群组 / 会话 ID</label>
+              <label>platform_chat_id</label>
               <input class="gm-input" id="cslPlatformChatId" placeholder="手机会话、群组、好友、企业或内部 Chat ID" value="${chatTarget}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>连接方式</label>
+              <label>gateway_mode</label>
               <select class="gm-select" id="cslGatewayMode" onchange="updateCSLPayload()">
                 <option value="official_bot" ${gatewayMode === "official_bot" ? "selected" : ""}>官方机器人 / 应用</option>
                 <option value="customer_bot" ${gatewayMode === "customer_bot" ? "selected" : ""}>客户自有机器人</option>
@@ -2905,7 +2905,7 @@
 
           <div style="display: flex; gap: 12px; flex-wrap: wrap;">
             <button class="gm-btn" onclick="submitCSLCreateOrder()">创建连接订单</button>
-            <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接（含本地预检）</button>
+            <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
             <button class="gm-btn gm-btn-primary" onclick="submitCSLCreateSession()">建立通信会话</button>
             <button class="gm-btn" onclick="submitCSLDisable()">断开连接</button>
           </div>`;
@@ -2935,10 +2935,10 @@
           </div>
         </div>
         <div class="gm-chip warn" style="margin-bottom: 16px; width: 100%; border-radius: 6px; padding: 8px 12px; display: block; height: auto; text-transform: none; font-weight: normal; line-height: 1.5;">
-          本地预检只是初步检查；要在通讯软件里真正收发消息成功，才算连接完成。
+          本地预检不能替代通讯软件平台回调。未形成真实入站、中转执行、出站回复的闭环交互数据前，无法提报通讯链路交付。
         </div>
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-          <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接（含本地预检）</button>
+          <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
           <button class="gm-btn" onclick="submitCSLTest()">远程连接测试</button>
           <button class="gm-btn" onclick="submitCSLLocalRuntimeTest()">本地预检</button>
           <button class="gm-btn gm-btn-primary" onclick="submitCSLAcceptance()">提交验收</button>

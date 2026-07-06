@@ -122,7 +122,7 @@ HTTP_USER_AGENT = f"PanghuAI-Client/{APP_VERSION}"
 # 启动时若覆盖生效会在日志和窗口标题打出醒目提示，防止误用。
 PANGHU_DEV_BASE_URL_OVERRIDE = os.environ.get("PANGHU_DEV_BASE_URL_OVERRIDE", "").strip().rstrip("/")
 DEFAULT_BASE_URL = PANGHU_DEV_BASE_URL_OVERRIDE or "https://aitokenapi.cc"
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.4"
 CODEX_PROVIDER_NAME = "panghuAI"
 CODEX_BASE_URL = f"{DEFAULT_BASE_URL}/v1"
 CLAUDE_CODE_BASE_URL = DEFAULT_BASE_URL
