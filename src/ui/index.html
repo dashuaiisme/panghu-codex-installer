@@ -3549,24 +3549,62 @@
     let paymentPollTimer = null;
     function showPaymentQrModal(orderId, paymentUrl, qrDataUrl, message) {
       closePaymentQrModal();
+      // 安全：orderId/message/qrDataUrl 来自服务端响应，一律走 textContent / img.src /
+      // addEventListener 闭包，绝不拼进 innerHTML 或 onclick 字符串，避免 XSS 注入。
       const overlay = document.createElement("div");
       overlay.id = "gmPayModal";
       overlay.style.cssText = "position:fixed;inset:0;z-index:100000;background:rgba(4,10,20,.72);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);";
-      const qrBlock = qrDataUrl
-        ? `<img src="${qrDataUrl}" alt="支付二维码" style="width:220px;height:220px;background:#fff;padding:10px;border-radius:10px;"/>`
-        : `<div style="color:#f28b82;font-size:13px;line-height:1.6;">二维码生成失败。请复制订单号联系后台，或稍后重试。</div>`;
-      overlay.innerHTML = `
-        <div style="background:#0d1526;border:1px solid rgba(0,242,169,.25);border-radius:14px;padding:24px;max-width:360px;width:90%;text-align:center;box-shadow:0 12px 48px rgba(0,0,0,.5);">
-          <div style="font-size:16px;color:#e6edf7;margin-bottom:4px;">支付宝扫码付款</div>
-          <div style="font-size:12px;color:#8aa0bd;margin-bottom:16px;">请用手机支付宝扫描下面的二维码完成付款</div>
-          ${qrBlock}
-          <div style="font-size:12px;color:#8aa0bd;margin:14px 0 6px;word-break:break-all;">订单号：${orderId || "-"}</div>
-          <div style="display:flex;gap:10px;justify-content:center;margin-top:12px;">
-            <button class="gm-btn" onclick="queryPaymentOnce('${orderId}', false)">我已付款，查询结果</button>
-            <button class="gm-btn gm-btn-secondary" onclick="closePaymentQrModal()">关闭</button>
-          </div>
-          <div id="gmPayStatus" style="font-size:12px;color:#8aa0bd;margin-top:12px;line-height:1.6;">${message || "付款后点“查询结果”。"}</div>
-        </div>`;
+      const card = document.createElement("div");
+      card.style.cssText = "background:#0d1526;border:1px solid rgba(0,242,169,.25);border-radius:14px;padding:24px;max-width:360px;width:90%;text-align:center;box-shadow:0 12px 48px rgba(0,0,0,.5);";
+
+      const title = document.createElement("div");
+      title.style.cssText = "font-size:16px;color:#e6edf7;margin-bottom:4px;";
+      title.textContent = "支付宝扫码付款";
+      const sub = document.createElement("div");
+      sub.style.cssText = "font-size:12px;color:#8aa0bd;margin-bottom:16px;";
+      sub.textContent = "请用手机支付宝扫描下面的二维码完成付款";
+      card.appendChild(title);
+      card.appendChild(sub);
+
+      if (qrDataUrl && String(qrDataUrl).slice(0, 22) === "data:image/png;base64,") {
+        const img = document.createElement("img");
+        img.alt = "支付二维码";
+        img.style.cssText = "width:220px;height:220px;background:#fff;padding:10px;border-radius:10px;";
+        img.src = qrDataUrl; // 仅接受后端本地生成的 data:image/png，杜绝其它协议
+        card.appendChild(img);
+      } else {
+        const fail = document.createElement("div");
+        fail.style.cssText = "color:#f28b82;font-size:13px;line-height:1.6;";
+        fail.textContent = "二维码生成失败。请复制订单号联系后台，或稍后重试。";
+        card.appendChild(fail);
+      }
+
+      const oid = document.createElement("div");
+      oid.style.cssText = "font-size:12px;color:#8aa0bd;margin:14px 0 6px;word-break:break-all;";
+      oid.textContent = "订单号：" + (orderId || "-");
+      card.appendChild(oid);
+
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex;gap:10px;justify-content:center;margin-top:12px;";
+      const queryBtn = document.createElement("button");
+      queryBtn.className = "gm-btn";
+      queryBtn.textContent = "我已付款，查询结果";
+      queryBtn.addEventListener("click", () => queryPaymentOnce(orderId, false));
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "gm-btn gm-btn-secondary";
+      closeBtn.textContent = "关闭";
+      closeBtn.addEventListener("click", closePaymentQrModal);
+      actions.appendChild(queryBtn);
+      actions.appendChild(closeBtn);
+      card.appendChild(actions);
+
+      const status = document.createElement("div");
+      status.id = "gmPayStatus";
+      status.style.cssText = "font-size:12px;color:#8aa0bd;margin-top:12px;line-height:1.6;";
+      status.textContent = message || "付款后点“查询结果”。";
+      card.appendChild(status);
+
+      overlay.appendChild(card);
       document.body.appendChild(overlay);
       // 自动轮询（约每 4 秒一次，最多 ~5 分钟）；付款成功自动关闭并刷新权益。
       let attempts = 0;
