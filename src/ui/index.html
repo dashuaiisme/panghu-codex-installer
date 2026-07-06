@@ -1687,6 +1687,24 @@
   .gm-cockpit .gm-flow-step b{ display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; background:var(--g-primary); color:var(--g-bg-deep); font-size:11px; flex-shrink:0; }
   .gm-cockpit .gm-onboard-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:2px; }
 
+  /* 侧边流程分组标题 */
+  .gm-cockpit .gm-rail-group{ font-size:10.5px; font-weight:700; letter-spacing:.06em; color:var(--g-text-subtle); padding:13px 8px 5px; }
+  .gm-cockpit .gm-subnav-list > .gm-rail-group:first-child{ padding-top:2px; }
+
+  /* 折叠式 Key 分组卡 */
+  .gm-cockpit .gm-keygroup{ padding:0; }
+  .gm-cockpit .gm-kg-summary{ list-style:none; cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:15px 18px; gap:12px; }
+  .gm-cockpit .gm-kg-summary::-webkit-details-marker{ display:none; }
+  .gm-cockpit .gm-kg-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .gm-cockpit .gm-kg-head b{ font-size:14.5px; color:var(--g-text); }
+  .gm-cockpit .gm-kg-for{ font-size:12px; color:var(--g-text-subtle); }
+  .gm-cockpit .gm-kg-arrow::before{ content:"点开填 \25B8"; font-size:11.5px; color:var(--g-primary); white-space:nowrap; }
+  .gm-cockpit .gm-keygroup[open] .gm-kg-arrow::before{ content:"收起 \25BE"; color:var(--g-text-subtle); }
+  .gm-cockpit .gm-kg-body{ padding:0 18px 18px; display:flex; flex-direction:column; gap:12px; }
+  .gm-cockpit .gm-kg-toprow{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding-top:10px; border-top:1px solid var(--ck-hair); }
+  .gm-cockpit .gm-model-hint{ font-size:11px; color:var(--g-primary); font-weight:400; margin-left:6px; }
+  .gm-cockpit .gm-help-inline.open .gm-help-pop{ display:block; }
+
   </style>
 </head>
 <body>
@@ -1793,15 +1811,15 @@
           <div class="gm-status-pill">
             <span class="gm-status-dot" id="cslStatusDot"></span>
             <span class="gm-status-label">连接:</span>
-            <strong id="userChip">未同步</strong>
+            <strong id="userChip">未连接</strong>
           </div>
           <div class="gm-status-pill">
-            <span class="gm-status-label">算力:</span>
+            <span class="gm-status-label">余额:</span>
             <strong id="quotaChip">-</strong>
           </div>
           <div class="gm-status-pill">
-            <span class="gm-status-label">确权:</span>
-            <span class="gm-chip ok" id="editionChip">等待确权</span>
+            <span class="gm-status-label">授权:</span>
+            <span class="gm-chip ok" id="editionChip">待授权</span>
           </div>
         </div>
 
@@ -1845,7 +1863,7 @@
         <section class="gm-content-pane">
           <div class="gm-mission-card">
             <div class="gm-mission-header">
-              <span class="gm-canvas-meta" id="canvasKicker">TASK STEP</span>
+              <span class="gm-canvas-meta" id="canvasKicker">配置步骤</span>
               <h2 id="canvasTitle">加载中...</h2>
               <p class="gm-canvas-desc" id="canvasDesc">加载中，请稍候...</p>
             </div>
@@ -1858,7 +1876,7 @@
         <!-- Right Drawer: 5D Matrix + Logs Viewport -->
         <section class="gm-diagnostics-drawer" id="diagnosticsDrawer">
           <div class="gm-drawer-tabs">
-            <button class="gm-drawer-tab active" id="tab-matrix" onclick="switchDrawerTab('matrix')">交付状态</button>
+            <button class="gm-drawer-tab active" id="tab-matrix" onclick="switchDrawerTab('matrix')">配置状态</button>
             <button class="gm-drawer-tab" id="tab-logs" onclick="switchDrawerTab('logs')">运行日志</button>
           </div>
 
@@ -1870,7 +1888,7 @@
 
           <div class="gm-drawer-content hidden" id="drawer-logs-content">
             <div class="gm-telemetry-header" style="padding: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); background: var(--g-bg-deep);">
-              <span style="font-size: 10px; font-weight: bold; color: var(--g-text-subtle);">DIAGNOSTIC TRACE</span>
+              <span style="font-size: 10px; font-weight: bold; color: var(--g-text-subtle);">运行日志</span>
               <button class="gm-btn" onclick="window.pywebview.api.copy_logs()" style="min-height: 22px; padding: 0 8px; font-size: 10px; border-radius: 4px;">复制日志</button>
             </div>
             <div class="gm-console-screen" id="logViewport" style="flex: 1; min-height: 200px;"></div>
@@ -1939,7 +1957,7 @@
           switch_module: (m) => { state.activeModule = m; state.activeSubnav = defaultSubnav(m); refreshAll(); return noopPromise(); },
           switch_subnav: (s) => { state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
           go_to_step: (s) => { state.activeModule = "agent"; state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
-          save_key: () => { state.apiKeyPresent = true; appendPythonLog("API Key 已保存，等待服务端归属校验。"); return noopPromise(); },
+          save_key: () => { state.apiKeyPresent = true; appendPythonLog("API Key 已保存，等待服务端验证 Key。"); return noopPromise(); },
           run_env_check: () => { state.environmentOk = true; appendPythonLog("环境检测通过。", "success"); return noopPromise({ success: true }); },
           toggle_agent: (id, checked) => { state.selectedAgents[id] = checked; return noopPromise(); },
           set_agent_mode: () => noopPromise(),
@@ -2029,24 +2047,24 @@
     }
 
     const modules = [
-      ["agent", "配置Agent", "DEPLOY / WIZARD"],
-      ["site", "胖虎AI网站", "SITE CONSOLE"],
-      ["value_added", "增值业务", "VALUE-ADDED SERVICES"],
-      ["courses", "代理中心", "PROXY CENTER"]
+      ["agent", "配置Agent", "安装配置向导"],
+      ["site", "胖虎AI网站", "官网 · 控制台"],
+      ["value_added", "增值业务", "会员 · 号码 · 通讯"],
+      ["courses", "代理中心", "代理与返佣"]
     ];
 
     const agentSteps = [
-      [1, "API Key 校验", "归属校验"],
-      [2, "系统环境检测", "依赖侦测"],
-      [3, "选择交付对象", "Agent 筛选"],
-      [4, "执行部署安装", "环境拉取"],
-      [5, "写入网络配置", "网关连接"],
-      [6, "通道启动检测", "入口探活"],
-      [7, "中文对话测试", "语言连通"],
-      [8, "功能验收矩阵", "系统测试"],
-      [9, "交付快照存档", "基础交付"],
-      [10, "三方软件互联", "通讯桥接"],
-      [11, "互联数据验收", "最终交付"]
+      [1, "验证 Key", "填入并验证你的 Key"],
+      [2, "检查电脑环境", "看电脑是否满足条件"],
+      [3, "选择要安装的 AI 助手", "挑要装哪些 AI"],
+      [4, "安装", "自动下载并安装"],
+      [5, "写入配置", "把 Key 和地址写进去"],
+      [6, "启动检测", "检查能不能正常启动"],
+      [7, "中文对话测试", "试跑一句中文对话"],
+      [8, "功能验收", "逐项确认功能正常"],
+      [9, "保存记录", "存一份配置备份"],
+      [10, "连接通讯软件", "接入通讯软件收发消息（可选）"],
+      [11, "互联验收", "确认通讯连接可用"]
     ];
 
     const subnav = {
@@ -2069,7 +2087,7 @@
         comm_link: ["连接通讯软件", `${serviceBase}/value-added/communication-software-link`, "打开连接通讯软件服务介绍；配置、端口分配与测试验收需在[配置Agent]中进行。"]
       },
       courses: {
-        agent_home: ["代理总览", `${serviceBase}/agent-center`, "展示服务端代理中心快照，不在本地计算返佣。"],
+        agent_home: ["代理总览", `${serviceBase}/agent-center`, "展示胖虎AI服务器上的代理数据，本地不计算返佣。"],
         agent_customers: ["下游客户", `${serviceBase}/agent-center/customers`, "客户归因、绑定 and 结算以后台账本为准。"],
         agent_token_comm: ["token 返佣", `${serviceBase}/agent-center/token-commission`, "Token/API 消费返佣来自服务端。"],
         agent_activation_comm: ["激活返佣", `${serviceBase}/agent-center/activation-commission`, "下游付费激活返佣来自服务端。"],
@@ -2127,7 +2145,7 @@
           ];
         }
       }
-      return (pageMeta[mod] && pageMeta[mod][key]) || ["云端控制台", serviceBase, "一切服务端业务处理与结算确权以云端系统为准。"];
+      return (pageMeta[mod] && pageMeta[mod][key]) || ["云端控制台", serviceBase, "账号、扣费、权益都以胖虎AI服务器为准。"];
     }
 
     function initApp() {
@@ -2204,9 +2222,9 @@
       // Safety boundaries status chips rendering
       const cslStatusDot = document.getElementById("cslStatusDot");
       if (!state.hasSynced) {
-        document.getElementById("editionChip").innerText = "等待确权";
-        document.getElementById("userChip").innerText = "未同步 / 以服务端为准";
-        document.getElementById("quotaChip").innerText = "未同步";
+        document.getElementById("editionChip").innerText = "待授权";
+        document.getElementById("userChip").innerText = "未连接";
+        document.getElementById("quotaChip").innerText = "未获取";
         if (cslStatusDot) cslStatusDot.className = "gm-status-dot unsynced";
       } else {
         document.getElementById("editionChip").innerText = state.versionLabel || "商业版";
@@ -2259,21 +2277,24 @@
       const mod = state.activeModule || "agent";
 
       const items = mod === "agent" ? agentSteps.map(s => [String(s[0]), s[1], s[2]]) : currentSubnavItems(mod).map(s => [s[0], s[1], "CLOUD"]);
+      const phaseAt = { "1": "准备", "3": "安装与配置", "7": "验收测试", "10": "增值 · 可选" };
 
       items.forEach((item, idx) => {
         const active = String(state.activeSubnav) === String(item[0]);
         const done = mod === "agent" && Number(item[0]) < Number(state.activeSubnav || 1);
 
-        if (idx > 0) {
-          const sep = document.createElement("div");
-          sep.className = `gm-timeline-sep ${done ? "done" : ""}`;
-          rail.appendChild(sep);
+        if (mod === "agent" && phaseAt[item[0]]) {
+          const g = document.createElement("div");
+          g.className = "gm-rail-group";
+          g.innerText = phaseAt[item[0]];
+          rail.appendChild(g);
         }
 
         const btn = document.createElement("button");
         btn.className = `gm-timeline-node ${active ? "active" : ""} ${done ? "done" : ""}`;
+        const dot = mod === "agent" ? (done ? "✓" : idx + 1) : "•";
         btn.innerHTML = `
-          <div class="gm-node-dot">${done ? "✓" : idx + 1}</div>
+          <div class="gm-node-dot">${dot}</div>
           <div class="gm-node-label">${item[1]}</div>
         `;
         btn.onclick = () => window.pywebview.api.switch_subnav(String(item[0]));
@@ -2291,9 +2312,9 @@
       const meta = agentSteps.find(s => String(s[0]) === step) || agentSteps[1];
       const canvas = document.getElementById("workCanvas");
 
-      document.getElementById("canvasKicker").innerText = `STEP ${meta[0]}`;
+      document.getElementById("canvasKicker").innerText = `第 ${meta[0]} 步`;
       document.getElementById("canvasTitle").innerText = meta[1];
-      document.getElementById("canvasDesc").innerText = `${meta[2]}。本次交付由胖虎AI服务端运行规则统筹，交付矩阵五维确认后生效。`;
+      document.getElementById("canvasDesc").innerText = `${meta[2]}。`;
 
       let stepBody = "";
       if (step === "1") {
@@ -2318,13 +2339,9 @@
               </div>
             </details>
             <div class="gm-keyintro">
-              不同 Agent 使用不同<b>接口格式</b>，Key 也按格式区分——<b>一把 Key 配不了所有 Agent</b>，格式不兼容会直接跑不通。请在下面各组里，填入你在 <b>aitokenapi.cc</b> 创建的<b>对应格式</b>的 Key 和模型名。每组右上角 <span class="gm-help-inline">ⓘ 说明</span> 悬停可展开详细解释。
+              下面按格式分了三组。<b>你用哪个 AI，就点开对应那组填 Key——只用一个就只填一个，其它不用管。</b>模型名已按最新型号帮你填好，一般不用改。（不同 AI 的接口格式不通用，一把 Key 配不了所有，所以要分开填。）
             </div>
             ${KEY_FORMATS.map(renderKeyGroup).join("")}
-            <label class="gm-chip warn gm-tech-num" style="margin-top:2px; padding:8px 12px; border-radius:6px; display:inline-flex; align-items:center; gap:8px; cursor:pointer; align-self:flex-start;">
-              <input type="checkbox" id="skipKeyTest">
-              <span>跳过连通测试（仅用于内部网络测试）</span>
-            </label>
             <div style="display:flex; gap:12px; margin-top:6px;">
               <button class="gm-btn gm-btn-primary" onclick="saveApiKey()">保存并验证 Key</button>
               <button class="gm-btn" onclick="window.pywebview.api.open_url('${serviceBase}/console/keys')">在网页创建 Key</button>
@@ -2337,24 +2354,24 @@
           <div class="gm-canvas-card gm-hud-corners" style="background: linear-gradient(180deg, rgba(138, 180, 248, 0.03) 0%, transparent 100%), var(--g-surface-2); border-color: rgba(138, 180, 248, 0.15); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px;">
               <div>
-                <b style="font-size: 15px; color: var(--g-primary);">AI 环境诊断与协同控制舱</b>
-                <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">检测本机依赖项及协同并发状态</div>
+                <b style="font-size: 15px; color: var(--g-primary);">电脑环境检测</b>
+                <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">检查电脑上需要的软件和端口</div>
               </div>
               <span class="gm-status-lock">诊断</span>
             </div>
 
             <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 0;">
               <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
-                <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">系统环境依赖</b>
+                <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">电脑软件</b>
                 <span><label>运行平台</label><strong class="gm-tech-num">Windows x64</strong></span>
                 <span><label>Python 编译器</label><strong class="gm-tech-num">${state.environmentOk ? "3.10.2 ✓ OK" : "3.10+ Target"}</strong></span>
                 <span><label>Node.js 引擎</label><strong class="gm-tech-num">${state.environmentOk ? "16.14+ ✓ OK" : "16.0+ Target"}</strong></span>
               </div>
               <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
-                <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">协同环境排查</b>
-                <span><label>进程冲突扫描</label><strong>${state.environmentOk ? "无冲突 ✓" : "未扫描"}</strong></span>
-                <span><label>路由端口状态</label><strong>${state.environmentOk ? "端口闲置 ✓" : "待探活"}</strong></span>
-                <span><label>AI 协同通道</label><strong>${state.environmentOk ? "隧道已建立 ✓" : "未就绪"}</strong></span>
+                <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">端口与进程检查</b>
+                <span><label>进程冲突检查</label><strong>${state.environmentOk ? "无冲突 ✓" : "未扫描"}</strong></span>
+                <span><label>端口状态</label><strong>${state.environmentOk ? "端口闲置 ✓" : "待探活"}</strong></span>
+                <span><label>网络通道</label><strong>${state.environmentOk ? "隧道已建立 ✓" : "未就绪"}</strong></span>
               </div>
             </div>
 
@@ -2363,13 +2380,13 @@
                 诊断结果: ${state.environmentOk ? '<span style="color: var(--g-success); font-weight: bold;">环境及运行规则通过校验，可启动部署。</span>' : '等待用户触发本地探针检测指令。'}
               </div>
               <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="runDiagnosticsCheck()" style="min-width: 160px; height: 38px;">
-                执行环境与协同诊断
+                开始检测
               </button>
             </div>
           </div>
 
           <div class="gm-canvas-card gm-hud-corners" style="padding: 16px; background: rgba(255,255,255,0.01); display: flex; flex-direction: column; gap: 10px;">
-            <b style="font-size: 11px; color: var(--g-text); text-transform: uppercase; letter-spacing: 0.05em;">交付矩阵与执行队列诊断状态</b>
+            <b style="font-size: 11px; color: var(--g-text); text-transform: uppercase; letter-spacing: 0.05em;">配置与检测状态</b>
             <div class="gm-canvas-grid" style="grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 0;">
               <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
                 <b style="font-size: 10.5px;">依赖项探针结论</b>
@@ -2378,13 +2395,13 @@
                 </small>
               </div>
               <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
-                <b style="font-size: 10.5px;">AI 协同冲突排查</b>
+                <b style="font-size: 10.5px;">冲突检查</b>
                 <small style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
                   ${checkText(state.environmentOk, "无多开/并发冲突")}
                 </small>
               </div>
               <div class="gm-canvas-card" style="padding: 12px; background: rgba(255,255,255,0.005); border: 1px solid var(--g-line); margin-bottom: 0;">
-                <b style="font-size: 10.5px;">云端确权鉴权</b>
+                <b style="font-size: 10.5px;">云端授权</b>
                 <small style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
                   ${state.environmentOk ? `<span class="gm-led ok"></span> <span class="gm-tech-num" style="color: var(--g-success); font-weight: bold;">就绪 / 等待运行测试</span>` : `<span class="gm-led warn"></span> <span class="gm-tech-num" style="color: var(--g-warning); font-weight: bold;">等待本地诊断</span>`}
                 </small>
@@ -2433,7 +2450,7 @@
         stepBody = renderConfigHealth();
       } else {
         const actionMap = {
-          "4": [["开始部署与配置","start_deploy"],["仅写入配置文件","start_config_only"],["双态混合模式配置","start_dual_state_config"],["官方直登配置","start_official_chatgpt_config"],["恢复备份快照","restore_backups"]],
+          "4": [["开始安装并配置","start_deploy"]],
           "5": [["查看配置目录","open_config_dir"],["载入备份快照","restore_backups"]],
           "6": [["打开 Agent 工作空间","open_workspace"],["打开配置目录","open_config_dir"]],
           "7": [["运行连通测试","start_deploy"]],
@@ -2444,12 +2461,12 @@
         stepBody = `
           <div class="gm-canvas-grid" style="grid-template-columns: 1fr; gap: 12px; margin-bottom: 20px;">
             <div class="gm-canvas-card gm-hud-corners">
-              <b>当前流程任务</b>
-              <small>此步骤直接由胖虎AI客户端执行。请根据日志调试并配置，注意保存任何必要的本地参数。</small>
+              <b>当前步骤</b>
+              <small>这一步由胖虎AI客户端自动完成，过程和结果都在下方日志里。</small>
             </div>
             <div class="gm-canvas-card gm-hud-corners">
-              <b>环境备份保障</b>
-              <small>本地任何配置文件被修改前均已备份，您可以随时点击“恢复备份快照”撤销更改。</small>
+              <b>自动备份保护</b>
+              <small>改动前会自动备份你的原配置，随时可以点“恢复备份”撤回。</small>
             </div>
           </div>
           <div style="display: flex; gap: 12px;">
@@ -2483,19 +2500,19 @@
       } else if (step === "2") {
         rightPanelContent = `
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
-            <b style="color: var(--g-primary);">交付依赖状态矩阵</b>
+            <b style="color: var(--g-primary);">配置检查清单</b>
             <table class="gm-status-table" style="margin-top: 6px;">
               <tr class="gm-handshake-row"><td>Python 3.10+</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">检测通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
               <tr class="gm-handshake-row"><td>Node.js 16+</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">检测通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
               <tr class="gm-handshake-row"><td>端口冲突扫描</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">无占用</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待扫描</span>'}</td></tr>
               <tr class="gm-handshake-row"><td>AI 协同同步</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">通道活跃</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">待侦测</span>'}</td></tr>
-              <tr class="gm-handshake-row"><td>确权鉴权握手</td><td>${state.apiKeyPresent ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">Key已就绪</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待确权</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>授权验证</td><td>${state.apiKeyPresent ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">Key已就绪</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待确权</span>'}</td></tr>
             </table>
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
-            <b>五维交付验收指引</b>
+            <b>接下来会做这几步</b>
             <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
-              本地诊断通过后，将正式拉取所选智能体。交付全流程需依次经历 [部署] -> [拉起] -> [中文连通] -> [验收] -> [确权] 五维校验，以云端账本最终签名为准。
+              本地诊断通过后，将正式拉取所选AI 助手。接下来会依次：安装 → 启动 → 中文对话 → 功能验收 → 授权确认；最终以胖虎AI服务器记录为准。
             </p>
           </div>`;
       } else if (step === "3") {
@@ -2509,15 +2526,15 @@
             </table>
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
-            <b>智能体多开说明</b>
+            <b>AI 助手多开说明</b>
             <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.5; margin: 0;">
-              系统支持选入多个交付智能体，在多实例模式下，各进程分配独立端口，确保测试互不干扰。
+              系统支持选入多个交付AI 助手，在多实例模式下，各进程分配独立端口，确保测试互不干扰。
             </p>
           </div>`;
       } else {
         rightPanelContent = `
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015);">
-            <b>当前智能体状态</b>
+            <b>当前工具状态</b>
             <table class="gm-status-table">
               <tr class="gm-handshake-row"><td>进程拉活监视</td><td class="ok"><span class="gm-led ok"></span> <span class="gm-tech-num">监视中</span></td></tr>
               <tr class="gm-handshake-row"><td>本地配置文件</td><td class="ok"><span class="gm-led ok"></span> <span class="gm-tech-num">已自动备份</span></td></tr>
@@ -2543,7 +2560,7 @@
             ${rightPanelContent}
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(138, 180, 248, 0.02); border: 1px dashed rgba(138, 180, 248, 0.2); padding: 12px; margin-top: auto;">
               <small style="color: var(--g-primary); line-height: 1.4; display: block;" class="gm-tech-num">
-                ✦ 本机沙箱边界规则待检测。一切服务端业务处理与结算确权以云端网关签名校验为准。
+                ✦ 本机只做检测和配置；账号、扣费、权益都以胖虎AI服务器为准。
               </small>
             </div>
           </div>
@@ -2781,15 +2798,15 @@
 
           <div class="gm-canvas-grid" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px;">
             <div class="gm-form-field">
-              <label>platform_account_id</label>
+              <label>平台账号 / 机器人 ID</label>
               <small>机器人 ID / 应用 ID / Bot AppID，从官方控制台复制。</small>
             </div>
             <div class="gm-form-field">
-              <label>platform_chat_id</label>
+              <label>聊天 / 群组 / 会话 ID</label>
               <small>群聊、会话、频道或企业内部 Chat ID。</small>
             </div>
             <div class="gm-form-field">
-              <label>gateway_mode</label>
+              <label>连接方式</label>
               <small>选择官方机器人、客户自有机器人或人工桥接。</small>
             </div>
           </div>
@@ -2803,13 +2820,13 @@
         return `
           <div class="gm-canvas-grid">
             <div class="gm-canvas-card">
-              <b>关联智能体来源</b>
-              <small>选择哪一个部署成功的智能体进行通讯桥接。</small>
+              <b>关联AI 助手来源</b>
+              <small>选择哪一个部署成功的AI 助手进行通讯桥接。</small>
               <select class="gm-select" id="cslAgentSource" onchange="updateCSLPayload()" style="margin-top: 8px;">
-                <option value="existing_local_agent" ${source === "existing_local_agent" ? "selected" : ""}>本机已有 Agent</option>
-                <option value="current_delivery" ${source === "current_delivery" ? "selected" : ""}>本次基础交付</option>
-                <option value="historical_delivery" ${source === "historical_delivery" ? "selected" : ""}>历史交付归属</option>
-                <option value="manual_review" ${source === "manual_review" ? "selected" : ""}>人工复核归属</option>
+                <option value="existing_local_agent" ${source === "existing_local_agent" ? "selected" : ""}>本机已装的 AI 助手</option>
+                <option value="current_delivery" ${source === "current_delivery" ? "selected" : ""}>本次刚装的</option>
+                <option value="historical_delivery" ${source === "historical_delivery" ? "selected" : ""}>以前装过的</option>
+                <option value="manual_review" ${source === "manual_review" ? "selected" : ""}>人工指定</option>
               </select>
             </div>
 
@@ -2823,7 +2840,7 @@
 
             <div class="gm-canvas-card">
               <b>选择平台/通讯通道</b>
-              <small>先选平台，再打开官方页面创建或配置机器人；通道可用性受云端授权状态约束。</small>
+              <small>先选平台，再打开官方页面创建/配置机器人。</small>
               <select class="gm-select" id="cslChannel" onchange="updateCSLPayload()" style="margin-top: 8px;">
                 <option value="feishu" ${channel === "feishu" ? "selected" : ""}>飞书 / Feishu</option>
                 <option value="qq_bot" ${channel === "qq_bot" ? "selected" : ""}>QQ 机器人</option>
@@ -2839,26 +2856,26 @@
           <div class="gm-canvas-grid" style="margin-bottom: 16px;">
             <div class="gm-form-field">
               <label>服务商品 ID</label>
-              <input class="gm-input" id="cslServiceProductId" placeholder="服务端下发的连接通讯软件商品 ID" value="${serviceProductId}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslServiceProductId" placeholder="自动获取，一般不用填" value="${serviceProductId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>云端增值订单 ID</label>
-              <input class="gm-input" id="cslOrderId" placeholder="请输入服务端订单 ID" value="${orderId}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslOrderId" placeholder="自动获取，一般不用填" value="${orderId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>配置会话 ID</label>
               <input class="gm-input" id="cslSessionId" placeholder="创建会话后自动回填，也可手动填入" value="${sessionId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>平台账号 / 机器人 ID (platform_account_id)</label>
+              <label>平台账号 / 机器人 ID</label>
               <input class="gm-input" id="cslPlatformAccountId" placeholder="如飞书机器人、QQ Bot、企业微信应用 ID" value="${platformAccountId}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>聊天/群组/会话 ID (platform_chat_id)</label>
+              <label>聊天 / 群组 / 会话 ID</label>
               <input class="gm-input" id="cslPlatformChatId" placeholder="手机会话、群组、好友、企业或内部 Chat ID" value="${chatTarget}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
-              <label>连接方式 (gateway_mode)</label>
+              <label>连接方式</label>
               <select class="gm-select" id="cslGatewayMode" onchange="updateCSLPayload()">
                 <option value="official_bot" ${gatewayMode === "official_bot" ? "selected" : ""}>官方机器人 / 应用</option>
                 <option value="customer_bot" ${gatewayMode === "customer_bot" ? "selected" : ""}>客户自有机器人</option>
@@ -2873,43 +2890,43 @@
 
           <div style="display: flex; gap: 12px; flex-wrap: wrap;">
             <button class="gm-btn" onclick="submitCSLCreateOrder()">创建连接订单</button>
-            <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
-            <button class="gm-btn gm-btn-primary" onclick="submitCSLCreateSession()">建立桥接通信会话</button>
-            <button class="gm-btn" onclick="submitCSLDisable()">注销通信会话</button>
+            <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接（含本地预检）</button>
+            <button class="gm-btn gm-btn-primary" onclick="submitCSLCreateSession()">建立通信会话</button>
+            <button class="gm-btn" onclick="submitCSLDisable()">断开连接</button>
           </div>`;
       }
 
       return `
         <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr);">
           <div class="gm-form-field">
-            <label>源事件 ID / source_event_id</label>
-            <input class="gm-input" id="cslSourceEventId" placeholder="例如: evt-x..." value="${sourceEventId}" onchange="updateCSLPayload()">
+            <label>源事件 ID（自动获取）</label>
+            <input class="gm-input" id="cslSourceEventId" placeholder="自动获取，一般不用填" value="${sourceEventId}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
-            <label>用户入站消息 ID</label>
-            <input class="gm-input" id="cslInboundMessageId" placeholder="例如: msg-in..." value="${inboundId}" onchange="updateCSLPayload()">
+            <label>收到的消息 ID（自动获取）</label>
+            <input class="gm-input" id="cslInboundMessageId" placeholder="自动获取，一般不用填" value="${inboundId}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
-            <label>智能体出站回复 ID</label>
-            <input class="gm-input" id="cslOutboundMessageId" placeholder="例如: msg-out..." value="${outboundId}" onchange="updateCSLPayload()">
+            <label>AI 回复的消息 ID（自动获取）</label>
+            <input class="gm-input" id="cslOutboundMessageId" placeholder="自动获取，一般不用填" value="${outboundId}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
-            <label>Agent 响应摘要</label>
-            <input class="gm-input" id="cslAgentResponseDigest" placeholder="sha256:..." value="${responseDigest}" onchange="updateCSLPayload()">
+            <label>AI 回复校验值（自动生成）</label>
+            <input class="gm-input" id="cslAgentResponseDigest" placeholder="自动生成，一般不用填" value="${responseDigest}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
-            <label>验收证据 URL</label>
+            <label>验收凭证链接（自动生成）</label>
             <input class="gm-input" id="cslEvidenceUrl" placeholder="例如: https://..." value="${evidence}" onchange="updateCSLPayload()">
           </div>
         </div>
         <div class="gm-chip warn" style="margin-bottom: 16px; width: 100%; border-radius: 6px; padding: 8px 12px; display: block; height: auto; text-transform: none; font-weight: normal; line-height: 1.5;">
-          本地预检不能替代通讯软件平台回调。未形成真实入站、中转执行、出站回复的闭环交互数据前，无法提报通讯链路交付。
+          本地预检只是初步检查；要在通讯软件里真正收发消息成功，才算连接完成。
         </div>
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-          <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
-          <button class="gm-btn" onclick="submitCSLTest()">发起远程探针测试</button>
-          <button class="gm-btn" onclick="submitCSLLocalRuntimeTest()">生成本地 Runtime 证据</button>
-          <button class="gm-btn gm-btn-primary" onclick="submitCSLAcceptance()">提交证据并正式确权</button>
+          <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接（含本地预检）</button>
+          <button class="gm-btn" onclick="submitCSLTest()">远程连接测试</button>
+          <button class="gm-btn" onclick="submitCSLLocalRuntimeTest()">本地预检</button>
+          <button class="gm-btn gm-btn-primary" onclick="submitCSLAcceptance()">提交验收</button>
         </div>`;
     }
 
@@ -2918,7 +2935,7 @@
       const key = state.activeSubnav || defaultSubnav(mod);
       const meta = currentPageMeta(mod, key);
 
-      document.getElementById("canvasKicker").innerText = modules.find(m => m[0] === mod)?.[1] || "CLOUD";
+      document.getElementById("canvasKicker").innerText = modules.find(m => m[0] === mod)?.[1] || "云端";
       document.getElementById("canvasTitle").innerText = meta[0];
       document.getElementById("canvasDesc").innerText = `${meta[2]}`;
 
@@ -2939,7 +2956,7 @@
             <div class="gm-canvas-card gm-hud-corners" style="background: linear-gradient(180deg, rgba(253, 214, 99, 0.02) 0%, transparent 100%), var(--g-surface-2); border-color: rgba(253, 214, 99, 0.15); padding: 24px;">
               <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
                 <div>
-                  <b style="font-size: 15px; color: var(--g-warning);">云端代理业务快照 (等待同步)</b>
+                  <b style="font-size: 15px; color: var(--g-warning);">代理数据 (等待同步)</b>
                   <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">未同步资产信息与结算快照，资产归属及收益确权完全以云端记账为准</div>
                 </div>
                 <span class="gm-status-lock" style="color: var(--g-warning); border-color: rgba(253, 214, 99, 0.3); background: rgba(253, 214, 99, 0.05);">等待同步</span>
@@ -2966,25 +2983,25 @@
 
               <div class="gm-empty-state-banner" style="padding: 24px; border: 1px dashed rgba(253, 214, 99, 0.2); background: rgba(253, 214, 99, 0.005); margin-bottom: 20px; border-radius: var(--g-radius-control);">
                 <div style="font-size: 24px; margin-bottom: 8px; animation: ledPulse 2s infinite ease-in-out; color: var(--g-warning);">✦</div>
-                <h4 style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--g-text);">云端资产快照未同步</h4>
+                <h4 style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--g-text);">还没同步数据</h4>
                 <p style="font-size: 11px; color: var(--g-text-subtle); max-width: 420px; line-height: 1.6; margin: 0 auto;">
-                  代理权级、结算比率与账目流水全部托管在云端。本地不作计算缓存。请点击下方同步按钮发起服务端快照同步。
+                  代理等级、分成比例、账目明细都在胖虎AI服务器上，本地不缓存。点下面的按钮同步最新数据。
                 </p>
               </div>
 
               <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
                 <span style="font-size: 11px; color: var(--g-text-subtle);">上次同步: <strong class="gm-tech-num">${lastSync}</strong></span>
                 <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
-                  同步云端资产快照
+                  同步数据
                 </button>
               </div>
             </div>
 
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
-              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近确权同步流水</b>
+              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近同步记录</b>
               <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
                 <div class="gm-log-row muted">[04:27:56] 系统：代理中心连接器已初始化</div>
-                <div class="gm-log-row muted">[04:27:56] 系统：等待服务端快照同步指令</div>
+                <div class="gm-log-row muted">[04:27:56] 系统：等待服务端数据同步指令</div>
                 <div class="gm-log-row muted">[04:27:56] 规则：当前仅展示标准确权状态</div>
               </div>
             </div>`;
@@ -2998,7 +3015,7 @@
             <div class="gm-canvas-card gm-hud-corners" style="background: linear-gradient(180deg, rgba(129, 201, 149, 0.03) 0%, transparent 100%), var(--g-surface-2); border-color: rgba(129, 201, 149, 0.15); padding: 24px;">
               <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
                 <div>
-                  <b style="font-size: 15px; color: var(--g-success);">云端代理业务快照 (已同步)</b>
+                  <b style="font-size: 15px; color: var(--g-success);">代理数据 (已同步)</b>
                   <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">当前记账代理等级: <strong style="color: var(--g-primary);">${level}</strong></div>
                 </div>
                 <span class="gm-status-lock" style="color: var(--g-success); border-color: rgba(129, 201, 149, 0.3); background: rgba(129, 201, 149, 0.05);">CLOUD SNAPSHOT</span>
@@ -3032,10 +3049,10 @@
             </div>
 
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
-              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近确权同步流水</b>
+              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近同步记录</b>
               <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
                 <div class="gm-log-row success">[04:27:56] 系统：代理中心连接器已初始化</div>
-                <div class="gm-log-row success">[04:27:57] 系统：已请求快照同步授权</div>
+                <div class="gm-log-row success">[04:27:57] 系统：已请求数据同步授权</div>
                 <div class="gm-log-row success">[04:27:58] 系统：服务端快照已同步</div>
                 <div class="gm-log-row success">[04:27:58] 状态：当前记账代理等级 [${level}]</div>
                 <div class="gm-log-row success">[04:27:58] 规则：账目数据以服务端快照为准</div>
@@ -3045,7 +3062,7 @@
 
         const rightCol = `
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
-            <b>云端授权与规则契约</b>
+            <b>授权与规则说明</b>
             <div style="font-size: 11px; margin-top: 8px; color: var(--g-text-muted);">
               <span>当前等级: </span><strong style="color: var(--g-primary);">${level}</strong>
             </div>
@@ -3056,11 +3073,11 @@
             </ul>
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
-            <b>同步检查清单与网络拓扑</b>
+            <b>同步检查清单</b>
             <table class="gm-status-table" style="margin-top: 8px;">
               <tr class="gm-handshake-row"><td>API Key 校验</td><td>${state.apiKeyPresent ? '<span style="color: var(--g-success);">[✓] 已校验</span>' : '<span style="color: var(--g-warning);">[ ] 未配置</span>'}</td></tr>
               <tr class="gm-handshake-row"><td>环境诊断</td><td>${state.environmentOk ? '<span style="color: var(--g-success);">[✓] 已通过</span>' : '<span style="color: var(--g-warning);">[ ] 未通过</span>'}</td></tr>
-              <tr class="gm-handshake-row"><td>快照同步</td><td>${s ? '<span style="color: var(--g-success);">[✓] 已同步</span>' : '<span style="color: var(--g-warning);">[ ] 等待同步</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>数据同步</td><td>${s ? '<span style="color: var(--g-success);">[✓] 已同步</span>' : '<span style="color: var(--g-warning);">[ ] 等待同步</span>'}</td></tr>
               <tr class="gm-handshake-row"><td>网络连接状态</td><td><span class="gm-tech-num">${s ? "在线" : "离线"}</span></td></tr>
             </table>
           </div>`;
@@ -3088,7 +3105,7 @@
             <div class="gm-workbench-main">
               <div class="gm-canvas-card gm-hud-corners" style="background: var(--g-surface-2); padding: 24px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
-                  <b style="font-size: 15px; color: var(--g-primary);">云端服务通道: ${meta[0]}</b>
+                  <b style="font-size: 15px; color: var(--g-primary);">服务入口: ${meta[0]}</b>
                   <span class="gm-status-lock">等待服务端</span>
                 </div>
 
@@ -3116,7 +3133,7 @@
 
               <!-- Secure Tunnel Diagram to reduce emptiness -->
               <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
-                <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 12px;">等待确权数据通道</b>
+                <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 12px;">连接状态</b>
                 <div class="gm-tunnel-diagram" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid var(--g-line);">
                   <div style="text-align: center;">
                     <div style="font-size: 11px; font-weight: bold; color: var(--g-text);">本地客户端</div>
@@ -3138,13 +3155,13 @@
 
             <div class="gm-workbench-sidebar">
               <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
-                <b>服务端边界提示</b>
+                <b>使用提示</b>
                 <p style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 8px;">
                   您正通过内置网关访问外部业务。客户端不存储您的支付账号或交易快照。所有支付、退款及确权行为均以目标云端服务的最终记账数据为准。
                 </p>
               </div>
               <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
-                <b>通信状态审计</b>
+                <b>连接状态</b>
                 <table class="gm-status-table" style="margin-top: 6px;">
                   <tr class="gm-handshake-row"><td>连接检测</td><td><span class="gm-led warn"></span> 等待打开</td></tr>
                   <tr class="gm-handshake-row"><td>数据核对</td><td>以服务端为准</td></tr>
@@ -3172,7 +3189,7 @@
       if (!state.hasSynced) {
         el.innerHTML = `
           <div class="gm-inspector-col">
-            <h3>交付确权状态</h3>
+            <h3>配置状态</h3>
             <div style="margin-bottom: 12px;">
               <span class="gm-chip warn" style="padding: 6px 12px; font-size: 11px; width: 100%; justify-content: center; border-radius: 6px;">
                 未同步 / 等待服务端数据
@@ -3186,10 +3203,10 @@
           </div>
 
           <div class="gm-inspector-col">
-            <h3>智能体 5D 状态矩阵</h3>
+            <h3>各 AI 工具状态</h3>
             <div class="gm-matrix">
               <div class="gm-matrix-header">
-                <span>智能体</span>
+                <span>AI 助手</span>
                 <span>部署</span>
                 <span>拉起</span>
                 <span>中文</span>
@@ -3201,12 +3218,12 @@
           </div>
 
           <div class="gm-inspector-col">
-            <h3>本地运行边界及协同规范</h3>
+            <h3>本地使用说明</h3>
             <div class="gm-inspector-rules-container">
               <div class="gm-inspector-rule">API 密钥本地混淆处理，会话状态随开随载，保护隐私不外泄。</div>
               <div class="gm-inspector-rule">本地仅提供通道与诊断环境，业务计算与结算在云端完成。</div>
               <div class="gm-inspector-rule">代理快照及返佣数据完全托管在云端，本地不做计算缓存。</div>
-              <div class="gm-inspector-rule">任何不符合五维诊断规范的智能体，云端将阻断协同确权。</div>
+              <div class="gm-inspector-rule">任何不符合五维诊断规范的AI 助手，云端将阻断协同确权。</div>
             </div>
           </div>
         `;
@@ -3225,7 +3242,7 @@
 
       el.innerHTML = `
         <div class="gm-inspector-col">
-          <h3>交付确权状态</h3>
+          <h3>配置状态</h3>
           <div style="margin-bottom: 12px;">
             <span class="gm-chip ${conclusionClass}" style="padding: 6px 12px; font-size: 11px; width: 100%; justify-content: center; border-radius: 6px;">
               ${conclusionLabel}
@@ -3242,10 +3259,10 @@
         </div>
 
         <div class="gm-inspector-col">
-          <h3>智能体 5D 状态矩阵</h3>
+          <h3>各 AI 工具状态</h3>
           <div class="gm-matrix">
             <div class="gm-matrix-header">
-              <span>智能体</span>
+              <span>AI 助手</span>
               <span>部署</span>
               <span>拉起</span>
               <span>中文</span>
@@ -3257,12 +3274,12 @@
         </div>
 
         <div class="gm-inspector-col">
-          <h3>本地运行边界及协同规范</h3>
+          <h3>本地使用说明</h3>
           <div class="gm-inspector-rules-container">
             <div class="gm-inspector-rule">API 密钥本地混淆处理，会话状态随开随载，保护隐私不外泄。</div>
             <div class="gm-inspector-rule">本地仅提供通道与诊断环境，业务计算与结算在云端完成。</div>
             <div class="gm-inspector-rule">代理快照及返佣数据完全托管在云端，本地不做计算缓存。</div>
-            <div class="gm-inspector-rule">任何不符合五维诊断规范的智能体，云端将阻断协同确权。</div>
+            <div class="gm-inspector-rule">任何不符合五维诊断规范的AI 助手，云端将阻断协同确权。</div>
           </div>
         </div>
       `;
@@ -3428,36 +3445,39 @@
     }
 
     const KEY_FORMATS = [
-      { id:"openai", name:"OpenAI 兼容格式", agents:["Codex","OpenClaw","Hermes"], modelHint:"OpenAI 体系（如 gpt-5.5）",
-        help:"Codex、OpenClaw、Hermes 都使用 OpenAI 的 Chat Completions 接口格式，彼此兼容，所以共用同一把「OpenAI 兼容格式」的 Key。请在 aitokenapi.cc 创建 OpenAI 兼容格式的 Key 填这里，模型名也要用 OpenAI 体系的（例如 gpt-5.5）。把 Anthropic 或 Gemini 格式的 Key 填到这里会跑不通。" },
-      { id:"anthropic", name:"Anthropic 格式", agents:["Claude Code"], modelHint:"Claude 体系（如 claude-opus-4.8）",
-        help:"Claude Code 使用 Anthropic 的 Messages 接口格式，和 OpenAI 格式并不兼容——把 OpenAI 的 Key 填到这里是跑不通的。请单独创建 Anthropic 格式的 Key，模型名填 Claude 体系的（例如 claude-opus-4.8）。" },
-      { id:"gemini", name:"Gemini 格式", agents:["Gemini / agy"], modelHint:"Gemini 体系（如 gemini-3.5）",
-        help:"Gemini / agy 使用 Google Gemini 的原生接口格式，和 OpenAI、Anthropic 都不兼容，需要单独的 Gemini 格式 Key 和 Gemini 体系的模型名（如 gemini-3.5）。" },
+      { id:"openai", name:"OpenAI 兼容格式", short:"给 Codex / OpenClaw / Hermes 用", agents:["Codex","OpenClaw","Hermes"], model:"gpt-5.5", modelHint:"如 gpt-5.5",
+        help:"Codex、OpenClaw、Hermes 这几个 AI 助手都用 OpenAI 的接口格式，彼此通用，所以共用同一把「OpenAI 兼容格式」的 Key。在 aitokenapi.cc 创建这种格式的 Key 填这里就行。把别的格式的 Key 填这里会跑不通。" },
+      { id:"anthropic", name:"Anthropic 格式", short:"给 Claude Code 用", agents:["Claude Code"], model:"claude-opus-4.8", modelHint:"如 claude-opus-4.8",
+        help:"Claude Code 用的是 Anthropic 的接口格式，和 OpenAI 格式不通用——把 OpenAI 的 Key 填这里跑不通。需要单独创建一把 Anthropic 格式的 Key。" },
+      { id:"gemini", name:"Gemini 格式", short:"给 Gemini 用", agents:["Gemini / agy"], model:"gemini-3.5", modelHint:"如 gemini-3.5",
+        help:"Gemini（agy）用的是 Google Gemini 的接口格式，和前两种都不通用，需要单独一把 Gemini 格式的 Key。" },
     ];
     function agentChips(arr){ return (arr||[]).map(a=>`<span class="gm-agent-chip">${a}</span>`).join(""); }
     function renderKeyGroup(g){
       return `
-        <div class="gm-keygroup gm-canvas-card gm-hud-corners">
-          <div class="gm-keygroup-head">
-            <div class="gm-keygroup-title">
-              <b>${g.name}</b>
+        <details class="gm-keygroup gm-canvas-card gm-hud-corners" data-fmt="${g.id}">
+          <summary class="gm-kg-summary">
+            <span class="gm-kg-head"><b>${g.name}</b><span class="gm-kg-for">${g.short}</span></span>
+            <span class="gm-kg-arrow"></span>
+          </summary>
+          <div class="gm-kg-body">
+            <div class="gm-kg-toprow">
               <div class="gm-keygroup-agents">适用：${agentChips(g.agents)}</div>
+              <span class="gm-help-inline" tabindex="0" onclick="this.classList.toggle('open')">ⓘ 说明<span class="gm-help-pop">${g.help}</span></span>
             </div>
-            <span class="gm-help-inline" tabindex="0">ⓘ 说明<span class="gm-help-pop">${g.help}</span></span>
-          </div>
-          <div class="gm-form-field">
-            <label>API Key</label>
-            <div style="display:grid; grid-template-columns:1fr 88px; gap:10px;">
-              <input id="key_${g.id}" class="gm-input" type="password" placeholder="填入 aitokenapi.cc 创建的「${g.name}」Key">
-              <button class="gm-btn" onclick="toggleShowKey('key_${g.id}')">显示</button>
+            <div class="gm-form-field">
+              <label>API Key</label>
+              <div style="display:grid; grid-template-columns:1fr 88px; gap:10px;">
+                <input id="key_${g.id}" class="gm-input" type="password" placeholder="填入你在 aitokenapi.cc 创建的「${g.name}」Key">
+                <button class="gm-btn" onclick="toggleShowKey('key_${g.id}')">显示</button>
+              </div>
+            </div>
+            <div class="gm-form-field">
+              <label>模型名 <span class="gm-model-hint">已按最新型号填好，一般不用改</span></label>
+              <input id="model_${g.id}" class="gm-input" type="text" value="${g.model}" placeholder="${g.modelHint}">
             </div>
           </div>
-          <div class="gm-form-field">
-            <label>模型名 · ${g.modelHint}</label>
-            <input id="model_${g.id}" class="gm-input" type="text" placeholder="填写模型名（${g.modelHint}）">
-          </div>
-        </div>`;
+        </details>`;
     }
 
     // Preserve pywebview calls for contracts
@@ -3479,7 +3499,7 @@
     }
 
     function runDiagnosticsCheck() {
-      appendPythonLog("正在启动本地系统环境依赖与运行检测...", "running");
+      appendPythonLog("正在启动本地电脑软件与运行检测...", "running");
       window.pywebview.api.run_env_check();
     }
 
