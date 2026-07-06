@@ -4531,7 +4531,7 @@ def agent_expected_gateway(agent_id: str) -> str:
     raise ValueError(f"未知 Agent：{agent_id}")
 
 
-def inspect_agent_config_drift(agent_id: str, expected_model: str = DEFAULT_MODEL) -> dict:
+def inspect_agent_config_drift(agent_id: str, expected_model: str = "") -> dict:
     """检查单个 Agent 的配置漂移。返回 {agent_id, level, findings[], repairable}。
 
     findings 每项 {field, severity, detail}。不返回任何明文 Key。
@@ -4615,9 +4615,13 @@ def inspect_agent_config_drift(agent_id: str, expected_model: str = DEFAULT_MODE
     }
 
 
-def inspect_all_config_drift(agent_ids: list[str] | None = None, expected_model: str = DEFAULT_MODEL) -> dict:
+def inspect_all_config_drift(agent_ids: list[str] | None = None, expected_models: dict[str, str] | None = None) -> dict:
     ids = agent_ids or [agent.id for agent in AGENTS]
-    reports = [inspect_agent_config_drift(agent_id, expected_model) for agent_id in ids]
+    if isinstance(expected_models, str):
+        _m = expected_models
+        expected_models = {aid: (_m if key_format_for_agent(aid) == "openai" else "") for aid in ids}
+    em = expected_models or {}
+    reports = [inspect_agent_config_drift(agent_id, em.get(agent_id, "")) for agent_id in ids]
     risk_findings = detect_risk_plugins()
     worst = DRIFT_OK
     for report in reports:
@@ -4648,7 +4652,7 @@ def repair_agent_config_drift(agent_id: str, api_key: str, model: str, log) -> b
     log(f"开始一键修复 {agent.name} 配置漂移……")
     ok = apply_agent_config(agent, "cli", api_key, model or DEFAULT_MODEL, log)
     if ok:
-        after = inspect_agent_config_drift(agent_id, model or DEFAULT_MODEL)
+        after = inspect_agent_config_drift(agent_id, model)
         if after["level"] == DRIFT_RED:
             log(f"警告：{agent.name} 修复后仍检测到红色漂移，请人工检查是否有第三方工具持续改写配置。")
             return False
@@ -5515,15 +5519,14 @@ class WebviewApi:
 
     def inspect_config_drift(self):
         try:
-            model = self.app.model.get().strip() or DEFAULT_MODEL
-            return {"success": True, "report": inspect_all_config_drift(expected_model=model)}
+            expected_models = {agent.id: self.app.key_model_for_agent(agent.id)[1] for agent in AGENTS}
+            return {"success": True, "report": inspect_all_config_drift(expected_models=expected_models)}
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def repair_config_drift(self, agentId):
         try:
-            api_key = self.app.api_key.get().strip()
-            model = self.app.model.get().strip() or DEFAULT_MODEL
+            api_key, model = self.app.key_model_for_agent(str(agentId))
             ok = repair_agent_config_drift(str(agentId), api_key, model, self.app.log)
             return {"success": bool(ok)}
         except Exception as e:
