@@ -2788,6 +2788,8 @@
       const responseDigest = s.agentResponseDigest || "";
       const outboundId = s.outboundPlatformMessageId || "";
       const evidence = s.evidenceUrl || "";
+      const acceptanceStatus = (s.acceptanceStatus || "").toLowerCase();
+      const charged = s.charged === true;
       const officialRobotPages = [
         ["飞书开发者后台", "https://open.feishu.cn/app?lang=zh-CN"],
         ["飞书开放平台", "https://open.feishu.cn/?lang=zh-CN"],
@@ -2916,9 +2918,9 @@
       }
 
       return `
-        <div class="gm-chip" style="margin-bottom:12px;width:100%;border-radius:6px;padding:8px 12px;display:block;height:auto;text-transform:none;font-weight:normal;line-height:1.5;">
-          下面这些验收字段由服务端在真实平台消息回调后回填。请先点下方「从服务端刷新验收字段」拉取，通常无需手动填写。
-        </div>
+        ${acceptanceStatus === "accepted"
+          ? `<div style="margin-bottom:12px;width:100%;border-radius:6px;padding:8px 12px;line-height:1.5;background:rgba(0,242,169,.12);color:#00f2a9;border:1px solid rgba(0,242,169,.25);">✅ 服务端已自动验收${charged ? "（已扣费）" : ""}——通讯链路交付已确认，无需手动提交下列内部字段。</div>`
+          : `<div style="margin-bottom:12px;width:100%;border-radius:6px;padding:8px 12px;line-height:1.5;background:rgba(138,180,248,.10);color:#8ab4f8;border:1px solid rgba(138,180,248,.2);">连接后，请从手机/通讯软件给机器人发一条测试消息触发；服务端收到真实回调会自动验收并回填下列字段。点「从服务端刷新验收字段」查看状态，通常无需手动填写或提交。</div>`}
         <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr);">
           <div class="gm-form-field">
             <label>源事件 ID（自动获取）</label>

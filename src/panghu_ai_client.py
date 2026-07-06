@@ -7548,6 +7548,7 @@ class InstallerApp:
             "platformCallbackStatus": str(order_status.get("platform_callback_status") or ""),
             "runtimeAdapterStatus": str(order_status.get("runtime_adapter_status") or ""),
             "acceptanceStatus": str(order_status.get("acceptance_status") or ""),
+            "charged": order_status.get("charged") is True,
             "clientMayClaimDeliveryComplete": order_status.get("client_may_claim_delivery_complete") is True,
             "deliveryBoundary": delivery_boundary,
         }
@@ -7835,6 +7836,9 @@ class InstallerApp:
                     order_status[key] = value
             if "client_may_claim_delivery_complete" in fields:
                 order_status["client_may_claim_delivery_complete"] = fields.get("client_may_claim_delivery_complete") is True
+            # charged 一旦为真保持为真（幂等），避免后续刷新未带该字段时被清回 false。
+            if fields.get("charged") is True:
+                order_status["charged"] = True
             self.communication_software_link_order_statuses[order_id] = order_status
 
     def _communication_software_link_create_session_worker(self, request) -> None:

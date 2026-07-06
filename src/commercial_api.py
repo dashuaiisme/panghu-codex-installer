@@ -1056,6 +1056,7 @@ def parse_communication_software_link_state_fields(data: dict[str, Any]) -> dict
         "platform_callback_status": _first_non_empty_text(source, "platform_callback_status", "platform_callback_state").lower(),
         "runtime_adapter_status": _first_non_empty_text(source, "runtime_adapter_status", "adapter_status").lower(),
         "acceptance_status": _first_non_empty_text(source, "acceptance_status", "real_acceptance_status").lower(),
+        "charged": _explicit_server_true(source.get("charged")),
         "client_may_claim_delivery_complete": _explicit_server_true(source.get("client_may_claim_delivery_complete")),
     }
 

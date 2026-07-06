@@ -1858,6 +1858,10 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("communication_software_link_get_session(state.communicationSoftwareLink)", html)
         # 预览模式桩也要有，避免离线预览报错。
         self.assertIn("communication_software_link_get_session: ()", html)
+        # 服务端自动验收：前端读取 acceptanceStatus/charged 并在已验收时展示，不再逼买家手交字段。
+        self.assertIn("s.acceptanceStatus", html)
+        self.assertIn("s.charged === true", html)
+        self.assertIn("服务端已自动验收", html)
         # 后端确有该会话拉取入口与字段回填能力。
         self.assertTrue(hasattr(installer_module.InstallerApp, "start_communication_software_link_get_session"))
         self.assertTrue(hasattr(installer_module.InstallerApp, "_apply_communication_software_link_state_fields"))

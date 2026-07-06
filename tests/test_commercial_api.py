@@ -844,6 +844,17 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertEqual(parsed["agent_response_digest"], "sha256:reply")
         self.assertEqual(parsed["evidence_url"], "https://aitokenapi.cc/evidence/evt-1")
 
+    def test_parse_communication_software_link_state_fields_extracts_auto_acceptance_charged(self) -> None:
+        # 服务端自动验收：GET session 返回 acceptance_status=accepted + charged=true。
+        accepted = parse_communication_software_link_state_fields(
+            {"session_id": "csl_x", "acceptance_status": "accepted", "charged": True}
+        )
+        self.assertEqual(accepted["acceptance_status"], "accepted")
+        self.assertIs(accepted["charged"], True)
+        # 未返回 charged 时默认 False，且不因缺省而误判已扣费。
+        pending = parse_communication_software_link_state_fields({"session_id": "csl_x"})
+        self.assertIs(pending["charged"], False)
+
     def test_parse_communication_software_link_state_fields_keeps_real_acceptance_separate_from_local_precheck(self) -> None:
         parsed = parse_communication_software_link_state_fields(
             {
