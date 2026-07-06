@@ -1705,6 +1705,12 @@
   .gm-cockpit .gm-model-hint{ font-size:11px; color:var(--g-primary); font-weight:400; margin-left:6px; }
   .gm-cockpit .gm-help-inline.open .gm-help-pop{ display:block; }
 
+  /* 购买/权益 提示卡 */
+  .gm-cockpit .gm-buy-note{ background:linear-gradient(180deg,rgba(253,214,99,.06),transparent),var(--g-surface-2); border:1px solid rgba(253,214,99,.22); border-left:3px solid var(--g-warning); border-radius:12px; padding:14px 18px; margin-bottom:16px; }
+  .gm-cockpit .gm-buy-title{ font-size:14px; font-weight:700; color:var(--g-text); }
+  .gm-cockpit .gm-buy-desc{ font-size:12.5px; line-height:1.65; color:var(--g-text-muted); margin-top:6px; }
+  .gm-cockpit .gm-buy-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:11px; }
+
   </style>
 </head>
 <body>
@@ -1953,6 +1959,7 @@
           select_login_account: () => noopPromise(),
           remove_login_account: () => noopPromise(),
           start_update_check: () => noopPromise(),
+          buyer_refresh_entitlements: () => { appendPythonLog("（预览）已请求刷新权益；实际权益以服务端返回为准。", "success"); return noopPromise(); },
           copy_logs: () => noopPromise(),
           switch_module: (m) => { state.activeModule = m; state.activeSubnav = defaultSubnav(m); refreshAll(); return noopPromise(); },
           switch_subnav: (s) => { state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
@@ -2108,10 +2115,10 @@
 
     const agentModeOptions = {
       codex: [["cli", "CLI"], ["client", "客户端"]],
-      claude_code: [["cli", "CLI"], ["client", "客户端"]],
+      claude_code: [["cli", "CLI"]],
       openclaw: [["cli", "CLI"]],
       hermes: [["cli", "CLI"]],
-      gemini_agy: [["cli", "CLI"], ["client", "客户端"]]
+      gemini_agy: [["cli", "CLI"]]
     };
 
     function defaultSubnav(mod) { return mod === "agent" ? "2" : (subnav[mod] && subnav[mod][0][0]) || "2"; }
@@ -2420,6 +2427,14 @@
           return "cli";
         };
         stepBody = `
+          <div class="gm-buy-note">
+            <div class="gm-buy-title">💡 安装某个 AI 需要先有它的「安装权益」</div>
+            <div class="gm-buy-desc">没买过就先去官网买你要用的 AI 的权益；买好后回来点「刷新权益」就能安装。已购买的会自动放行；没权益直接安装会被拦下。</div>
+            <div class="gm-buy-actions">
+              <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${serviceBase}/buy')">去官网购买权益</button>
+              <button class="gm-btn" onclick="refreshEntitlements()">我买好了，刷新权益</button>
+            </div>
+          </div>
           <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
             ${agents.map(([id, name]) => `
               <div class="gm-canvas-card gm-hud-corners" style="min-height: 110px;">
@@ -2427,7 +2442,7 @@
                   <b>${name}</b>
                   <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.02); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--g-line);">
                     <input type="checkbox" ${isAgentEnabled(id) ? "checked" : ""} onchange="toggleAgentEnabled('${id}', this.checked)">
-                    <span style="font-size: 11px; font-weight: bold;">选入队列</span>
+                    <span style="font-size: 11px; font-weight: bold;">安装此项</span>
                   </label>
                 </div>
                 <select class="gm-select" onchange="setAgentMode('${id}', this.value)" style="margin-top: 12px;">
@@ -2436,7 +2451,7 @@
                   `).join("")}
                 </select>
                 <small style="margin-top: auto; display: block; line-height: 1.4;">
-                  ${(id === "openclaw" || id === "hermes") ? "官方未提供客户端安装，只做 CLI 交付。" : "CLI 可自动配置并验收；客户端范围需检测官方客户端并独立验收。"}
+                  ${id === "codex" ? "支持 CLI 和客户端两种方式。" : "以 CLI 方式自动安装、配置并验收。"}
                 </small>
               </div>
             `).join("")}
@@ -3501,6 +3516,16 @@
     function runDiagnosticsCheck() {
       appendPythonLog("正在启动本地电脑软件与运行检测...", "running");
       window.pywebview.api.run_env_check();
+    }
+
+    function refreshEntitlements() {
+      window.showToast("正在刷新你的权益……", "running");
+      Promise.resolve(window.pywebview.api.buyer_refresh_entitlements())
+        .then(res => {
+          if (res && res.success) { window.showToast(res.message || "权益已刷新，可继续安装", "success"); }
+          else { window.showToast("刷新权益失败：" + ((res && res.message) || "请稍后再试"), "error"); }
+        })
+        .catch(err => window.showToast("刷新权益出错：" + err, "error"));
     }
 
     function toggleAgentEnabled(id, checked) {

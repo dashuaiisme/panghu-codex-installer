@@ -122,7 +122,7 @@ HTTP_USER_AGENT = f"PanghuAI-Client/{APP_VERSION}"
 # 启动时若覆盖生效会在日志和窗口标题打出醒目提示，防止误用。
 PANGHU_DEV_BASE_URL_OVERRIDE = os.environ.get("PANGHU_DEV_BASE_URL_OVERRIDE", "").strip().rstrip("/")
 DEFAULT_BASE_URL = PANGHU_DEV_BASE_URL_OVERRIDE or "https://aitokenapi.cc"
-DEFAULT_MODEL = "gpt-5.4"
+DEFAULT_MODEL = "gpt-5.5"
 CODEX_PROVIDER_NAME = "panghuAI"
 CODEX_BASE_URL = f"{DEFAULT_BASE_URL}/v1"
 CLAUDE_CODE_BASE_URL = DEFAULT_BASE_URL
@@ -5104,7 +5104,7 @@ def install_agent(agent: AgentSpec, mode_id: str, log) -> bool:
         ok = install_gemini_agy_cli(log)
     elif agent.id == "gemini_agy" and mode_id == "client":
         open_url(GEMINI_AGY_DOCS_URL)
-        log("已打开 Google Antigravity 官方入口；Gemini / agy 配置功能待开发。")
+        log("已打开 Google Antigravity 官方入口；请按官方流程完成安装，随后本工具会写入胖虎AI网关配置（~/.gemini/.env）。")
         ok = True
     else:
         log("未知 Agent 或安装方式。")
