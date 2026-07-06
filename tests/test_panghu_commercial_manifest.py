@@ -1059,6 +1059,83 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("付款链接", infos[0][1])
         self.assertEqual(app.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT], NodeStatus.NEEDS_MANUAL)
 
+    def test_buyer_self_service_order_supports_non_codex_agent_product(self) -> None:
+        # Regression: start_buyer_create_order used to hardcode agent_id="codex" /
+        # mode_key=direct_api, so ordering any other agent's entitlement returned
+        # "商品不匹配" and no order was created. The agent/mode must come from the
+        # product snapshot instead.
+        app = InstallerApp.__new__(InstallerApp)
+        app.worker_running = False
+        app.commercial_contexts = installer_module.create_buyer_contexts(
+            UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
+        )
+        app.commercial_products = [
+            CommercialProduct(
+                product_id="prod-hermes",
+                title="Hermes CLI 配置 10 次",
+                agent_id="hermes",
+                mode_key="cli",
+                delivery_scope=DeliveryScope.FULL_CONFIG,
+                price_cents=9900,
+                currency="CNY",
+                remaining_uses=10,
+                valid_until="2026-12-31T23:59:59+08:00",
+                includes_dual_state=False,
+                device_limit=2,
+                is_listed=True,
+            )
+        ]
+        app.buyer_product_id = type("Var", (), {"get": lambda _self: "prod-hermes"})()
+        app.buyer_order_id = type("Var", (), {"set": lambda _self, value: setattr(app, "buyer_order_id_value", value)})()
+        app.set_busy = lambda _busy: None
+        app.buyer_purchase_statuses = {}
+        app.refresh_buyer_purchase_status = lambda: None
+        app.log_from_worker = lambda _message: None
+        app.set_status_from_worker = lambda message: setattr(app, "last_status", message)
+        app.run_on_ui = lambda callback: callback()
+        app.show_error_from_worker = lambda _title, _message: None
+        infos = []
+        app.show_info_from_worker = lambda title, message: infos.append((title, message))
+        warnings = []
+        app.notify_warning = lambda title, message: warnings.append((title, message))
+        captured = {}
+        original_request = installer_module.commercial_api_request_with_auth
+        original_execute = installer_module.execute_commercial_api_with_trusted_certs
+        original_thread = installer_module.threading.Thread
+
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=None):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                self.target(*self.args)
+
+        try:
+            def fake_request(action, contexts, **kwargs):
+                captured["action"] = action
+                captured["product_id"] = kwargs["product_id"]
+                return object()
+
+            installer_module.commercial_api_request_with_auth = fake_request
+            installer_module.execute_commercial_api_with_trusted_certs = lambda _request: (
+                {"order_id": "ord-hermes", "payment_url": "https://aitokenapi.cc/pay/ord-hermes"},
+                "订单已创建",
+            )
+            installer_module.threading.Thread = ImmediateThread
+
+            app.start_buyer_create_order()
+        finally:
+            installer_module.commercial_api_request_with_auth = original_request
+            installer_module.execute_commercial_api_with_trusted_certs = original_execute
+            installer_module.threading.Thread = original_thread
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(captured["action"], "order_create")
+        self.assertEqual(captured["product_id"], "prod-hermes")
+        self.assertEqual(app.buyer_order_id_value, "ord-hermes")
+        self.assertEqual(app.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT], NodeStatus.NEEDS_MANUAL)
+
     def test_refresh_recommended_agent_product_only_fills_buyer_product_field(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
         app.commercial_products = [

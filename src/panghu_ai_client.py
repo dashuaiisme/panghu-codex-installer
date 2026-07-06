@@ -8220,16 +8220,23 @@ class InstallerApp:
         if not product_id:
             self.notify_warning("缺少商品", "请选择或填写服务端返回的商品 ID。")
             return
+        product_snapshot = next(
+            (p for p in self.commercial_products if p.product_id == product_id),
+            None,
+        )
+        if product_snapshot is None:
+            self.notify_warning("商品不匹配", "该商品未在服务端商品清单中上架。请刷新授权清单后重试。")
+            return
         product = find_orderable_product(
             self.commercial_products,
             product_id=product_id,
-            agent_id="codex",
-            mode_key=CodexConfigMode.DIRECT_API.value,
+            agent_id=product_snapshot.agent_id,
+            mode_key=product_snapshot.mode_key,
             app_version=APP_VERSION,
             buyer_user_id=self.commercial_contexts.target_buyer.user_id,
         )
         if product is None:
-            self.notify_warning("商品不匹配", "该商品未在服务端商品清单中上架，或不匹配当前 Codex 普通配置交付。请刷新授权清单后重试。")
+            self.notify_warning("商品不匹配", "该商品未在服务端商品清单中上架，或不满足当前交付条件（版本/权限/上架状态）。请刷新授权清单后重试。")
             return
         request = commercial_api_request_with_auth(
             "order_create",
