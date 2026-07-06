@@ -1970,7 +1970,8 @@
           run_env_check: () => { state.environmentOk = true; appendPythonLog("环境检测通过。", "success"); return noopPromise({ success: true }); },
           toggle_agent: (id, checked) => { state.selectedAgents[id] = checked; return noopPromise(); },
           set_agent_mode: () => noopPromise(),
-          start_deploy: () => { appendPythonLog("开始执行 Agent 安装与配置。", "running"); return noopPromise(); },
+          start_install: () => { appendPythonLog("开始安装所选 Agent（仅安装，不写配置）。", "running"); return noopPromise(); },
+          start_deploy: () => { appendPythonLog("开始写入配置并完成交付。", "running"); return noopPromise(); },
           start_config_only: () => noopPromise(),
           start_dual_state_config: () => noopPromise(),
           start_official_chatgpt_config: () => noopPromise(),
@@ -2466,10 +2467,17 @@
       } else if (step === "10" || step === "11") {
         stepBody = renderCommunicationLink(step);
       } else if (step === "5") {
-        stepBody = renderConfigHealth();
+        stepBody = `
+          <div class="gm-canvas-grid" style="grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px;">
+            <div class="gm-canvas-card gm-hud-corners">
+              <b>写入配置并完成交付</b>
+              <small>把你的 Key 和网关地址写进已安装的 Agent，并做最小对话/客户端验收；验收通过才计入交付、扣次。改动前会自动备份。（若还没安装，请先回第 4 步「安装」。）</small>
+              <div style="margin-top:10px"><button class="gm-btn gm-btn-primary" onclick="window.pywebview.api.start_deploy()">写入配置并交付</button></div>
+            </div>
+          </div>` + renderConfigHealth();
       } else {
         const actionMap = {
-          "4": [["开始部署与配置","start_deploy"]],
+          "4": [["开始安装","start_install"]],
           "5": [["查看配置目录","open_config_dir"],["载入备份快照","restore_backups"]],
           "6": [["打开 Agent 工作空间","open_workspace"],["打开配置目录","open_config_dir"]],
           "7": [["运行连通测试","start_deploy"]],

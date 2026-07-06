@@ -5487,10 +5487,17 @@ class WebviewApi:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
+    def start_install(self):
+        try:
+            self.app.start_install()
+            return self._accepted("安装请求已受理，最终结果以状态和诊断日志为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
     def start_deploy(self):
         try:
             self.app.start_deploy()
-            return self._accepted("部署请求已受理，最终结果以状态和诊断日志为准。")
+            return self._accepted("写入配置与交付请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -10204,6 +10211,44 @@ class InstallerApp:
             args=(selected, user, deployer_auth, contexts, api_key, base_url, model, skip_test, open_app),
             daemon=True,
         ).start()
+
+    def start_install(self) -> None:
+        """第 4 步「安装」：仅下载安装所选 Agent，不写配置、不做商业权益预占/扣次。
+        配置写入与交付计费在第 5 步「写入配置」（start_deploy）完成。"""
+        if not self.can_access_step(4):
+            self.go_to_step(4)
+            return
+        selected = self.selected_agents()
+        if not selected:
+            self.notify_warning("请选择 Agent", "请至少选择一个 Agent。")
+            return
+        if not self.validate_system_and_risk_plugins():
+            return
+        self.set_busy(True)
+        self.status.set("状态：正在安装 Agent...")
+        threading.Thread(
+            target=self._install_worker,
+            args=(list(selected),),
+            daemon=True,
+        ).start()
+
+    def _install_worker(self, selected) -> None:
+        try:
+            self.log_from_worker("开始安装所选 Agent（仅安装，不写配置、不计费）……")
+            done = 0
+            for agent, mode in selected:
+                if install_agent(agent, mode, self.log_from_worker):
+                    done += 1
+                    self.log_from_worker(f"{agent.name}/{mode} 安装完成。")
+                else:
+                    self.log_from_worker(f"{agent.name}/{mode} 安装失败，请查看日志。")
+            self.set_status_from_worker(f"状态：安装完成 {done}/{len(selected)}，请进入第 5 步「写入配置」")
+            self.log_from_worker("安装阶段结束。请点第 5 步「写入配置」写入配置并完成交付（验收通过才扣次）。")
+        except Exception as exc:
+            self.set_status_from_worker("状态：安装失败")
+            self.log_from_worker(f"安装过程中出错：{exc}")
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def start_config_only(self) -> None:
         self.start_config_for_mode(CodexConfigMode.DIRECT_API)

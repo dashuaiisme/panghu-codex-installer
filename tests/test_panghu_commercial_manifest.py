@@ -1804,7 +1804,11 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("def communication_software_link_one_click_connect(self, payload=None):", py_source)
         self.assertIn("def start_communication_software_link_one_click_connect(self) -> None:", py_source)
         self.assertIn("def run_communication_software_link_one_click_connect(self) -> dict[str, str]:", py_source)
-        self.assertIn('["开始部署与配置","start_deploy"]', html)
+        # 第4步「安装」= 仅安装(start_install)；第5步「写入配置」按钮 = 写配置并交付(start_deploy)。两者都必须有真实后端方法，非死按钮。
+        self.assertIn('["开始安装","start_install"]', html)
+        self.assertIn("window.pywebview.api.start_deploy()", html)
+        self.assertIn("def start_install(self):", py_source)
+        self.assertIn("def start_deploy(self):", py_source)
         self.assertIn("window.pywebview.api.${api}()", html)
         self.assertIn("function setAgentMode(id, mode)", html)
         self.assertIn("window.pywebview.api.set_agent_mode(id, mode)", html)
