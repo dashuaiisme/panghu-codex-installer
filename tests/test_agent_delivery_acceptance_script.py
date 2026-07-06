@@ -68,8 +68,29 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
         self.assertEqual(report["agents"][0]["delivery_status"], "blocked")
         self.assertNotIn("cli", report["agents"][0]["mode_statuses"])
         self.assertIn(report["agents"][0]["mode_statuses"]["client"], {"ready", "not_confirmed"})
-        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_run")
+        # client(桌面App)交付不再要求对话验收：dialogue 标记为 not_applicable。
+        self.assertEqual(report["agents"][0]["mode_statuses"]["dialogue"], "not_applicable")
         self.assertIn("ClaudeCode 客户端未确认", "\n".join(report["blocking_gaps"]))
+
+    def test_client_scope_delivery_ready_when_client_confirmed_without_dialogue(self) -> None:
+        # 产品决策：官方客户端已确认(+配置) 即客户端交付合格，不需要对话测试。
+        ready = agent_delivery_acceptance.agent_delivery_status({"client": "ready", "dialogue": "not_applicable"})
+        self.assertEqual(ready, "ready")
+        blocked = agent_delivery_acceptance.agent_delivery_status({"client": "not_confirmed", "dialogue": "not_applicable"})
+        self.assertEqual(blocked, "blocked")
+        # CLI 交付仍需对话通过：dialogue=not_run 依旧 blocked。
+        cli_pending = agent_delivery_acceptance.agent_delivery_status({"cli": "ready", "dialogue": "not_run"})
+        self.assertEqual(cli_pending, "blocked")
+        cli_ready = agent_delivery_acceptance.agent_delivery_status({"cli": "ready", "dialogue": "pass"})
+        self.assertEqual(cli_ready, "ready")
+
+    def test_client_scope_status_marks_dialogue_not_applicable(self) -> None:
+        statuses = agent_delivery_acceptance.initial_mode_statuses(
+            "claude_code", {"client"}, cli_ok=False, client_ok=True
+        )
+        self.assertEqual(statuses["dialogue"], "not_applicable")
+        self.assertEqual(statuses["client"], "ready")
+        self.assertNotIn("cli", statuses)
 
     def test_both_scope_reports_cli_and_client_as_separate_delivery_modes(self) -> None:
         result = self.run_script("--delivery-scope", "both", "--agents", "codex")

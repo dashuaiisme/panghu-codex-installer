@@ -108,14 +108,17 @@ def initial_mode_statuses(agent_id: str, selected_modes: set[str], cli_ok: bool,
         statuses["cli"] = "ready" if cli_ok else "not_detected"
     if "client" in selected_modes:
         statuses["client"] = "ready" if client_ok else "not_confirmed"
-    statuses["dialogue"] = "not_run"
+    # 对话验收只对 CLI 交付是硬性要求；client(桌面App)交付以"官方客户端已确认+配置"为准，
+    # 无法自动驱动图形界面做联网对话，因此 client-only 交付的 dialogue 标记为 not_applicable。
+    statuses["dialogue"] = "not_run" if "cli" in selected_modes else "not_applicable"
     return statuses
 
 
 def agent_delivery_status(mode_statuses: dict[str, str]) -> str:
     if any(status in {"not_supported", "not_detected", "not_confirmed", "not_run", "failed", "blocked"} for status in mode_statuses.values()):
         return "blocked"
-    if mode_statuses.get("dialogue") == "pass":
+    # client-only 交付不要求对话（dialogue=not_applicable）；CLI 交付仍需 dialogue==pass。
+    if mode_statuses.get("dialogue") in {"pass", "not_applicable"}:
         return "ready"
     return "offline_guarded"
 
@@ -236,7 +239,11 @@ def main() -> int:
         if "client" in selected_modes and not client_ok:
             report["blocking_gaps"].append(f"{agent.name} 客户端未确认：{client_detail}")
 
-        if args.run_dialogue:
+        if "cli" not in selected_modes:
+            # client-only 交付：不做最小对话验收，交付以官方客户端已确认+配置为准。
+            item["dialogue_probe_status"] = "not_applicable"
+            item["dialogue_probe_output"] = "客户端(桌面App)交付以官方客户端已确认+配置为准，不做最小对话验收。"
+        elif args.run_dialogue:
             if agent.id == "codex":
                 if args.run_codex_gateway_probe:
                     ok, output = run_codex_gateway_probe(api_key, args.model)
