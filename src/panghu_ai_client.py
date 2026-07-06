@@ -101,6 +101,7 @@ from commercial_core import (
     find_orderable_product,
     validate_commercial_manifest_trust,
     verify_real_task_evidence,
+    verify_client_scope_delivery_evidence,
 )
 
 try:
@@ -10460,30 +10461,49 @@ class InstallerApp:
                     continue
                 if agent_mode_requires_client_scope(mode):
                     client_ok, client_excerpt = verify_agent_client_scope(agent, mode)
+                    config_written = progress.status_for(DeploymentNode.CONFIG_WRITE) == NodeStatus.PASS
                     progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.PASS if client_ok else NodeStatus.FAILED)
-                    progress.mark(DeploymentNode.REAL_TASK_VERIFY, NodeStatus.FAILED)
                     self.log_from_worker(client_excerpt)
-                    real_task = verify_real_task_evidence(
+                    # 产品决策：桌面客户端无法自动做联网对话验收，退而求其次——
+                    # 官方客户端已安装 + 配置已写入即视为客户端交付合格并扣次。
+                    # CLI-only Agent 在 verify_agent_client_scope 处已 client_ok=False，仍会判失败。
+                    real_task = verify_client_scope_delivery_evidence(
                         diagnostic_code=diagnostic_code,
                         agent_id=agent.id,
                         mode_key=commercial_mode_key,
-                        request_ok=True,
-                        response_ok=False,
-                        response_excerpt=client_excerpt,
+                        client_installed=client_ok,
+                        config_written=config_written,
+                        detail=client_excerpt,
                     )
+                    progress.mark(DeploymentNode.REAL_TASK_VERIFY, real_task.status)
                     real_task_results[session_key] = real_task
+                    self.log_from_worker(build_real_task_diagnostic_summary(real_task, api_key))
                     config_session_id = config_session_ids.get(session_key, "")
-                    if config_session_id:
-                        _data, summary = execute_config_session_fail(
-                            config_session_id,
-                            diagnostic_code,
-                            real_task.customer_message,
-                            opener=trusted_urlopen,
-                            contexts=contexts,
-                            deployer_auth=deployer_auth,
-                        )
-                        completed_session_keys.add(session_key)
-                        self.log_from_worker(f"{agent.name}/{commercial_mode_key} client scope 未形成独立客户端交付；已提交失败且不扣次：{summary}")
+                    if real_task.passed:
+                        if config_session_id:
+                            _data, summary = execute_config_session_complete(
+                                config_session_id,
+                                diagnostic_code,
+                                opener=trusted_urlopen,
+                                contexts=contexts,
+                                deployer_auth=deployer_auth,
+                            )
+                            completed_session_keys.add(session_key)
+                            self.log_from_worker(f"{agent.name}/{commercial_mode_key} 客户端交付已完成（安装+配置）；已提交成功并扣次：{summary}")
+                        else:
+                            self.log_from_worker(f"{agent.name}/{commercial_mode_key} 客户端交付已完成（安装+配置）；当前未获得服务端配置会话 ID，本次不提交成功、不扣次。")
+                    else:
+                        if config_session_id:
+                            _data, summary = execute_config_session_fail(
+                                config_session_id,
+                                diagnostic_code,
+                                real_task.customer_message,
+                                opener=trusted_urlopen,
+                                contexts=contexts,
+                                deployer_auth=deployer_auth,
+                            )
+                            completed_session_keys.add(session_key)
+                            self.log_from_worker(f"{agent.name}/{commercial_mode_key} 客户端未形成完整交付；已提交失败且不扣次：{summary}")
                     continue
                 verified, version = version_for(agent.verify_command)
                 progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.PASS if verified else NodeStatus.NEEDS_MANUAL)

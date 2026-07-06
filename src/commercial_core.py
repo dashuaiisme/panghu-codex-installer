@@ -1097,6 +1097,42 @@ def verify_real_task_evidence(
     )
 
 
+def verify_client_scope_delivery_evidence(
+    diagnostic_code: str,
+    agent_id: str,
+    mode_key: str,
+    client_installed: bool,
+    config_written: bool,
+    detail: str,
+) -> RealTaskVerificationResult:
+    """客户端（桌面 App）形态的验收判定。
+
+    产品决策：桌面客户端无法自动驱动图形界面做联网对话验收，因此退而求其次——
+    只要官方客户端已安装（检测到）且胖虎AI网关配置已写入，即视为客户端交付合格并扣次。
+    这条规则只用于官方提供客户端的 Agent（Codex/ClaudeCode/Antigravity）；CLI-only
+    的 Agent 在 verify_agent_client_scope 处就已判定 client_installed=False，不会走到通过分支。
+    """
+    if client_installed and config_written:
+        return RealTaskVerificationResult(
+            diagnostic_code=diagnostic_code,
+            agent_id=agent_id,
+            mode_key=mode_key,
+            passed=True,
+            status=NodeStatus.PASS,
+            customer_message="官方客户端已安装并写入胖虎AI网关配置，客户端交付已完成（客户端形态不做联网对话验收）。",
+            response_excerpt=detail.strip()[:200],
+        )
+    return RealTaskVerificationResult(
+        diagnostic_code=diagnostic_code,
+        agent_id=agent_id,
+        mode_key=mode_key,
+        passed=False,
+        status=NodeStatus.FAILED,
+        customer_message="官方客户端未确认或配置未写入，暂不扣次；请按诊断码交给客服排查。",
+        response_excerpt=detail.strip()[:200],
+    )
+
+
 def build_real_task_diagnostic_summary(result: RealTaskVerificationResult, api_key: str) -> str:
     agent_label = AGENT_LABELS.get(result.agent_id, result.agent_id)
     mode_label = MODE_LABELS.get(result.mode_key, result.mode_key)

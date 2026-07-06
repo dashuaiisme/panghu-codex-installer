@@ -2167,6 +2167,130 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("只销售 CLI 交付；client scope 不适用", log_text)
         self.assertNotIn("Hermes/client 最小对话已通过；商业交付成功已提交", log_text)
 
+    def _run_client_scope_deploy(self, agent_id: str, session_id: str, client_ok: bool, client_message: str):
+        """驱动 _deploy_worker 跑一个 client-scope 交付，返回 (completed, failed, log_text)。
+
+        产品决策：官方客户端已安装 + 配置写入 = 客户端交付合格并扣次（不做联网对话验收）。
+        """
+        app = InstallerApp.__new__(InstallerApp)
+        app.cookie_jar = None
+        app.next_diagnostic_code = lambda: f"PH-CFG-{agent_id.upper()}-CLIENT"
+        logs = []
+        app.log_from_worker = logs.append
+        app.set_status_from_worker = lambda _message: None
+        app.run_on_ui = lambda callback: callback()
+        app.set_busy = lambda _busy: None
+        app.show_error_from_worker = lambda _title, _message: None
+        app.show_info_from_worker = lambda _title, _message: None
+        app.deployer_manifest = {}
+        app.commercial_capabilities = {}
+        app.commercial_products = []
+        app.commercial_entitlements = []
+        app.value_added_services = []
+        app.refresh_commercial_summary = lambda: None
+        # anthropic/gemini 格式 key 不会从 api_key 兜底，需按格式提供，否则配置写入会被跳过。
+        app.deploy_keys = {
+            "openai": {"key": "sk-openai-x", "model": "gpt-5.5"},
+            "anthropic": {"key": "sk-ant-x", "model": "claude-opus-4.8"},
+            "gemini": {"key": "AIza-gemini-x", "model": "gemini-3.5"},
+        }
+        contexts = deployment_commercial_contexts({"id": "buyer-1"})
+        agent = next(a for a in installer_module.AGENTS if a.id == agent_id)
+        completed = []
+        failed = []
+
+        originals = {
+            name: getattr(installer_module, name)
+            for name in (
+                "fetch_deployer_manifest",
+                "ensure_commercial_manifest_trusted",
+                "install_agent",
+                "apply_agent_config",
+                "version_for",
+                "run_agent_dialogue_probe",
+                "verify_agent_client_scope",
+                "execute_config_session_reserve",
+                "execute_config_session_complete",
+                "execute_config_session_fail",
+                "write_agent_setup_guide",
+                "write_customer_agent_acceptance_matrix",
+            )
+        }
+        try:
+            installer_module.fetch_deployer_manifest = lambda *_a, **_k: (
+                True,
+                "manifest ok",
+                {
+                    "agents": [{"id": agent_id, "delivery_scope": "full_config", "full_config_allowed": True}],
+                    "entitlements": [
+                        {
+                            "entitlement_id": f"ent-{agent_id}-client",
+                            "buyer_user_id": "buyer-1",
+                            "agent_id": agent_id,
+                            "mode_key": "client",
+                            "valid_until": "2099-01-01",
+                            "delivery_scope": "full_config",
+                            "status": "active",
+                            "remaining_uses": 1,
+                            "device_limit": 1,
+                        }
+                    ],
+                },
+            )
+            installer_module.ensure_commercial_manifest_trusted = lambda _manifest: None
+            installer_module.install_agent = lambda _agent, _mode, _log: True
+            installer_module.apply_agent_config = lambda _agent, _mode, _api_key, _model, _log: True
+            installer_module.version_for = lambda _command: (True, "client 1.0")
+            installer_module.run_agent_dialogue_probe = lambda _agent, _mode, _model: (True, "不应被调用")
+            installer_module.verify_agent_client_scope = lambda _agent, _mode: (client_ok, client_message)
+            installer_module.execute_config_session_reserve = lambda **_k: (session_id, "reserved")
+            installer_module.execute_config_session_complete = lambda *a, **_k: (completed.append(a[0]), "completed-with-deduct")
+            installer_module.execute_config_session_fail = lambda *a, **_k: (failed.append(a[0]), "failed-without-deduct")
+            installer_module.write_agent_setup_guide = lambda *_a, **_k: Path("NOOP")
+            installer_module.write_customer_agent_acceptance_matrix = lambda *_a, **_k: Path("NOOP")
+
+            app._deploy_worker(
+                selected=[(agent, "client")],
+                user={"id": "buyer-1"},
+                deployer_auth={"token": "buyer-token"},
+                contexts=contexts,
+                api_key="sk-live-secret",
+                base_url="https://aitokenapi.cc",
+                model="gpt-5.4",
+                skip_test=True,
+                open_app=False,
+            )
+        finally:
+            for name, value in originals.items():
+                setattr(installer_module, name, value)
+
+        return completed, failed, "\n".join(logs)
+
+    def test_deploy_worker_completes_client_scope_when_official_client_installed(self) -> None:
+        # 官方客户端已检测到 + 配置写入 → 客户端交付合格并扣次。
+        completed, failed, log_text = self._run_client_scope_deploy(
+            "claude_code",
+            "cfg-claude-client",
+            client_ok=True,
+            client_message="ClaudeCode/client 官方客户端已检测到（Claude Desktop）。",
+        )
+        self.assertEqual(completed, ["cfg-claude-client"])
+        self.assertEqual(failed, [])
+        self.assertIn("客户端交付已完成（安装+配置）；已提交成功并扣次", log_text)
+        self.assertIn("官方客户端已安装并写入胖虎AI网关配置", log_text)
+
+    def test_deploy_worker_fails_client_scope_when_official_client_missing(self) -> None:
+        # 官方客户端未检测到 → 不扣次、判失败。
+        completed, failed, log_text = self._run_client_scope_deploy(
+            "gemini_agy",
+            "cfg-gemini-client",
+            client_ok=False,
+            client_message="Gemini / agy/client client scope 需要官方客户端；当前未检测到：未安装 Antigravity。",
+        )
+        self.assertEqual(completed, [])
+        self.assertEqual(failed, ["cfg-gemini-client"])
+        self.assertIn("客户端未形成完整交付；已提交失败且不扣次", log_text)
+
     def test_agent_center_summary_text_uses_server_manifest_only(self) -> None:
         text = agent_center_summary_text(
             {

@@ -2115,10 +2115,10 @@
 
     const agentModeOptions = {
       codex: [["cli", "CLI"], ["client", "客户端"]],
-      claude_code: [["cli", "CLI"]],
+      claude_code: [["cli", "CLI"], ["client", "客户端"]],
       openclaw: [["cli", "CLI"]],
       hermes: [["cli", "CLI"]],
-      gemini_agy: [["cli", "CLI"]]
+      gemini_agy: [["cli", "CLI"], ["client", "客户端"]]
     };
 
     function defaultSubnav(mod) { return mod === "agent" ? "2" : (subnav[mod] && subnav[mod][0][0]) || "2"; }
