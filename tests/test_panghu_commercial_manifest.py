@@ -1849,6 +1849,19 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertNotIn("真实接入已完成", html)
         self.assertNotIn("可提交服务端真实验收", html)
 
+    def test_webview_exposes_communication_link_refresh_acceptance_fields(self) -> None:
+        # 待办#4：验收字段(source_event_id/消息ID/校验值)由服务端在真实平台消息回调后
+        # 回填，买家不该手填。WebView 必须暴露"从服务端刷新验收字段"入口(session_get)。
+        html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("从服务端刷新验收字段", html)
+        self.assertIn("function submitCSLGetSession()", html)
+        self.assertIn("communication_software_link_get_session(state.communicationSoftwareLink)", html)
+        # 预览模式桩也要有，避免离线预览报错。
+        self.assertIn("communication_software_link_get_session: ()", html)
+        # 后端确有该会话拉取入口与字段回填能力。
+        self.assertTrue(hasattr(installer_module.InstallerApp, "start_communication_software_link_get_session"))
+        self.assertTrue(hasattr(installer_module.InstallerApp, "_apply_communication_software_link_state_fields"))
+
     def test_webview_customer_asset_does_not_ship_demo_accounts_or_fake_agent_center_sync(self) -> None:
         html = (ROOT / "src" / "ui" / "index.html").read_text(encoding="utf-8")
 

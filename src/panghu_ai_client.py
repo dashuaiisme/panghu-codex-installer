@@ -8190,7 +8190,11 @@ class InstallerApp:
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
-            self.notify_warning("缺少验收证据", "请补齐：" + "、".join(missing))
+            self.notify_warning(
+                "缺少验收证据",
+                "这些字段由服务端在真实平台消息回调后自动回填，通常无需手填。"
+                "请先点“从服务端刷新验收字段”拉取；若仍缺少：" + "、".join(missing),
+            )
             return
         request = commercial_api_request_with_auth(
             "communication_software_link_session_acceptance",

@@ -2011,6 +2011,7 @@
           communication_software_link_test: () => noopPromise(),
           communication_software_link_run_local_runtime_test: () => noopPromise(),
           communication_software_link_one_click_connect: () => noopPromise(),
+          communication_software_link_get_session: () => { appendPythonLog("（预览）已请求从服务端刷新验收字段；实际字段以服务端会话回填为准。", "success"); return noopPromise(); },
           communication_software_link_acceptance: () => noopPromise()
         }
       };
@@ -2915,6 +2916,9 @@
       }
 
       return `
+        <div class="gm-chip" style="margin-bottom:12px;width:100%;border-radius:6px;padding:8px 12px;display:block;height:auto;text-transform:none;font-weight:normal;line-height:1.5;">
+          下面这些验收字段由服务端在真实平台消息回调后回填。请先点下方「从服务端刷新验收字段」拉取，通常无需手动填写。
+        </div>
         <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr);">
           <div class="gm-form-field">
             <label>源事件 ID（自动获取）</label>
@@ -2944,6 +2948,7 @@
           <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
           <button class="gm-btn" onclick="submitCSLTest()">远程连接测试</button>
           <button class="gm-btn" onclick="submitCSLLocalRuntimeTest()">本地预检</button>
+          <button class="gm-btn" onclick="submitCSLGetSession()">从服务端刷新验收字段</button>
           <button class="gm-btn gm-btn-primary" onclick="submitCSLAcceptance()">提交验收</button>
         </div>`;
     }
@@ -3711,6 +3716,13 @@
     function submitCSLAcceptance() {
       updateCSLPayload();
       window.pywebview.api.communication_software_link_acceptance(state.communicationSoftwareLink);
+    }
+
+    // 从服务端拉取当前会话状态并回填验收字段（源事件 ID / 入站出站消息 ID / 校验值 / 证据链接）。
+    // 这些字段由服务端在真实平台消息回调后写入，买家无需手填。
+    function submitCSLGetSession() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_get_session(state.communicationSoftwareLink);
     }
 
     window.appendPythonLog = function(line, cls) {
