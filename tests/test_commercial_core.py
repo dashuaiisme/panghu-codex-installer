@@ -190,19 +190,19 @@ class CommercialCoreTests(unittest.TestCase):
                 "user": {"id": "agent-1", "role": "agent"},
                 "deployer_auth": {"token": "secret-token", "role": "agent"},
                 "api_key": "sk-buyer-live",
-                "model": "gpt-5.4",
+                "model": "gpt-5.5",
                 "skip_test": True,
                 "open_app": False,
             },
             contexts=contexts,
             default_base_url="https://aitokenapi.cc",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         )
 
         self.assertNotIn("secret-token", str(payload))
         self.assertEqual(payload["username"], "")
         self.assertEqual(payload["api_key"], "sk-buyer-live")
-        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertTrue(payload["skip_test"])
         self.assertFalse(payload["open_app"])
 
@@ -223,11 +223,11 @@ class CommercialCoreTests(unittest.TestCase):
             },
             updates={
                 "api_key": "sk-buyer-live",
-                "model": "gpt-5.4",
+                "model": "gpt-5.5",
             },
             contexts=contexts,
             default_base_url="https://aitokenapi.cc",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         )
 
         text = str(payload)
@@ -259,7 +259,7 @@ class CommercialCoreTests(unittest.TestCase):
             },
             contexts=contexts,
             default_base_url="https://aitokenapi.cc",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         )
 
         text = str(payload)
@@ -288,11 +288,11 @@ class CommercialCoreTests(unittest.TestCase):
             },
             updates={
                 "api_key": "sk-buyer-live",
-                "model": "gpt-5.4",
+                "model": "gpt-5.5",
             },
             contexts=contexts,
             default_base_url="https://aitokenapi.cc",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         )
 
         text = str(payload)
@@ -319,13 +319,13 @@ class CommercialCoreTests(unittest.TestCase):
                 "user": {"id": "buyer-1", "role": "buyer", "username": "buyer@example.com"},
                 "deployer_auth": {"token": "buyer-secret-token", "role": "buyer"},
                 "api_key": "sk-buyer-live",
-                "model": "gpt-5.4",
+                "model": "gpt-5.5",
                 "skip_test": True,
                 "open_app": False,
             },
             contexts=buyer_contexts,
             default_base_url="https://aitokenapi.cc",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         )
 
         text = str(payload)

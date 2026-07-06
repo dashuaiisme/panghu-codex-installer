@@ -792,7 +792,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             installer_module.execute_api_key_owner_verify = lambda _api_key, _contexts, opener=None, deployer_auth=None: "归属已确认"
             installer_module.save_profile_data = lambda data, contexts=None: captured.update({"data": data, "contexts": contexts})
 
-            app._save_key_worker("sk-live-secret", "https://aitokenapi.cc", "gpt-5.4", True, False)
+            app._save_key_worker("sk-live-secret", "https://aitokenapi.cc", "gpt-5.5", True, False)
         finally:
             installer_module.execute_api_key_owner_verify = original_verify
             installer_module.save_profile_data = original_save
@@ -836,7 +836,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 "user": {"id": "agent-1", "role": "agent", "username": "agent@example.com"},
                 "deployer_auth": {"token": "agent-secret-token", "role": "agent"},
                 "api_key": "sk-buyer-live",
-                "model": "gpt-5.4",
+                "model": "gpt-5.5",
             }
 
             app.load_profile_into_ui()
@@ -889,7 +889,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 "user": {"id": "buyer-1", "role": "buyer", "username": "buyer@example.com"},
                 "deployer_auth": {"token": "buyer-secret-token", "role": "buyer"},
                 "api_key": "sk-buyer-live",
-                "model": "gpt-5.4",
+                "model": "gpt-5.5",
             }
 
             app.load_profile_into_ui()
@@ -916,7 +916,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                         "user": {"id": "buyer-1", "role": "buyer", "username": "buyer@example.com"},
                         "deployer_auth": {"token": "buyer-secret-token", "role": "buyer"},
                         "api_key": "sk-buyer-live",
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "skip_test": True,
                         "open_app": False,
                     },
@@ -932,7 +932,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(saved["user"], {})
         self.assertEqual(saved["deployer_auth"], {})
         self.assertEqual(saved["api_key"], "sk-buyer-live")
-        self.assertEqual(saved["model"], "gpt-5.4")
+        self.assertEqual(saved["model"], "gpt-5.5")
         self.assertTrue(saved["skip_test"])
         self.assertFalse(saved["open_app"])
 
@@ -1944,7 +1944,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 contexts="contexts",
                 api_key="sk-live-secret",
                 base_url="https://aitokenapi.cc",
-                model="gpt-5.4",
+                model="gpt-5.5",
                 skip_test=True,
                 open_app=False,
                 mode=installer_module.CodexConfigMode.DIRECT_API,
@@ -1986,7 +1986,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 contexts=contexts,
                 api_key="sk-live-secret",
                 base_url="https://aitokenapi.cc",
-                model="gpt-5.4",
+                model="gpt-5.5",
                 skip_test=True,
                 open_app=False,
             )
@@ -2060,7 +2060,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 contexts=contexts,
                 api_key="sk-live-secret",
                 base_url="https://aitokenapi.cc",
-                model="gpt-5.4",
+                model="gpt-5.5",
                 skip_test=True,
                 open_app=False,
             )
@@ -2152,7 +2152,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 contexts=contexts,
                 api_key="sk-live-secret",
                 base_url="https://aitokenapi.cc",
-                model="gpt-5.4",
+                model="gpt-5.5",
                 skip_test=True,
                 open_app=False,
             )
@@ -2251,7 +2251,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 contexts=contexts,
                 api_key="sk-live-secret",
                 base_url="https://aitokenapi.cc",
-                model="gpt-5.4",
+                model="gpt-5.5",
                 skip_test=True,
                 open_app=False,
             )
@@ -2363,7 +2363,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
                 contexts=contexts,
                 api_key="sk-live-secret",
                 base_url="https://aitokenapi.cc",
-                model="gpt-5.4",
+                model="gpt-5.5",
                 skip_test=True,
                 open_app=False,
             )
@@ -2419,10 +2419,10 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertIn("暂未开放", agent_center_summary_text({}))
 
     def test_real_task_probe_payload_is_minimal_and_customer_safe(self) -> None:
-        url, payload = build_real_task_probe_payload("https://aitokenapi.cc", "gpt-5.4")
+        url, payload = build_real_task_probe_payload("https://aitokenapi.cc", "gpt-5.5")
 
         self.assertEqual(url, "https://aitokenapi.cc/v1/chat/completions")
-        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["max_tokens"], 16)
         self.assertIn("胖虎AI", payload["messages"][0]["content"])
 

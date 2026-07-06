@@ -465,7 +465,7 @@ class InstallerBackendTests(unittest.TestCase):
                     {
                         "username": "buyer@example.com",
                         "api_key": "sk-live",
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "skip_test": True,
                         "open_app": False,
                         "user": {"id": "buyer-1"},
@@ -482,7 +482,7 @@ class InstallerBackendTests(unittest.TestCase):
         self.assertEqual(payload["username"], "buyer@example.com")
         self.assertEqual(payload["api_key"], "sk-live")
         self.assertEqual(payload["base_url"], pci.DEFAULT_BASE_URL)
-        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertTrue(payload["skip_test"])
         self.assertFalse(payload["open_app"])
         self.assertEqual(payload.get("user"), {})

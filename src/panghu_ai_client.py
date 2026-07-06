@@ -124,7 +124,7 @@ HTTP_USER_AGENT = f"PanghuAI-Client/{APP_VERSION}"
 # 启动时若覆盖生效会在日志和窗口标题打出醒目提示，防止误用。
 PANGHU_DEV_BASE_URL_OVERRIDE = os.environ.get("PANGHU_DEV_BASE_URL_OVERRIDE", "").strip().rstrip("/")
 DEFAULT_BASE_URL = PANGHU_DEV_BASE_URL_OVERRIDE or "https://aitokenapi.cc"
-DEFAULT_MODEL = "gpt-5.4"
+DEFAULT_MODEL = "gpt-5.5"
 CODEX_PROVIDER_NAME = "panghuAI"
 CODEX_BASE_URL = f"{DEFAULT_BASE_URL}/v1"
 CLAUDE_CODE_BASE_URL = DEFAULT_BASE_URL
@@ -1719,8 +1719,8 @@ CODEX_MANAGED_TOP_LEVEL_KEYS = {
 
 CODEX_OFFICIAL_TOP_LEVEL_CONFIG = [
     'model_provider = "openai"',
-    'model = "gpt-5.4"',
-    'review_model = "gpt-5.4"',
+    'model = "gpt-5.5"',
+    'review_model = "gpt-5.5"',
     'model_reasoning_effort = "xhigh"',
     "disable_response_storage = true",
     'network_access = "enabled"',
@@ -1861,8 +1861,8 @@ def load_codex_mode_snapshot(mode: CodexConfigMode) -> dict[str, str] | None:
 
 def build_config(api_key: str, base_url: str, model: str) -> str:
     return '''model_provider = "panghuAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
@@ -8969,7 +8969,7 @@ class InstallerApp:
         model_frame = tk.Frame(form, bg=CARD_BG)
         model_frame.grid(row=0, column=1, sticky="ew")
         self._field_label(model_frame, "默认模型")
-        ttk.Combobox(model_frame, textvariable=self.model, values=["gpt-5.5", "gpt-5.4", "gpt-4.1"]).pack(
+        ttk.Combobox(model_frame, textvariable=self.model, values=["gpt-5.5", "gpt-4.1"]).pack(
             fill="x", ipady=5, pady=(6, 0)
         )
 
@@ -11014,8 +11014,8 @@ def self_test() -> None:
     assert "已禁止继续安装" in "\n".join(risk_plugin_report_lines([RiskPluginFinding("CCSwitch", "命令", "ccswitch", "")]))
     config = build_config("sk-test", DEFAULT_BASE_URL, DEFAULT_MODEL)
     expected_config = '''model_provider = "panghuAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"

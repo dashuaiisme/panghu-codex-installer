@@ -129,21 +129,21 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
             with patch.object(agent_delivery_acceptance.installer, "install_claude_code_config", side_effect=fake_install("claude")), \
                  patch.object(agent_delivery_acceptance.installer, "install_openclaw_config", side_effect=fake_install("openclaw")), \
                  patch.object(agent_delivery_acceptance.installer, "install_hermes_config", side_effect=fake_install("hermes")):
-                temp_env = agent_delivery_acceptance.configure_isolated_acceptance_env("sk-test-secret-123456", "gpt-5.4")
+                temp_env = agent_delivery_acceptance.configure_isolated_acceptance_env("sk-test-secret-123456", "gpt-5.5")
                 self.assertIsNotNone(temp_env)
                 assert temp_env is not None
                 temp_root = Path(temp_env.name)
 
                 self.assertEqual(calls, [
-                    ("claude", "sk-test-secret-123456", "gpt-5.4"),
-                    ("openclaw", "sk-test-secret-123456", "gpt-5.4"),
-                    ("hermes", "sk-test-secret-123456", "gpt-5.4"),
+                    ("claude", "sk-test-secret-123456", "gpt-5.5"),
+                    ("openclaw", "sk-test-secret-123456", "gpt-5.5"),
+                    ("hermes", "sk-test-secret-123456", "gpt-5.5"),
                 ])
                 self.assertTrue(str(os.environ["CLAUDE_CODE_SETTINGS_PATH"]).startswith(str(temp_root)))
                 self.assertTrue(str(os.environ["OPENCLAW_CONFIG_PATH"]).startswith(str(temp_root)))
                 self.assertTrue(str(os.environ["HERMES_HOME"]).startswith(str(temp_root)))
                 self.assertEqual(os.environ["GEMINI_API_KEY"], "sk-test-secret-123456")
-                self.assertEqual(os.environ["GEMINI_MODEL"], "gpt-5.4")
+                self.assertEqual(os.environ["GEMINI_MODEL"], "gpt-5.5")
                 self.assertEqual(
                     os.environ["GOOGLE_GEMINI_BASE_URL"],
                     agent_delivery_acceptance.installer.DEFAULT_BASE_URL,
@@ -166,7 +166,7 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
             return False, "failed"
 
         with patch.object(agent_delivery_acceptance.installer, "run_command", side_effect=fake_run):
-            ok, output = agent_delivery_acceptance.run_agent_dialogue_probe_with_timeout(agent, "cli", "gpt-5.4", 7)
+            ok, output = agent_delivery_acceptance.run_agent_dialogue_probe_with_timeout(agent, "cli", "gpt-5.5", 7)
 
         self.assertFalse(ok)
         self.assertEqual(captured["timeout"], 7)
@@ -183,15 +183,15 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
             return False, "failed"
 
         with patch.object(agent_delivery_acceptance.installer, "run_command", side_effect=fake_run):
-            ok, output = agent_delivery_acceptance.run_agent_dialogue_probe_with_timeout(agent, "cli", "gpt-5.4", 7)
+            ok, output = agent_delivery_acceptance.run_agent_dialogue_probe_with_timeout(agent, "cli", "gpt-5.5", 7)
 
         self.assertFalse(ok)
         self.assertEqual(captured["timeout"], 7)
         self.assertEqual(captured["command"][0], "agy")
-        self.assertIn("gpt-5.4", captured["command"])
+        self.assertIn("gpt-5.5", captured["command"])
 
     def test_codex_gateway_probe_requires_acceptance_key(self) -> None:
-        ok, output = agent_delivery_acceptance.run_codex_gateway_probe("", "gpt-5.4")
+        ok, output = agent_delivery_acceptance.run_codex_gateway_probe("", "gpt-5.5")
 
         self.assertFalse(ok)
         self.assertIn("PANGHU_AGENT_ACCEPTANCE_API_KEY", output)
@@ -202,11 +202,11 @@ class AgentDeliveryAcceptanceScriptTests(unittest.TestCase):
         def fake_probe(base_url, api_key, model):
             self.assertEqual(base_url, agent_delivery_acceptance.installer.DEFAULT_BASE_URL)
             self.assertEqual(api_key, secret)
-            self.assertEqual(model, "gpt-5.4")
+            self.assertEqual(model, "gpt-5.5")
             return False, f"upstream echoed {secret}"
 
         with patch.object(agent_delivery_acceptance.installer, "run_real_task_probe", side_effect=fake_probe):
-            ok, output = agent_delivery_acceptance.run_codex_gateway_probe(secret, "gpt-5.4")
+            ok, output = agent_delivery_acceptance.run_codex_gateway_probe(secret, "gpt-5.5")
 
         self.assertFalse(ok)
         self.assertNotIn(secret, output)
