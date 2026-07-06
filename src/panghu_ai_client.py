@@ -1,6 +1,7 @@
 import base64
 import http.cookiejar
 import hashlib
+import io
 import json
 from datetime import datetime
 import os
@@ -2681,6 +2682,31 @@ def commercial_api_request_with_auth(
     else:
         raise ValueError(f"Unknown commercial api action: {action}")
     return with_operator_auth(request, token)
+
+
+def build_payment_qr_data_url(payment_url: str, box_size: int = 8, border: int = 2) -> str:
+    """把支付链接离线编码成二维码 PNG 的 base64 data URL。
+
+    服务端（Codex 约定）对工具订单返回支付宝手机网站支付(WAP)链接 payment_url，
+    不返回 qr_code；由桌面客户端自己把 payment_url 生成二维码，买家用手机支付宝扫码付款。
+    离线本地生成，不依赖外网，不把链接写进日志。
+    """
+    url = str(payment_url or "").strip()
+    if not url:
+        raise ValueError("缺少支付链接，无法生成支付二维码。")
+    import qrcode
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=box_size,
+        border=border,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def build_customer_payment_instruction(data: dict) -> str:
@@ -5610,6 +5636,18 @@ class WebviewApi:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
+    def buyer_create_payment_order(self):
+        try:
+            return self.app.create_buyer_payment_order()
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def buyer_query_payment_status(self, order_id=None):
+        try:
+            return self.app.query_buyer_payment_status(str(order_id or ""))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
     def refresh_agent_center(self):
         try:
             self.app.start_refresh_agent_center()
@@ -8210,6 +8248,97 @@ class InstallerApp:
             self.show_error_from_worker("连接通讯软件请求失败", str(exc))
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
+
+    def create_buyer_payment_order(self) -> dict:
+        """WebView 同步下单：创建订单并把支付宝支付链接生成二维码返回给前端。
+
+        与线程版 start_buyer_create_order 走同一套服务端约定（order_create），
+        但同步返回 payment_url + 本地生成的二维码 data URL，供前端弹窗扫码付款。
+        """
+        if self.worker_running:
+            return {"success": False, "message": "有任务正在执行，请稍候再试。"}
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号，再在软件内购买权益。"}
+        product_id = self.buyer_product_id.get().strip()
+        if not product_id:
+            return {"success": False, "message": "请先选择或填写服务端返回的商品 ID。"}
+        product_snapshot = next(
+            (p for p in self.commercial_products if p.product_id == product_id),
+            None,
+        )
+        if product_snapshot is None:
+            return {"success": False, "message": "该商品未在服务端商品清单中上架。请刷新授权清单后重试。"}
+        product = find_orderable_product(
+            self.commercial_products,
+            product_id=product_id,
+            agent_id=product_snapshot.agent_id,
+            mode_key=product_snapshot.mode_key,
+            app_version=APP_VERSION,
+            buyer_user_id=self.commercial_contexts.target_buyer.user_id,
+        )
+        if product is None:
+            return {"success": False, "message": "该商品未在服务端商品清单中上架，或不满足当前交付条件（版本/权限/上架状态）。请刷新授权清单后重试。"}
+        request = commercial_api_request_with_auth(
+            "order_create",
+            self.commercial_contexts,
+            product_id=product_id,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        order_id = str(data.get("order_id") or data.get("id") or "").strip()
+        if not order_id:
+            return {"success": False, "message": "创建订单返回缺少订单 ID。"}
+        payment_url = str(data.get("payment_url") or data.get("pay_url") or data.get("checkout_url") or "").strip()
+        if not payment_url:
+            return {"success": False, "message": "服务端未返回支付链接，无法生成支付二维码。请联系后台确认订单支付入口。"}
+        try:
+            qr_data_url = build_payment_qr_data_url(payment_url)
+        except Exception as exc:
+            self.log_from_worker(f"支付二维码生成失败：{exc}")
+            qr_data_url = ""
+        self.buyer_order_id.set(order_id)
+        self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.NEEDS_MANUAL
+        self.run_on_ui(self.refresh_buyer_purchase_status)
+        self.run_on_ui(self.sync_webview_state)
+        return {
+            "success": True,
+            "order_id": order_id,
+            "payment_url": payment_url,
+            "qr_data_url": qr_data_url,
+            "message": "订单已创建，请用手机支付宝扫码付款，付款后点“查询支付结果”。",
+        }
+
+    def query_buyer_payment_status(self, order_id: str = "") -> dict:
+        """WebView 同步查询支付状态；可交付判定沿用 parse_payment_status_data。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号。"}
+        order_id = str(order_id or "").strip() or self.buyer_order_id.get().strip()
+        if not order_id:
+            return {"success": False, "message": "缺少订单 ID，请先创建订单。"}
+        request = commercial_api_request_with_auth("payment_poll", self.commercial_contexts, order_id=order_id)
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        payment = parse_payment_status_data(data)
+        ready = bool(payment["ready_for_delivery"])
+        needs_review = bool(payment["requires_manual_review"])
+        if ready:
+            self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.PASS
+            self.buyer_purchase_statuses[BuyerSelfServiceNode.ENTITLEMENT_REFRESH] = NodeStatus.NEEDS_MANUAL
+        self.run_on_ui(self.refresh_buyer_purchase_status)
+        self.run_on_ui(self.sync_webview_state)
+        return {
+            "success": True,
+            "order_id": payment["order_id"],
+            "payment_status": payment["payment_status"],
+            "entitlement_id": payment["entitlement_id"],
+            "entitlement_status": payment["entitlement_status"],
+            "ready_for_delivery": ready,
+            "requires_manual_review": needs_review,
+            "message": (
+                "支付已确认，权益已到账。" if ready
+                else ("支付已确认但权益尚未生效，请稍候再查询。" if needs_review else "支付尚未完成，请扫码付款后再查询。")
+            ),
+        }
 
     def start_buyer_create_order(self) -> None:
         if self.worker_running:

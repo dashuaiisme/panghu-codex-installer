@@ -1136,6 +1136,96 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(app.buyer_order_id_value, "ord-hermes")
         self.assertEqual(app.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT], NodeStatus.NEEDS_MANUAL)
 
+    def _payment_flow_app(self):
+        app = InstallerApp.__new__(InstallerApp)
+        app.worker_running = False
+        app.commercial_contexts = installer_module.create_buyer_contexts(
+            UserContext(user_id="buyer-1", display_name="买家", role="buyer", token="buyer-token")
+        )
+        app.commercial_products = [
+            CommercialProduct(
+                product_id="prod-codex",
+                title="Codex 普通配置 10 次",
+                agent_id="codex",
+                mode_key=CodexConfigMode.DIRECT_API.value,
+                delivery_scope=DeliveryScope.FULL_CONFIG,
+                price_cents=9900,
+                currency="CNY",
+                remaining_uses=10,
+                valid_until="2099-12-31T23:59:59+08:00",
+                includes_dual_state=False,
+                device_limit=2,
+                is_listed=True,
+            )
+        ]
+        app.buyer_product_id = type("Var", (), {"get": lambda _self: "prod-codex"})()
+        app.buyer_order_id = type(
+            "Var", (), {"set": lambda _self, v: setattr(app, "boid", v), "get": lambda _self: getattr(app, "boid", "")}
+        )()
+        app.buyer_purchase_statuses = {}
+        app.refresh_buyer_purchase_status = lambda: None
+        app.sync_webview_state = lambda: None
+        app.run_on_ui = lambda cb: cb()
+        app.log_from_worker = lambda _m: None
+        return app
+
+    def _with_stubbed_commercial_api(self, response):
+        original_request = installer_module.commercial_api_request_with_auth
+        original_execute = installer_module.execute_commercial_api_with_trusted_certs
+        installer_module.commercial_api_request_with_auth = lambda action, contexts, **kw: {"action": action, **kw}
+        installer_module.execute_commercial_api_with_trusted_certs = lambda _r: (response, "服务端已处理")
+        return original_request, original_execute
+
+    def test_create_buyer_payment_order_returns_wap_url_and_qr(self) -> None:
+        app = self._payment_flow_app()
+        wap = "https://openapi.alipay.com/gateway.do?method=alipay.trade.wap.pay&product_code=QUICK_WAP_WAY"
+        orig = self._with_stubbed_commercial_api({"order_id": "ord-1", "payment_url": wap})
+        try:
+            result = app.create_buyer_payment_order()
+        finally:
+            installer_module.commercial_api_request_with_auth, installer_module.execute_commercial_api_with_trusted_certs = orig
+        self.assertTrue(result["success"])
+        self.assertEqual(result["order_id"], "ord-1")
+        self.assertEqual(result["payment_url"], wap)
+        self.assertTrue(result["qr_data_url"].startswith("data:image/png;base64,"))
+        self.assertEqual(app.boid, "ord-1")
+        self.assertEqual(app.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT], NodeStatus.NEEDS_MANUAL)
+
+    def test_create_buyer_payment_order_requires_payment_url(self) -> None:
+        app = self._payment_flow_app()
+        orig = self._with_stubbed_commercial_api({"order_id": "ord-1"})  # no payment_url
+        try:
+            result = app.create_buyer_payment_order()
+        finally:
+            installer_module.commercial_api_request_with_auth, installer_module.execute_commercial_api_with_trusted_certs = orig
+        self.assertFalse(result["success"])
+        self.assertIn("支付链接", result["message"])
+
+    def test_query_buyer_payment_status_ready_when_paid_and_active(self) -> None:
+        app = self._payment_flow_app()
+        orig = self._with_stubbed_commercial_api(
+            {"order_id": "ord-1", "payment_status": "paid", "entitlement_id": "ent-9", "entitlement_status": "active"}
+        )
+        try:
+            result = app.query_buyer_payment_status("ord-1")
+        finally:
+            installer_module.commercial_api_request_with_auth, installer_module.execute_commercial_api_with_trusted_certs = orig
+        self.assertTrue(result["success"])
+        self.assertTrue(result["ready_for_delivery"])
+        self.assertEqual(result["payment_status"], "paid")
+        self.assertEqual(app.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT], NodeStatus.PASS)
+
+    def test_query_buyer_payment_status_pending_when_created(self) -> None:
+        app = self._payment_flow_app()
+        orig = self._with_stubbed_commercial_api({"order_id": "ord-1", "payment_status": "created"})
+        try:
+            result = app.query_buyer_payment_status("ord-1")
+        finally:
+            installer_module.commercial_api_request_with_auth, installer_module.execute_commercial_api_with_trusted_certs = orig
+        self.assertTrue(result["success"])
+        self.assertFalse(result["ready_for_delivery"])
+        self.assertEqual(result["payment_status"], "created")
+
     def test_refresh_recommended_agent_product_only_fills_buyer_product_field(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
         app.commercial_products = [

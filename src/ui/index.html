@@ -1960,6 +1960,8 @@
           remove_login_account: () => noopPromise(),
           start_update_check: () => noopPromise(),
           buyer_refresh_entitlements: () => { appendPythonLog("（预览）已请求刷新权益；实际权益以服务端返回为准。", "success"); return noopPromise(); },
+          buyer_create_payment_order: () => { appendPythonLog("（预览）已创建订单（模拟）；请用手机支付宝扫码付款。", "success"); return noopPromise({ success: true, order_id: "ord-preview", payment_url: "https://openapi.alipay.com/gateway.do?method=alipay.trade.wap.pay&preview=1", qr_data_url: "" }); },
+          buyer_query_payment_status: () => noopPromise({ success: true, order_id: "ord-preview", payment_status: "created", entitlement_id: "", entitlement_status: "", ready_for_delivery: false, requires_manual_review: false, message: "（预览）支付尚未完成。" }),
           copy_logs: () => noopPromise(),
           switch_module: (m) => { state.activeModule = m; state.activeSubnav = defaultSubnav(m); refreshAll(); return noopPromise(); },
           switch_subnav: (s) => { state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
@@ -2431,8 +2433,9 @@
             <div class="gm-buy-title">💡 安装某个 AI 需要先有它的「安装权益」</div>
             <div class="gm-buy-desc">没买过就先去官网买你要用的 AI 的权益；买好后回来点「刷新权益」就能安装。已购买的会自动放行；没权益直接安装会被拦下。</div>
             <div class="gm-buy-actions">
+              <button class="gm-btn" onclick="payInAppWithQr()">在软件内付款（扫码）</button>
               <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${serviceBase}/buy')">去官网购买权益</button>
-              <button class="gm-btn" onclick="refreshEntitlements()">我买好了，刷新权益</button>
+              <button class="gm-btn gm-btn-secondary" onclick="refreshEntitlements()">我买好了，刷新权益</button>
             </div>
           </div>
           <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
@@ -3526,6 +3529,78 @@
           else { window.showToast("刷新权益失败：" + ((res && res.message) || "请稍后再试"), "error"); }
         })
         .catch(err => window.showToast("刷新权益出错：" + err, "error"));
+    }
+
+    // 客户端内直接付款：创建订单 → 弹二维码（服务端返回支付宝 WAP 链接，本地生成二维码）
+    // → 手机支付宝扫码 → 轮询支付状态 → 到账后刷新权益。
+    function payInAppWithQr() {
+      window.showToast("正在创建订单……", "running");
+      Promise.resolve(window.pywebview.api.buyer_create_payment_order())
+        .then(res => {
+          if (res && res.success) {
+            showPaymentQrModal(res.order_id, res.payment_url, res.qr_data_url, res.message);
+          } else {
+            window.showToast("创建订单失败：" + ((res && res.message) || "请稍后再试"), "error");
+          }
+        })
+        .catch(err => window.showToast("创建订单出错：" + err, "error"));
+    }
+
+    let paymentPollTimer = null;
+    function showPaymentQrModal(orderId, paymentUrl, qrDataUrl, message) {
+      closePaymentQrModal();
+      const overlay = document.createElement("div");
+      overlay.id = "gmPayModal";
+      overlay.style.cssText = "position:fixed;inset:0;z-index:100000;background:rgba(4,10,20,.72);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);";
+      const qrBlock = qrDataUrl
+        ? `<img src="${qrDataUrl}" alt="支付二维码" style="width:220px;height:220px;background:#fff;padding:10px;border-radius:10px;"/>`
+        : `<div style="color:#f28b82;font-size:13px;line-height:1.6;">二维码生成失败。请复制订单号联系后台，或稍后重试。</div>`;
+      overlay.innerHTML = `
+        <div style="background:#0d1526;border:1px solid rgba(0,242,169,.25);border-radius:14px;padding:24px;max-width:360px;width:90%;text-align:center;box-shadow:0 12px 48px rgba(0,0,0,.5);">
+          <div style="font-size:16px;color:#e6edf7;margin-bottom:4px;">支付宝扫码付款</div>
+          <div style="font-size:12px;color:#8aa0bd;margin-bottom:16px;">请用手机支付宝扫描下面的二维码完成付款</div>
+          ${qrBlock}
+          <div style="font-size:12px;color:#8aa0bd;margin:14px 0 6px;word-break:break-all;">订单号：${orderId || "-"}</div>
+          <div style="display:flex;gap:10px;justify-content:center;margin-top:12px;">
+            <button class="gm-btn" onclick="queryPaymentOnce('${orderId}', false)">我已付款，查询结果</button>
+            <button class="gm-btn gm-btn-secondary" onclick="closePaymentQrModal()">关闭</button>
+          </div>
+          <div id="gmPayStatus" style="font-size:12px;color:#8aa0bd;margin-top:12px;line-height:1.6;">${message || "付款后点“查询结果”。"}</div>
+        </div>`;
+      document.body.appendChild(overlay);
+      // 自动轮询（约每 4 秒一次，最多 ~5 分钟）；付款成功自动关闭并刷新权益。
+      let attempts = 0;
+      paymentPollTimer = setInterval(() => {
+        attempts += 1;
+        if (attempts > 75) { clearInterval(paymentPollTimer); paymentPollTimer = null; return; }
+        queryPaymentOnce(orderId, true);
+      }, 4000);
+    }
+
+    function closePaymentQrModal() {
+      if (paymentPollTimer) { clearInterval(paymentPollTimer); paymentPollTimer = null; }
+      const el = document.getElementById("gmPayModal");
+      if (el) el.remove();
+    }
+
+    function queryPaymentOnce(orderId, silent) {
+      const statusEl = document.getElementById("gmPayStatus");
+      if (statusEl && !silent) statusEl.textContent = "正在查询支付状态……";
+      Promise.resolve(window.pywebview.api.buyer_query_payment_status(orderId))
+        .then(res => {
+          if (!res || !res.success) {
+            if (statusEl) statusEl.textContent = "查询失败：" + ((res && res.message) || "请稍后再试");
+            return;
+          }
+          if (res.ready_for_delivery) {
+            closePaymentQrModal();
+            window.showToast("支付成功，权益已到账，正在刷新权益……", "success");
+            refreshEntitlements();
+          } else if (statusEl) {
+            statusEl.textContent = res.message || "支付尚未完成，请扫码付款后再查询。";
+          }
+        })
+        .catch(err => { if (statusEl) statusEl.textContent = "查询出错：" + err; });
     }
 
     function toggleAgentEnabled(id, checked) {
