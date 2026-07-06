@@ -61,7 +61,7 @@ class ConfigDriftTests(unittest.TestCase):
 
     def test_model_changed_is_yellow(self) -> None:
         self._write_claude(installer.CLAUDE_CODE_BASE_URL, model="some-other-model")
-        report = installer.inspect_agent_config_drift("claude_code", "claude-opus-4.8")
+        report = installer.inspect_agent_config_drift("claude_code", "claude-opus-4-8")
         self.assertEqual(report["level"], installer.DRIFT_YELLOW)
         self.assertFalse(report["repairable"])
 

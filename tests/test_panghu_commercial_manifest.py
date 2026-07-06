@@ -2298,7 +2298,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         # anthropic/gemini 格式 key 不会从 api_key 兜底，需按格式提供，否则配置写入会被跳过。
         app.deploy_keys = {
             "openai": {"key": "sk-openai-x", "model": "gpt-5.5"},
-            "anthropic": {"key": "sk-ant-x", "model": "claude-opus-4.8"},
+            "anthropic": {"key": "sk-ant-x", "model": "claude-opus-4-8"},
             "gemini": {"key": "AIza-gemini-x", "model": "gemini-3.5"},
         }
         contexts = deployment_commercial_contexts({"id": "buyer-1"})

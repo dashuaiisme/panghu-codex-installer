@@ -3472,7 +3472,7 @@
     const KEY_FORMATS = [
       { id:"openai", name:"OpenAI 兼容格式", short:"给 Codex / OpenClaw / Hermes 用", agents:["Codex","OpenClaw","Hermes"], model:"gpt-5.5", modelHint:"如 gpt-5.5",
         help:"Codex、OpenClaw、Hermes 这几个 AI 助手都用 OpenAI 的接口格式，彼此通用，所以共用同一把「OpenAI 兼容格式」的 Key。在 aitokenapi.cc 创建这种格式的 Key 填这里就行。把别的格式的 Key 填这里会跑不通。" },
-      { id:"anthropic", name:"Anthropic 格式", short:"给 Claude Code 用", agents:["Claude Code"], model:"claude-opus-4.8", modelHint:"如 claude-opus-4.8",
+      { id:"anthropic", name:"Anthropic 格式", short:"给 Claude Code 用", agents:["Claude Code"], model:"claude-opus-4-8", modelHint:"如 claude-opus-4-8",
         help:"Claude Code 用的是 Anthropic 的接口格式，和 OpenAI 格式不通用——把 OpenAI 的 Key 填这里跑不通。需要单独创建一把 Anthropic 格式的 Key。" },
       { id:"gemini", name:"Gemini 格式", short:"给 Gemini 用", agents:["Gemini / agy"], model:"gemini-3.5", modelHint:"如 gemini-3.5",
         help:"Gemini（agy）用的是 Google Gemini 的接口格式，和前两种都不通用，需要单独一把 Gemini 格式的 Key。" },
