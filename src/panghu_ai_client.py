@@ -4903,6 +4903,21 @@ def write_customer_agent_acceptance_matrix(
     return report_path
 
 
+AGENT_KEY_FORMAT = {
+    "codex": "openai",
+    "openclaw": "openai",
+    "hermes": "openai",
+    "claude_code": "anthropic",
+    "gemini_agy": "gemini",
+}
+KEY_FORMAT_IDS = ("openai", "anthropic", "gemini")
+KEY_FORMAT_LABELS = {"openai": "OpenAI 兼容格式", "anthropic": "Anthropic 格式", "gemini": "Gemini 格式"}
+
+
+def key_format_for_agent(agent_id: str) -> str:
+    return AGENT_KEY_FORMAT.get(agent_id, "openai")
+
+
 def apply_agent_config(agent: AgentSpec, mode_id: str, api_key: str, model: str, log) -> bool:
     # 统一快照层：首次接管前留存 original 初始快照；每次写配置前自动快照（保留最近 10 份）
     try:
@@ -5364,37 +5379,60 @@ class WebviewApi:
     def build_register_url(self, invite_code_or_url=""):
         return build_register_url(str(invite_code_or_url or ""))
 
-    def save_key(self, api_key: str, skip_test: bool):
-        self.app.api_key.set(api_key)
-        self.app.skip_test.set(skip_test)
+    def save_key(self, payload, skip_test: bool = False):
+        if isinstance(payload, dict):
+            keys_in = payload.get("keys") or {}
+            models_in = payload.get("models") or {}
+            skip = bool(payload.get("skip_test"))
+        else:
+            keys_in = {"openai": str(payload or "")}
+            models_in = {}
+            skip = bool(skip_test)
+        if not isinstance(getattr(self.app, "deploy_keys", None), dict):
+            self.app.deploy_keys = {f: {"key": "", "model": ""} for f in KEY_FORMAT_IDS}
+        for fmt in KEY_FORMAT_IDS:
+            self.app.deploy_keys[fmt] = {
+                "key": (keys_in.get(fmt) or "").strip(),
+                "model": (models_in.get(fmt) or "").strip(),
+            }
+        self.app.api_key.set(self.app.deploy_keys["openai"]["key"])
+        if self.app.deploy_keys["openai"]["model"]:
+            self.app.model.set(self.app.deploy_keys["openai"]["model"])
+        self.app.skip_test.set(skip)
         try:
             if not self.app.logged_in_user:
                 return {"success": False, "message": "请先登录胖虎AI账号。"}
             if not self.app.deployer_auth:
                 return {"success": False, "message": "请重新登录胖虎AI账号以重新获取部署授权。"}
-            if not api_key.strip():
-                return {"success": False, "message": "请先填写胖虎AI API Key。"}
+            provided = [fmt for fmt in KEY_FORMAT_IDS if self.app.deploy_keys[fmt]["key"]]
+            if not provided:
+                return {"success": False, "message": "请至少填写一种格式的 API Key。"}
 
-            self.app.status.set("状态：正在测试 API Key...")
+            self.app.status.set("状态：正在校验 API Key...")
             contexts = deployment_commercial_contexts(self.app.logged_in_user or {})
-            verify_msg = execute_api_key_owner_verify(api_key, contexts, opener=trusted_urlopen, deployer_auth=self.app.deployer_auth)
-            self.app.log(verify_msg)
+            for fmt in provided:
+                verify_msg = execute_api_key_owner_verify(
+                    self.app.deploy_keys[fmt]["key"], contexts, opener=trusted_urlopen, deployer_auth=self.app.deployer_auth
+                )
+                self.app.log(f"[{KEY_FORMAT_LABELS.get(fmt, fmt)}] {verify_msg}")
 
-            if skip_test:
-                ok, msg = True, "已保存 Key，接口测试被跳过。"
+            if "openai" in provided and not skip:
+                ok, msg = test_api(DEFAULT_BASE_URL, self.app.deploy_keys["openai"]["key"])
+                self.app.log(f"[OpenAI 兼容格式] {msg}")
             else:
-                ok, msg = test_api(DEFAULT_BASE_URL, api_key)
-            self.app.log(msg)
+                ok, msg = True, "已保存 Key；Anthropic / Gemini 格式的连通性将在部署时按各自端点验证。"
+                self.app.log(msg)
 
             self.app.saved_key_ok = ok
             if ok:
-                self.app.saved_key_signature = (api_key.strip(), DEFAULT_BASE_URL, self.app.model.get().strip(), skip_test)
+                self.app.saved_key_signature = self.app.current_key_signature()
                 save_profile_data(
                     {
-                        "api_key": api_key.strip(),
+                        "api_key": self.app.deploy_keys["openai"]["key"],
                         "base_url": DEFAULT_BASE_URL,
                         "model": self.app.model.get().strip(),
-                        "skip_test": skip_test,
+                        "deploy_keys": self.app.deploy_keys,
+                        "skip_test": skip,
                         "open_app": self.app.open_app.get(),
                     },
                     contexts,
@@ -5402,7 +5440,8 @@ class WebviewApi:
                 self.app.status.set("状态：Key 已保存")
                 self.app.step.set(2)
                 self.app.sync_webview_state()
-                return {"success": True, "message": "Key 已保存"}
+                fmt_names = "、".join(KEY_FORMAT_LABELS.get(f, f) for f in provided)
+                return {"success": True, "message": f"已保存 {len(provided)} 种格式的 Key（{fmt_names}）"}
             else:
                 self.app.status.set("状态：Key 测试失败")
                 return {"success": False, "message": msg}
@@ -5923,6 +5962,7 @@ class InstallerApp:
         self.api_key = WebviewStringVar()
         self.base_url = WebviewStringVar(value=DEFAULT_BASE_URL)
         self.model = WebviewStringVar(value=DEFAULT_MODEL)
+        self.deploy_keys = {fmt: {"key": "", "model": ""} for fmt in KEY_FORMAT_IDS}
         self.show_key = WebviewBooleanVar(value=False)
         self.skip_test = WebviewBooleanVar(value=False)
         self.open_app = WebviewBooleanVar(value=True)
@@ -6010,6 +6050,15 @@ class InstallerApp:
         self.api_key.set(str(profile.get("api_key") or ""))
         self.base_url.set(DEFAULT_BASE_URL)
         self.model.set(str(profile.get("model") or DEFAULT_MODEL))
+        if not isinstance(getattr(self, "deploy_keys", None), dict):
+            self.deploy_keys = {fmt: {"key": "", "model": ""} for fmt in KEY_FORMAT_IDS}
+        _dk = profile.get("deploy_keys")
+        if isinstance(_dk, dict):
+            for fmt in KEY_FORMAT_IDS:
+                _e = _dk.get(fmt) or {}
+                self.deploy_keys[fmt] = {"key": str(_e.get("key") or ""), "model": str(_e.get("model") or "")}
+        else:
+            self.deploy_keys["openai"] = {"key": str(profile.get("api_key") or ""), "model": str(profile.get("model") or "")}
         self.skip_test.set(bool(profile.get("skip_test")))
         self.open_app.set(bool(profile.get("open_app", True)))
         # Hide stale proxy/agent identities from older polluted profiles.
@@ -9514,13 +9563,13 @@ class InstallerApp:
         """向 WebView 前端弹一条提示（异步入队，任何线程可安全调用）。"""
         if not getattr(self, "webview_mode", False):
             return
-        safe = sanitize_log_text(message, self.api_key.get().strip())
+        safe = sanitize_log_text(message, *self._all_deploy_keys())
         self._push_js(
             f"(window.showToast||window.appendPythonLog)({json.dumps(safe)}, {json.dumps(level)})"
         )
 
     def log(self, message: str, replace: bool = False) -> None:
-        safe = sanitize_log_text(message, self.api_key.get().strip())
+        safe = sanitize_log_text(message, *self._all_deploy_keys())
         tag = self._log_tag_for_message(safe)
         if getattr(self, 'webview_mode', False):
             current_step = self.step.get()
@@ -9652,9 +9701,36 @@ class InstallerApp:
         self.worker_running = busy
         self.refresh_steps()
 
+    def key_model_for_agent(self, agent_id: str, fallback_key: str = "", fallback_model: str = "") -> tuple[str, str]:
+        fmt = key_format_for_agent(agent_id)
+        entry = (getattr(self, "deploy_keys", None) or {}).get(fmt) or {}
+        key = (entry.get("key") or "").strip()
+        model = (entry.get("model") or "").strip()
+        if fmt == "openai":
+            if not key:
+                key = (fallback_key or "").strip() or (self.api_key.get().strip() if hasattr(self, "api_key") else "")
+            if not model:
+                model = (fallback_model or "").strip() or (self.model.get().strip() if hasattr(self, "model") else "") or DEFAULT_MODEL
+        return key, model
+
+    def _primary_deploy_key(self) -> str:
+        dk = getattr(self, "deploy_keys", None) or {}
+        for fmt in KEY_FORMAT_IDS:
+            k = (dk.get(fmt, {}).get("key") or "").strip()
+            if k:
+                return k
+        return self.api_key.get().strip()
+
+    def _all_deploy_keys(self) -> list[str]:
+        dk = getattr(self, "deploy_keys", None) or {}
+        keys = [(dk.get(fmt, {}).get("key") or "").strip() for fmt in KEY_FORMAT_IDS]
+        if hasattr(self, "api_key"):
+            keys.append(self.api_key.get().strip())
+        return [k for k in keys if k]
+
     def current_key_signature(self) -> tuple[str, str, str, bool]:
         return (
-            self.api_key.get().strip(),
+            self._primary_deploy_key(),
             DEFAULT_BASE_URL,
             self.model.get().strip(),
             self.skip_test.get(),
@@ -10279,8 +10355,13 @@ class InstallerApp:
                 if install_agent(agent, mode, self.log_from_worker):
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS)
                     try:
-                        configured = apply_agent_config_plan(agent, mode, api_key, model, self.log_from_worker)
-                        progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS if configured else NodeStatus.NEEDS_MANUAL)
+                        a_key, a_model = self.key_model_for_agent(agent.id, api_key, model)
+                        if not a_key:
+                            self.log_from_worker(f"{agent.name}/{mode} 未填写「{KEY_FORMAT_LABELS.get(key_format_for_agent(agent.id), '')}」的 API Key，跳过配置写入。")
+                            progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.NEEDS_MANUAL)
+                        else:
+                            configured = apply_agent_config_plan(agent, mode, a_key, a_model, self.log_from_worker)
+                            progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS if configured else NodeStatus.NEEDS_MANUAL)
                     except Exception as exc:
                         progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
                         self.log_from_worker(f"{agent.name}/{mode} 配置写入失败：{exc}")
@@ -10289,10 +10370,11 @@ class InstallerApp:
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.FAILED)
                     progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
             if any(agent.id == "codex" for agent, _ in selected):
+                codex_key, codex_model = self.key_model_for_agent("codex", api_key, model)
                 ok = install_codex_config(
-                    api_key,
+                    codex_key,
                     base_url,
-                    model,
+                    codex_model,
                     skip_test,
                     open_app,
                     self.log_from_worker,
@@ -10304,7 +10386,7 @@ class InstallerApp:
                     codex_progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS)
                     codex_progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.NEEDS_MANUAL)
                     self.log_from_worker("Codex 胖虎AI配置已应用。")
-                    probe_ok, probe_excerpt = run_real_task_probe(base_url, api_key, model)
+                    probe_ok, probe_excerpt = run_real_task_probe(base_url, codex_key, codex_model)
                     real_task = verify_real_task_evidence(
                         diagnostic_code=diagnostic_code,
                         agent_id="codex",
@@ -10400,7 +10482,7 @@ class InstallerApp:
                     progress.mark(DeploymentNode.REAL_TASK_VERIFY, NodeStatus.FAILED)
                     continue
                 self.log_from_worker(f"{agent.name}/{mode} 启动检测通过：{version or '已安装'}")
-                probe_ok, probe_excerpt = run_agent_dialogue_probe(agent, mode, model)
+                probe_ok, probe_excerpt = run_agent_dialogue_probe(agent, mode, self.key_model_for_agent(agent.id, api_key, model)[1])
                 real_task = verify_real_task_evidence(
                     diagnostic_code=diagnostic_code,
                     agent_id=agent.id,

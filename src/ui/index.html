@@ -1660,6 +1660,33 @@
   .gm-cockpit .gm-workbench-main, .gm-cockpit .gm-workbench-sidebar,
   .gm-cockpit .gm-canvas-main-col, .gm-cockpit .gm-canvas-sidebar-col{ min-width:0; }
 
+  /* ===== 多格式 Key 界面 (step 1) ===== */
+  .gm-cockpit .gm-keyintro{ font-size:13px; line-height:1.7; color:var(--g-text-muted); background:rgba(0,242,196,.045); border:1px solid rgba(0,242,196,.14); border-left:3px solid var(--g-primary); border-radius:10px; padding:12px 16px; }
+  .gm-cockpit .gm-keyintro b{ color:var(--g-primary); font-weight:700; }
+  .gm-cockpit .gm-keygroup{ padding:18px; gap:12px; }
+  .gm-cockpit .gm-keygroup-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .gm-cockpit .gm-keygroup-title b{ font-size:14.5px; color:var(--g-text); }
+  .gm-cockpit .gm-keygroup-agents{ margin-top:7px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--g-text-subtle); }
+  .gm-cockpit .gm-agent-chip{ font-size:11px; padding:2px 9px; border-radius:99px; background:rgba(138,180,248,.1); border:1px solid rgba(138,180,248,.22); color:var(--g-secondary); font-weight:600; }
+  .gm-cockpit .gm-help-inline{ position:relative; font-size:11.5px; color:var(--g-primary); cursor:help; white-space:nowrap; padding:3px 9px; border:1px solid rgba(0,242,196,.25); border-radius:99px; background:rgba(0,242,196,.06); flex-shrink:0; }
+  .gm-cockpit .gm-help-pop{ display:none; position:absolute; top:calc(100% + 8px); right:0; width:340px; max-width:80vw; z-index:60; font-size:12.5px; line-height:1.75; color:var(--g-text-muted); background:var(--g-surface-3); border:1px solid rgba(0,242,196,.28); border-radius:10px; padding:12px 14px; box-shadow:0 14px 44px rgba(0,0,0,.65); text-align:left; white-space:normal; font-weight:400; }
+  .gm-cockpit .gm-help-inline:hover .gm-help-pop, .gm-cockpit .gm-help-inline:focus .gm-help-pop, .gm-cockpit .gm-help-inline:focus-within .gm-help-pop{ display:block; }
+
+  /* ===== 首次使用必读 (step 1 onboarding) ===== */
+  .gm-cockpit .gm-onboard{ background:var(--g-surface-2); border:1px solid rgba(255,255,255,.06); border-radius:12px; overflow:hidden; }
+  .gm-cockpit .gm-onboard>summary{ list-style:none; cursor:pointer; padding:13px 16px; font-size:13.5px; font-weight:700; color:var(--g-primary); display:flex; align-items:center; gap:9px; background:rgba(0,242,196,.05); }
+  .gm-cockpit .gm-onboard>summary::-webkit-details-marker{ display:none; }
+  .gm-cockpit .gm-onboard>summary::before{ content:"\25B8"; transition:transform .2s; font-size:11px; }
+  .gm-cockpit .gm-onboard[open]>summary::before{ transform:rotate(90deg); }
+  .gm-cockpit .gm-onboard-body{ padding:14px 18px 16px; display:flex; flex-direction:column; gap:12px; }
+  .gm-cockpit .gm-onboard-body p{ font-size:13px; line-height:1.75; color:var(--g-text-muted); margin:0; }
+  .gm-cockpit .gm-onboard-body b{ color:var(--g-text); font-weight:700; }
+  .gm-cockpit .gm-onboard-note{ font-size:12.5px; color:var(--g-text-subtle) !important; }
+  .gm-cockpit .gm-flow{ display:flex; flex-wrap:wrap; gap:8px; }
+  .gm-cockpit .gm-flow-step{ font-size:12px; color:var(--g-text-muted); background:rgba(255,255,255,.03); border:1px solid var(--g-line); border-radius:8px; padding:7px 11px; display:flex; align-items:center; gap:7px; }
+  .gm-cockpit .gm-flow-step b{ display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; background:var(--g-primary); color:var(--g-bg-deep); font-size:11px; flex-shrink:0; }
+  .gm-cockpit .gm-onboard-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:2px; }
+
   </style>
 </head>
 <body>
@@ -2271,21 +2298,36 @@
       let stepBody = "";
       if (step === "1") {
         stepBody = `
-          <div style="display: flex; flex-direction: column; gap: 16px; width: 100%;">
-            <div class="gm-form-field">
-              <label>胖虎AI API Key</label>
-              <div style="display: grid; grid-template-columns: 1fr 100px; gap: 10px;">
-                <input id="apiKeyVal" class="gm-input" type="password" placeholder="sk-...">
-                <button class="gm-btn" onclick="toggleShowKey()">显示</button>
+          <div style="display:flex; flex-direction:column; gap:16px; width:100%;">
+            <details class="gm-onboard" open>
+              <summary>首次使用必读 · Key 是什么、怎么充值、完整流程</summary>
+              <div class="gm-onboard-body">
+                <p><b>Key 是你访问官方大模型的通行凭证。</b>打个比方：<b>URL 像账号、Key 像密码</b>，Key 背后连着你的<b>余额</b>——有了账号 + 密码 + 余额，才能调用官方大模型服务（每次调用会从余额里扣费）。</p>
+                <div class="gm-flow">
+                  <span class="gm-flow-step"><b>1</b> 在胖虎AI中转站 aitokenapi.cc 注册 / 登录</span>
+                  <span class="gm-flow-step"><b>2</b> 充值：往账户充入余额</span>
+                  <span class="gm-flow-step"><b>3</b> 按格式创建对应的 Key</span>
+                  <span class="gm-flow-step"><b>4</b> 把 Key 和模型名填到下面各组</span>
+                  <span class="gm-flow-step"><b>5</b> 保存并验证 → 去配置 Agent</span>
+                </div>
+                <p class="gm-onboard-note">⚠ 没有余额、或 Key 用错了格式，Agent 都跑不起来。充值和创建 Key 都在胖虎AI中转站——也可以从顶部「胖虎AI网站」→「充值购买 / 令牌管理」进入。</p>
+                <div class="gm-onboard-actions">
+                  <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${serviceBase}/buy')">去充值（打开中转站）</button>
+                  <button class="gm-btn" onclick="window.pywebview.api.open_url('${serviceBase}/console/keys')">创建 Key</button>
+                </div>
               </div>
+            </details>
+            <div class="gm-keyintro">
+              不同 Agent 使用不同<b>接口格式</b>，Key 也按格式区分——<b>一把 Key 配不了所有 Agent</b>，格式不兼容会直接跑不通。请在下面各组里，填入你在 <b>aitokenapi.cc</b> 创建的<b>对应格式</b>的 Key 和模型名。每组右上角 <span class="gm-help-inline">ⓘ 说明</span> 悬停可展开详细解释。
             </div>
-            <label class="gm-chip warn gm-tech-num" style="margin-top: 4px; padding: 8px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+            ${KEY_FORMATS.map(renderKeyGroup).join("")}
+            <label class="gm-chip warn gm-tech-num" style="margin-top:2px; padding:8px 12px; border-radius:6px; display:inline-flex; align-items:center; gap:8px; cursor:pointer; align-self:flex-start;">
               <input type="checkbox" id="skipKeyTest">
               <span>跳过连通测试（仅用于内部网络测试）</span>
             </label>
-            <div style="display: flex; gap: 12px; margin-top: 10px;">
+            <div style="display:flex; gap:12px; margin-top:6px;">
               <button class="gm-btn gm-btn-primary" onclick="saveApiKey()">保存并验证 Key</button>
-              <button class="gm-btn" onclick="window.pywebview.api.open_url('${serviceBase}/console/keys')">在网页打开</button>
+              <button class="gm-btn" onclick="window.pywebview.api.open_url('${serviceBase}/console/keys')">在网页创建 Key</button>
             </div>
           </div>`;
       } else if (step === "2") {
@@ -3380,17 +3422,55 @@
     // 旧版 submitLogin（Codex 遗留，alert 版）已删除：函数声明重复时后者覆盖前者，
     // 曾导致上方带 loginStatus 反馈的正式版 submitLogin 永远不生效（登录"无反应"根因）。
 
-    function toggleShowKey() {
-      const input = document.getElementById("apiKeyVal");
+    function toggleShowKey(id) {
+      const input = document.getElementById(id || "key_openai");
       if (input) input.type = input.type === "password" ? "text" : "password";
+    }
+
+    const KEY_FORMATS = [
+      { id:"openai", name:"OpenAI 兼容格式", agents:["Codex","OpenClaw","Hermes"], modelHint:"OpenAI 体系（如 gpt-5.5）",
+        help:"Codex、OpenClaw、Hermes 都使用 OpenAI 的 Chat Completions 接口格式，彼此兼容，所以共用同一把「OpenAI 兼容格式」的 Key。请在 aitokenapi.cc 创建 OpenAI 兼容格式的 Key 填这里，模型名也要用 OpenAI 体系的（例如 gpt-5.5）。把 Anthropic 或 Gemini 格式的 Key 填到这里会跑不通。" },
+      { id:"anthropic", name:"Anthropic 格式", agents:["Claude Code"], modelHint:"Claude 体系（如 claude-opus-4.8）",
+        help:"Claude Code 使用 Anthropic 的 Messages 接口格式，和 OpenAI 格式并不兼容——把 OpenAI 的 Key 填到这里是跑不通的。请单独创建 Anthropic 格式的 Key，模型名填 Claude 体系的（例如 claude-opus-4.8）。" },
+      { id:"gemini", name:"Gemini 格式", agents:["Gemini / agy"], modelHint:"Gemini 体系（如 gemini-3.5）",
+        help:"Gemini / agy 使用 Google Gemini 的原生接口格式，和 OpenAI、Anthropic 都不兼容，需要单独的 Gemini 格式 Key 和 Gemini 体系的模型名（如 gemini-3.5）。" },
+    ];
+    function agentChips(arr){ return (arr||[]).map(a=>`<span class="gm-agent-chip">${a}</span>`).join(""); }
+    function renderKeyGroup(g){
+      return `
+        <div class="gm-keygroup gm-canvas-card gm-hud-corners">
+          <div class="gm-keygroup-head">
+            <div class="gm-keygroup-title">
+              <b>${g.name}</b>
+              <div class="gm-keygroup-agents">适用：${agentChips(g.agents)}</div>
+            </div>
+            <span class="gm-help-inline" tabindex="0">ⓘ 说明<span class="gm-help-pop">${g.help}</span></span>
+          </div>
+          <div class="gm-form-field">
+            <label>API Key</label>
+            <div style="display:grid; grid-template-columns:1fr 88px; gap:10px;">
+              <input id="key_${g.id}" class="gm-input" type="password" placeholder="填入 aitokenapi.cc 创建的「${g.name}」Key">
+              <button class="gm-btn" onclick="toggleShowKey('key_${g.id}')">显示</button>
+            </div>
+          </div>
+          <div class="gm-form-field">
+            <label>模型名 · ${g.modelHint}</label>
+            <input id="model_${g.id}" class="gm-input" type="text" placeholder="填写模型名（${g.modelHint}）">
+          </div>
+        </div>`;
     }
 
     // Preserve pywebview calls for contracts
     function saveApiKey() {
-      const val = document.getElementById("apiKeyVal")?.value.trim();
-      if (!val) { window.showToast("请输入 API Key", "warning"); return; }
+      const keys = {}, models = {};
+      (KEY_FORMATS || []).forEach(g => {
+        keys[g.id] = (document.getElementById("key_" + g.id)?.value || "").trim();
+        models[g.id] = (document.getElementById("model_" + g.id)?.value || "").trim();
+      });
+      if (!Object.values(keys).some(v => v)) { window.showToast("请至少填写一种格式的 API Key", "warning"); return; }
       window.showToast("正在校验并保存 Key……", "running");
-      Promise.resolve(window.pywebview.api.save_key(val, document.getElementById("skipKeyTest")?.checked || false))
+      const payload = { keys, models, skip_test: document.getElementById("skipKeyTest")?.checked || false };
+      Promise.resolve(window.pywebview.api.save_key(payload))
         .then(res => {
           if (res && res.success) { window.showToast(res.message || "Key 已保存", "success"); }
           else { window.showToast("Key 保存失败：" + ((res && res.message) || "未知原因"), "error"); }
