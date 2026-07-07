@@ -30,6 +30,8 @@ Codex / Agent 协作规则
 
 历史废弃材料、过期 handoff、历史截图和聊天上下文不能替代长期权威文档。
 
+一次性历史文档（旧交接/旧需求/旧决策/草稿/一次性审查清单）已于 2026-07-07 清理删除（git 历史可追溯），不再随仓分发、避免误导。当前活跃交接以 `docs/` 下最新的「交接说明_YYYY-MM-DD」为准（现为 `docs/交接说明_2026-07-07_Claude.md`）。治理规则：交接只保留一份最新的，历史进 CHANGELOG，不再新增带日期的并行交接；产品/技术事实只写进两本手册 + 合同，其它文档引用不复制。
+
 ## 3. 开工前必读
 
 开始任何严肃修改前先读：
@@ -64,6 +66,15 @@ Codex / Agent 协作规则
 - 不要把本地截图、单元测试或离线 mock 验收写成真实客户闭环完成。
 
 ## 6. 前端规则
+
+后端已从单一大文件做「分层拆分」以降体量，`panghu_ai_client.py` 顶部 `from <mod> import *` 回引、引用点不变。当前 src/ 模块分层（依赖自下而上）：
+
+- `panghu_constants.py`：集中常量（App 标识/URL/选项/UI token/导航文案）。
+- `panghu_agents.py`：数据模型 dataclass、CodexConfigMode、AGENTS 注册表与交付 playbook。
+- `panghu_paths.py`：文件路径助手（仅依赖标准库）。
+- `panghu_ai_client.py`：主逻辑（InstallerApp、webview 桥、安装/配置/验收流程）。
+
+后续如继续拆（密钥 DPAPI/登录存储/格式化助手等）：先把 `device_fingerprint` 等被深处引用的原语下沉到地基模块，再逐层抽；每步跑 `tests` 全绿、见风险即回退该层。
 
 正式客户 UI 入口是 `src/ui/index.html`。必须保留：
 

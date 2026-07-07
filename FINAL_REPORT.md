@@ -1,6 +1,18 @@
 # 当前状态报告
 
-最后更新：2026-07-04（第四轮）
+最后更新：2026-07-07
+
+> **当前状态基线（2026-07-07，最新）——以此为准，下方 07-04 及更早为历史增量记录：**
+> - 型号：`gpt-5.5`（codex/openclaw/hermes）/ `claude-opus-4-8`（中划线）/ `gemini-3.5`（中转站未接入，真机不通）。旧型号 `gpt-5.4`/`claude-opus-4.8`(点) 已废弃。
+> - 安装（第4步，仅安装不扣次）与写入配置（第5步，写配置+验收+扣次）已拆成两个独立步骤。
+> - 支付走支付宝 WAP（`alipay.trade.wap.pay`）：工具订单与连接通讯软件订单均返回 `payment_url`，客户端本地生成二维码。
+> - 连接通讯软件(#4)为服务端自动验收，已接支付宝自助付款并上线生产。
+> - 客户端模式（Claude/Gemini 客户端）装好 + 写入配置即验收合格，不做联网验收；撤单退款走管理员后台人工；结算默认 T+7、后台可配。
+> - 客户端最新测试：`367 passed`（以 `TESTING.md` 为准）；服务端 `164 passed`，已上线生产。
+> - tkinter 旧桌面界面已确认永不执行并清除约 1826 行死代码；当前 UI 仅 WebView(HTML) 一套。
+> - 当前活跃交接见 `docs/交接说明_2026-07-07_Claude.md` 与 `CHANGELOG.md`。
+
+## 0.-1 2026-07-04 增量（第四轮：本地联调全链收口）
 
 ## 0.-1 2026-07-04 增量（第四轮：本地联调全链收口）
 
@@ -68,7 +80,7 @@
 - 自动化测试基线可运行；内置网站入口映射和 WebView 前提脚本可运行。
 - Agent 交付验收脚本已支持 `delivery_scope=cli|client|both` 和 `--agents` 精确选择；CLI 与客户端按独立付费、独立交付范围验收。
 - CLI-only 交付范围有历史本机真实最小对话验收记录：Codex、ClaudeCode CLI、OpenClaw CLI、Hermes CLI 均曾通过胖虎AI网关返回“胖虎AI配置验证成功”；验收命令不写入 API Key，记录结果为 `exit 0`，`blocking_gaps=[]`。
-- Gemini / agy 当前只保留官方入口和待接入状态。
+- Gemini / agy 配置链路代码已实现（写 `~/.gemini/.env` 走胖虎AI网关 Gemini 格式，型号 `gemini-3.5`），但中转站 gemini 尚未接入、真机未验收，因此对外仍按「待接入」展示；代码存在 ≠ 已验收交付。
 - Codex 三种配置模式的本地代码与文档已同步：普通模式、双态模式、官方直登；模式切换有本机快照机制（`~/.codex/panghu_modes/`）。
 - 历史记录中 `.venv\Scripts\python.exe scripts\customer_web_entry_acceptance.py` 返回 `web_entry_status` = `ready`；当前未见 `.venv`，后续需重建后复验。
 - 旧 WebView shell、旧截图、历史输出报告、临时日志、历史 handoff、旧构建目录和旧客户包已清理；当前客户 UI 入口仍是 `src/ui/index.html`。

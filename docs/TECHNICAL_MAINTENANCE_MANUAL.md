@@ -385,8 +385,8 @@ Codex 配置必须保留三条链路：
 
 ```toml
 model_provider = "panghuAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
@@ -417,8 +417,8 @@ requires_openai_auth = true
 
 ```toml
 model_provider = "openai"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"

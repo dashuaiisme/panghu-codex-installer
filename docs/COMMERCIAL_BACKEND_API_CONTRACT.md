@@ -414,7 +414,9 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 
 验收与扣费规则：
 
-- `POST /api/communication-software-link/sessions` 前，订单必须已支付，或明确进入后台人工预售/人工复核状态；未支付订单不得创建配置会话、不得写入平台账号或聊天对象。
+- 付费订单的支付走支付宝 WAP（`alipay.trade.wap.pay`）：`POST /api/communication-software-link/orders` 及 `GET /api/communication-software-link/orders/:id` 对「已下单未付款」订单返回 `payment_url`（服务端按 `CommLinkProduct.price_cents` 定价并创建 `PaymentOrder`），客户端本地据此生成二维码给买家扫码；支付宝异步回调命中后服务端把订单 `charge_status` 置为 `paid`。0 元产品无需 `payment_url`。
+- `POST /api/communication-software-link/sessions` 前，订单必须已支付（`charge_status=paid`），或明确进入后台人工预售/人工复核状态；未支付订单不得创建配置会话、不得写入平台账号或聊天对象。
+- 验收为**服务端自动验收**：服务端凭入站/出站/证据链自行判定，会话响应回传 `acceptance_status`、`charged`、`client_may_claim_delivery_complete` 等字段；客户端只轮询这些状态，**不提交** `source_event_id`、`inbound/outbound_platform_message_id` 等服务端内部验收字段。
 - 如果客户端没有平台账号或聊天对象，必须先通过 `POST /api/communication-software-link/platform-auth` 创建平台授权会话；服务端返回 `auth_session_id`、`authorization_url` 或 `qr_code_url`，客户端打开给买家扫码/授权，并通过 `GET /api/communication-software-link/platform-auth/:id` 轮询，拿到 `platform_account_id`、`platform_chat_id` 和 `gateway_mode` 后才能继续创建配置会话。
 - 服务端不得要求买家在客户端手填机器人密钥、个人微信密码、平台 access token 或长期授权密钥；这些敏感凭据只能在平台官方授权页、服务端安全回调或人工复核链路中处理。
 - 连接通讯软件必须记录入站平台消息、Agent 执行证据和出站平台回复证据。
@@ -470,11 +472,11 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - 客户端与内置网站接口：
   - GET `/api/agent/public/offering`: 返回公开代理产品、介绍页内容、可申请等级。
   - POST `/api/agent/apply`: 申请成为代理；0 元产品可直接开通或进入审核。
-  - GET `/api/agent/center`: 当前代理总览、邀请链接、下游、三类佣金、结算状态。
+  - GET `/api/agent/center`: 当前代理总览、邀请链接、下游、四类佣金、结算状态。
   - GET `/api/agent/downstreams`: 当前代理的下游客户列表和分页游标。
   - GET `/api/agent/commissions`: 当前代理的佣金账本查询，支持状态、事件类型和分页。
   - POST `/api/agent/settlements`: 代理发起提现或结算申请，默认只能申请 `available` 金额。
-  - POST `/api/referrals/bind`: 邀请码绑定；已有绑定直接返回原上级，不覆盖。
+  - 邀请码绑定：**无独立 `/api/referrals/bind` 路由**（历史设想，服务端未实现）。归因绑定在注册环节完成——主站注册页 `register?invite=<code>` 或 `POST /api/agent/apply` 携带 `invite_code`；已有绑定直接返回原上级、永久不可覆盖（对应 `referral_bindings` 表）。
 - 后台管理端接口：
   - GET/PUT `/api/admin/agent/products`
   - GET/PUT `/api/admin/agent/policies`
