@@ -7,6 +7,7 @@ import re
 from typing import Any
 from urllib.parse import urlencode
 from urllib.parse import urlsplit, urlunsplit
+from urllib.error import HTTPError
 from urllib.request import Request
 
 
@@ -384,8 +385,22 @@ def execute_commercial_api_request(
     url, headers, body = build_urllib_request_parts(request)
     req = Request(url, data=body, headers=headers, method=request.method)
     safe_payload = sanitize_commercial_api_payload(request.body)
-    with opener(req, timeout) as resp:
-        raw = resp.read().decode("utf-8")
+    try:
+        with opener(req, timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except HTTPError as exc:
+        # 服务端业务错误（402/403/404/409/422…）带中文 message/detail：
+        # 透出给买家，而不是让上层只显示 "HTTP Error 409: Conflict"。
+        detail = ""
+        try:
+            err_body = json.loads(exc.read().decode("utf-8"))
+            if isinstance(err_body, dict):
+                detail = str(err_body.get("message") or err_body.get("detail") or "").strip()
+        except Exception:
+            detail = ""
+        if detail:
+            raise ValueError(f"{sanitize_commercial_text(detail)}（HTTP {exc.code}）") from exc
+        raise
     data = parse_api_envelope(json.loads(raw))
     summary = f"{request.method} {sanitize_commercial_api_url(request.url)} -> OK；payload={safe_payload}"
     return data, summary

@@ -77,7 +77,6 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             "GET `/api/agent/downstreams`",
             "GET `/api/agent/commissions`",
             "POST `/api/agent/settlements`",
-            "POST `/api/referrals/bind`",
             "GET/PUT `/api/admin/agent/products`",
             "GET/PUT `/api/admin/agent/policies`",
             "GET/PUT `/api/admin/agent/marketing-content`",

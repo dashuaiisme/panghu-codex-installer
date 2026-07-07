@@ -766,41 +766,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "目标买家"):
             execute_api_key_owner_verify("sk-live-secret", contexts, opener=opener, deployer_auth={"token": "buyer-token"})
 
-    def test_save_key_worker_uses_logged_in_buyer_context_for_profile_save(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.logged_in_user = {"id": "login-buyer", "username": "登录用户"}
-        app.deployer_auth = {"token": "buyer-token"}
-        app.saved_key_ok = False
-        app.saved_key_signature = None
-        app.log_from_worker = lambda _message: None
-        app.set_status_from_worker = lambda _message: None
-        app.show_warning_from_worker = lambda _title, _message: None
-        app.show_error_from_worker = lambda _title, _message: None
-        app.refresh_steps = lambda: None
-        app.set_busy = lambda _busy: None
-        app.run_on_ui = lambda callback: callback()
-
-        class Step:
-            def set(self, _value):
-                return None
-
-        app.step = Step()
-        captured = {}
-        original_verify = installer_module.execute_api_key_owner_verify
-        original_save = installer_module.save_profile_data
-        try:
-            installer_module.execute_api_key_owner_verify = lambda _api_key, _contexts, opener=None, deployer_auth=None: "归属已确认"
-            installer_module.save_profile_data = lambda data, contexts=None: captured.update({"data": data, "contexts": contexts})
-
-            app._save_key_worker("sk-live-secret", "https://aitokenapi.cc", "gpt-5.5", True, False)
-        finally:
-            installer_module.execute_api_key_owner_verify = original_verify
-            installer_module.save_profile_data = original_save
-
-        self.assertEqual(captured["contexts"].operator.user_id, "login-buyer")
-        self.assertEqual(captured["contexts"].target_buyer.user_id, "login-buyer")
-        self.assertEqual(captured["data"]["api_key"], "sk-live-secret")
-
     def test_legacy_agent_assist_workers_are_removed(self) -> None:
         source = (SRC / "panghu_ai_client.py").read_text(encoding="utf-8")
 
@@ -877,7 +842,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         app.skip_test = FakeVar()
         app.open_app = FakeVar()
         app.status = FakeVar()
-        app.user_label = FakeLabel()
         app.logged_in_user = None
         app.deployer_auth = None
         app.commercial_contexts = None
@@ -893,7 +857,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             }
 
             app.load_profile_into_ui()
-            app.apply_restored_login_state()
         finally:
             installer_module.load_saved_profile = original_load
 
@@ -901,8 +864,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(app.logged_in_user, None)
         self.assertEqual(app.deployer_auth, None)
         self.assertEqual(app.commercial_contexts, None)
-        self.assertEqual(app.user_label.text, "上次账号：buyer@example.com")
-        self.assertIn("账号提示", app.status.value)
 
     def test_save_profile_data_does_not_persist_restorable_login_identity(self) -> None:
         original_profile_path = installer_module.profile_path
@@ -1602,17 +1563,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertNotIn('"apiKeyValue": self.app.api_key.get()', py_source)
         self.assertNotIn('"apiKeyValue": self.api_key.get()', py_source)
 
-    def test_login_entry_is_unified_and_not_buyer_agent_mode_split(self) -> None:
-        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
-
-        login_source = source[source.index("def _build_login_frame") : source.index("def _build_buyer_purchase_panel")]
-        self.assertIn("登录胖虎AI账号", login_source)
-        self.assertIn("登录并激活工具", login_source)
-        self.assertNotIn("买家模式", login_source)
-        self.assertNotIn("代理模式", login_source)
-        self.assertNotIn("代理远程协助临时会话", login_source)
-        self.assertNotIn("_build_agent_assist_panel(login_card)", login_source)
-
     def test_legacy_agent_assist_is_not_customer_visible_or_delivery_owner(self) -> None:
         source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
 
@@ -1656,56 +1606,6 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             self.assertIn(item_id, installer_module.MODULE_PAGE_META[installer_module.MODULE_COURSES])
             self.assertIn(item_id, installer_module.MODULE_ACTION_CARDS[installer_module.MODULE_COURSES])
 
-    def test_login_gate_and_wizard_switch_visibility(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        app.logged_in_user = None
-        app.deployer_auth = None
-
-        class FakeWidget:
-            def __init__(self):
-                self.visible = False
-                self.text = None
-
-            def pack(self, **_kwargs):
-                self.visible = True
-
-            def pack_forget(self):
-                self.visible = False
-
-            def winfo_ismapped(self):
-                return self.visible
-
-            def configure(self, **kwargs):
-                if "text" in kwargs:
-                    self.text = kwargs["text"]
-
-        app.console_outer = FakeWidget()
-        app.console_shell = FakeWidget()
-        app.log_shell = FakeWidget()
-        app.gate_shell = FakeWidget()
-        app.topbar_remaining_label = FakeWidget()
-        app.update_button = FakeWidget()
-        app.topbar_account_label = FakeWidget()
-
-        app.show_login_gate()
-        self.assertTrue(app.gate_shell.visible)
-        self.assertFalse(app.console_outer.visible)
-        self.assertFalse(app.console_shell.visible)
-        self.assertFalse(app.log_shell.visible)
-        self.assertFalse(app.topbar_remaining_label.visible)
-        self.assertFalse(app.update_button.visible)
-        self.assertEqual(app.topbar_account_label.text, "账号：未登录")
-
-        app.logged_in_user = {"username": "buyer-demo"}
-        app.deployer_auth = {"token": "token-demo"}
-        app.show_wizard()
-        self.assertFalse(app.gate_shell.visible)
-        self.assertTrue(app.console_outer.visible)
-        self.assertTrue(app.console_shell.visible)
-        self.assertTrue(app.log_shell.visible)
-        self.assertTrue(app.topbar_remaining_label.visible)
-        self.assertTrue(app.update_button.visible)
-
     def test_wizard_shell_packs_log_before_console(self) -> None:
         app = InstallerApp.__new__(InstallerApp)
         calls = []
@@ -1738,38 +1638,16 @@ class PanghuCommercialManifestTests(unittest.TestCase):
 
         self.assertEqual(calls[:3], ["log", "console_outer", "console_shell"])
 
-    def test_ui_layout_contracts_prevent_visual_regression(self) -> None:
-        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
-        self.assertIn('root.geometry("1400x900")', source)
-        self.assertIn("LEFT_PANEL_WIDTH = 220", source)
-        self.assertIn("RIGHT_PANEL_WIDTH = 300", source)
-        self.assertIn("grid_columnconfigure(0, minsize=LEFT_PANEL_WIDTH)", source)
-        self.assertIn("grid_columnconfigure(2, minsize=RIGHT_PANEL_WIDTH)", source)
-        self.assertIn("width=RIGHT_PANEL_WIDTH", source)
-        self.assertIn('PRIMARY = "#0071e3"', source)
-        self.assertIn("SIDEBAR_BG", source)
-        self.assertIn("login_card = tk.Frame(login_shell, bg=CARD_BG, padx=40, pady=35", source)
-        self.assertIn("self.login_card = login_card", source)
-        self.assertIn("show_login_gate", source)
-        self.assertIn("内置网站服务区", source)
-        self.assertIn("[title for _module_id, title, _subtitle in TOP_MODULES]", source)
-        self.assertIn("def _build_module_nav", source)
-        self.assertIn("def switch_module", source)
-        self.assertIn("def _build_non_agent_module_frame", source)
-        self.assertNotIn("login_card.pack_propagate(False)", source)
-        self.assertNotIn("height=548", source)
-        self.assertIn("def enable_windows_dpi_awareness()", source)
-        self.assertIn("canvas.update_idletasks()", source)
-
     def test_customer_web_modules_keep_delivery_right_rail_visible(self) -> None:
         ui_shell = ROOT / "src" / "ui" / "index.html"
-        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8")
+        # 模块常量已抽到 panghu_constants.py（大文件拆分，引用不变）；合并两文件文本校验。
+        source = (ROOT / "src" / "panghu_ai_client.py").read_text(encoding="utf-8") + "\n" + \
+            (ROOT / "src" / "panghu_constants.py").read_text(encoding="utf-8")
 
         self.assertTrue(ui_shell.exists())
         self.assertIn("MODULE_SITE", source)
         self.assertIn("MODULE_VALUE_ADDED", source)
         self.assertIn("MODULE_COURSES", source)
-        self.assertIn("def _build_non_agent_module_frame", source)
         self.assertIn("MODULE_PAGE_META", source)
         self.assertIn("MODULE_ACTION_CARDS", source)
         self.assertIn("网站服务端", source)
@@ -2599,33 +2477,20 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(path.name, "胖虎AI-Agent功能验收矩阵.txt")
         self.assertIn("胖虎AI-Agent工作区", str(path))
 
-    def test_open_acceptance_matrix_warns_until_report_exists_then_opens_file(self) -> None:
-        app = InstallerApp.__new__(InstallerApp)
-        opened = []
-        warnings = []
 
-        original_path = installer_module.customer_acceptance_matrix_path
-        original_open_path = installer_module.open_path
-        original_showwarning = installer_module.messagebox.showwarning
-        with TemporaryDirectory() as temp_dir:
-            matrix_path = Path(temp_dir) / "胖虎AI-Agent功能验收矩阵.txt"
-            try:
-                installer_module.customer_acceptance_matrix_path = lambda: matrix_path
-                installer_module.open_path = lambda path: opened.append(path)
-                installer_module.messagebox.showwarning = lambda title, message: warnings.append((title, message))
-
-                app.open_acceptance_matrix()
-                matrix_path.write_text("客户可见功能验收矩阵\n", encoding="utf-8")
-                app.open_acceptance_matrix()
-            finally:
-                installer_module.customer_acceptance_matrix_path = original_path
-                installer_module.open_path = original_open_path
-                installer_module.messagebox.showwarning = original_showwarning
-
-        self.assertEqual(warnings[0][0], "功能验收矩阵")
-        self.assertIn("还没有生成验收矩阵", warnings[0][1])
-        self.assertEqual(opened, [matrix_path])
-
+    def test_dead_tkinter_ui_builders_removed(self) -> None:
+        """旧 tkinter 业务界面永不执行（__init__ 非 webview 即抛错），其构建方法已清除。"""
+        source = (SRC / "panghu_ai_client.py").read_text(encoding="utf-8")
+        for symbol in (
+            "def _build_ui",
+            "def _build_step_1",
+            "def _build_login_frame",
+            "def _build_non_agent_module_frame",
+            "def _save_key_worker",
+            "def open_acceptance_matrix",
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertNotIn(symbol, source)
 
 if __name__ == "__main__":
     unittest.main()

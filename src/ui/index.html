@@ -1274,19 +1274,6 @@
       box-shadow: 0 0 6px rgba(0, 242, 196, 0.06);
     }
 
-    .gm-signal-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-family: var(--g-mono);
-      font-size: 10px;
-      padding: 3px 8px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
-      color: var(--g-text-muted);
-    }
-
     .gm-handshake-row {
       display: flex;
       justify-content: space-between;
@@ -1531,11 +1518,6 @@
     }
 
     /* Asymmetric grid inside command surface step 2 */
-    .gm-command-deck {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
 
     .gm-command-deck-status {
       display: flex;
@@ -1586,10 +1568,6 @@
       .gm-primary-nav {
         gap: 10px !important;
       }
-      .gm-primary-nav .nav-item {
-        padding: 6px 10px !important;
-        font-size: 12px !important;
-      }
       .gm-status-hub {
         gap: 6px !important;
       }
@@ -1614,14 +1592,6 @@
     }
 
     /* Skeleton animations for waiting states */
-    .gm-skeleton-text {
-      height: 12px;
-      background: linear-gradient(90deg, rgba(255, 255, 255, 0.02) 25%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.02) 75%);
-      background-size: 200% 100%;
-      animation: gm-shimmer 1.5s infinite;
-      border-radius: 4px;
-      display: inline-block;
-    }
     .gm-skeleton-bar {
       height: 20px;
       background: linear-gradient(90deg, rgba(255, 255, 255, 0.02) 25%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.02) 75%);
@@ -1663,9 +1633,6 @@
   /* ===== 多格式 Key 界面 (step 1) ===== */
   .gm-cockpit .gm-keyintro{ font-size:13px; line-height:1.7; color:var(--g-text-muted); background:rgba(0,242,196,.045); border:1px solid rgba(0,242,196,.14); border-left:3px solid var(--g-primary); border-radius:10px; padding:12px 16px; }
   .gm-cockpit .gm-keyintro b{ color:var(--g-primary); font-weight:700; }
-  .gm-cockpit .gm-keygroup{ padding:18px; gap:12px; }
-  .gm-cockpit .gm-keygroup-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
-  .gm-cockpit .gm-keygroup-title b{ font-size:14.5px; color:var(--g-text); }
   .gm-cockpit .gm-keygroup-agents{ margin-top:7px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--g-text-subtle); }
   .gm-cockpit .gm-agent-chip{ font-size:11px; padding:2px 9px; border-radius:99px; background:rgba(138,180,248,.1); border:1px solid rgba(138,180,248,.22); color:var(--g-secondary); font-weight:600; }
   .gm-cockpit .gm-help-inline{ position:relative; font-size:11.5px; color:var(--g-primary); cursor:help; white-space:nowrap; padding:3px 9px; border:1px solid rgba(0,242,196,.25); border-radius:99px; background:rgba(0,242,196,.06); flex-shrink:0; }
@@ -1701,7 +1668,7 @@
   .gm-cockpit .gm-kg-arrow::before{ content:"点开填 \25B8"; font-size:11.5px; color:var(--g-primary); white-space:nowrap; }
   .gm-cockpit .gm-keygroup[open] .gm-kg-arrow::before{ content:"收起 \25BE"; color:var(--g-text-subtle); }
   .gm-cockpit .gm-kg-body{ padding:0 18px 18px; display:flex; flex-direction:column; gap:12px; }
-  .gm-cockpit .gm-kg-toprow{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding-top:10px; border-top:1px solid var(--ck-hair); }
+  .gm-cockpit .gm-kg-toprow{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding-top:10px; border-top:1px solid var(--g-line); }
   .gm-cockpit .gm-model-hint{ font-size:11px; color:var(--g-primary); font-weight:400; margin-left:6px; }
   .gm-cockpit .gm-help-inline.open .gm-help-pop{ display:block; }
 
@@ -1836,6 +1803,9 @@
           <button class="gm-btn" id="toggleDrawerBtn" onclick="toggleDiagnosticsDrawer()" style="min-height: 32px; padding: 0 12px; font-size: 11px;">
             显示诊断
           </button>
+          <button class="gm-btn" onclick="doLogout()" style="min-height: 32px; padding: 0 12px; font-size: 11px;">
+            退出登录
+          </button>
         </div>
       </div>
     </header>
@@ -1895,7 +1865,7 @@
           <div class="gm-drawer-content hidden" id="drawer-logs-content">
             <div class="gm-telemetry-header" style="padding: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); background: var(--g-bg-deep);">
               <span style="font-size: 10px; font-weight: bold; color: var(--g-text-subtle);">运行日志</span>
-              <button class="gm-btn" onclick="window.pywebview.api.copy_logs()" style="min-height: 22px; padding: 0 8px; font-size: 10px; border-radius: 4px;">复制日志</button>
+              <button class="gm-btn" onclick="copyLogs()" style="min-height: 22px; padding: 0 8px; font-size: 10px; border-radius: 4px;">复制日志</button>
             </div>
             <div class="gm-console-screen" id="logViewport" style="flex: 1; min-height: 200px;"></div>
           </div>
@@ -1958,6 +1928,7 @@
           login: (u) => { state.isLogged = true; state.loginUsername = u; state.hasSynced = true; refreshAll(); return noopPromise({ success: true }); },
           select_login_account: () => noopPromise(),
           remove_login_account: () => noopPromise(),
+          logout: () => { state.isLogged = false; state.loginUsername = ""; refreshAll(); return noopPromise(true); },
           start_update_check: () => noopPromise(),
           buyer_refresh_entitlements: () => { appendPythonLog("（预览）已请求刷新权益；实际权益以服务端返回为准。", "success"); return noopPromise(); },
           buyer_create_payment_order: () => { appendPythonLog("（预览）已创建订单（模拟）；请用手机支付宝扫码付款。", "success"); return noopPromise({ success: true, order_id: "ord-preview", payment_url: "https://openapi.alipay.com/gateway.do?method=alipay.trade.wap.pay&preview=1", qr_data_url: "" }); },
@@ -1973,8 +1944,6 @@
           start_install: () => { appendPythonLog("开始安装所选 Agent（仅安装，不写配置）。", "running"); return noopPromise(); },
           start_deploy: () => { appendPythonLog("开始写入配置并完成交付。", "running"); return noopPromise(); },
           start_config_only: () => noopPromise(),
-          start_dual_state_config: () => noopPromise(),
-          start_official_chatgpt_config: () => noopPromise(),
           restore_backups: () => noopPromise(),
           list_config_snapshots: () => noopPromise({ success: true, snapshots: [
             { name: "original", reason: "接管前原始配置", created_at: "2026-07-03T09:00:00", file_count: 2, is_original: true },
@@ -2100,7 +2069,7 @@
       },
       courses: {
         agent_home: ["代理总览", `${serviceBase}/agent-center`, "展示胖虎AI服务器上的代理数据，本地不计算返佣。"],
-        agent_customers: ["下游客户", `${serviceBase}/agent-center/customers`, "客户归因、绑定 and 结算以后台账本为准。"],
+        agent_customers: ["下游客户", `${serviceBase}/agent-center/customers`, "客户归因、绑定与结算以后台账本为准。"],
         agent_token_comm: ["token 返佣", `${serviceBase}/agent-center/token-commission`, "Token/API 消费返佣来自服务端。"],
         agent_activation_comm: ["激活返佣", `${serviceBase}/agent-center/activation-commission`, "下游付费激活返佣来自服务端。"],
         agent_install_comm: ["安装返佣", `${serviceBase}/agent-center/install-commission`, "安装返佣来自服务端交付事件。"],
@@ -2218,6 +2187,11 @@
       if (!state.isLogged) {
         loginGate.style.display = "flex";
         consoleLayout.style.display = "none";
+        // 登出即关闭支付二维码模态、停止支付轮询，并清空隐藏画布里的敏感内容
+        //（Key 输入框、代理中心金额等不能留在已登出界面的 DOM 里）。
+        if (typeof closePaymentQrModal === "function") closePaymentQrModal();
+        const wc = document.getElementById("workCanvas");
+        if (wc) wc.innerHTML = "";
         document.getElementById("loginUser").value = state.loginUsername || "";
         populateSavedAccounts();
         return;
@@ -2312,7 +2286,7 @@
       rail.innerHTML = "";
       const mod = state.activeModule || "agent";
 
-      const items = mod === "agent" ? agentSteps.map(s => [String(s[0]), s[1], s[2]]) : currentSubnavItems(mod).map(s => [s[0], s[1], "CLOUD"]);
+      const items = mod === "agent" ? agentSteps.map(s => [String(s[0]), s[1]]) : currentSubnavItems(mod).map(s => [s[0], s[1]]);
       const phaseAt = { "1": "准备", "3": "安装与配置", "7": "验收测试", "10": "增值 · 可选" };
 
       items.forEach((item, idx) => {
@@ -2400,8 +2374,8 @@
               <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
                 <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">电脑软件</b>
                 <span><label>运行平台</label><strong class="gm-tech-num">Windows x64</strong></span>
-                <span><label>Python 编译器</label><strong class="gm-tech-num">${state.environmentOk ? "3.10.2 ✓ OK" : "3.10+ Target"}</strong></span>
-                <span><label>Node.js 引擎</label><strong class="gm-tech-num">${state.environmentOk ? "16.14+ ✓ OK" : "16.0+ Target"}</strong></span>
+                <span><label>客户端运行时</label><strong class="gm-tech-num">已内置 · 免安装</strong></span>
+                <span><label>Node.js 引擎</label><strong class="gm-tech-num">安装 Agent 时自动检测</strong></span>
               </div>
               <div class="gm-command-deck-status" style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line);">
                 <b style="font-size: 12px; color: var(--g-text); margin-bottom: 8px; display: block;">端口与进程检查</b>
@@ -2526,7 +2500,7 @@
           <div style="display: flex; gap: 12px;">
             ${actions.map(([label, api]) => `
               <button class="gm-btn ${api === "start_deploy" ? "gm-btn-primary" : ""}"
-                onclick="${api === "open_url" ? `window.pywebview.api.open_url('${serviceBase}/matrix')` : `window.pywebview.api.${api}()`}">
+                onclick="${api === "open_url" ? `window.pywebview.api.open_url('${serviceBase}/matrix')` : api === "copy_logs" ? "copyLogs()" : `window.pywebview.api.${api}()`}">
                 ${label}
               </button>
             `).join("")}
@@ -2556,11 +2530,10 @@
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
             <b style="color: var(--g-primary);">配置检查清单</b>
             <table class="gm-status-table" style="margin-top: 6px;">
-              <tr class="gm-handshake-row"><td>Python 3.10+</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">检测通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
-              <tr class="gm-handshake-row"><td>Node.js 16+</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">检测通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
-              <tr class="gm-handshake-row"><td>端口冲突扫描</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">无占用</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待扫描</span>'}</td></tr>
-              <tr class="gm-handshake-row"><td>AI 协同同步</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">通道活跃</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">待侦测</span>'}</td></tr>
-              <tr class="gm-handshake-row"><td>授权验证</td><td>${state.apiKeyPresent ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">Key已就绪</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待确权</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>本地风险插件扫描</td><td>${state.environmentOk ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">通过</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待诊断</span>'}</td></tr>
+              <tr class="gm-handshake-row"><td>客户端运行时</td><td><span class="gm-led ok"></span> <span style="color: var(--g-success);">已内置</span></td></tr>
+              <tr class="gm-handshake-row"><td>端口 / 网络通道</td><td><span style="color: var(--g-text-muted);">部署时校验</span></td></tr>
+              <tr class="gm-handshake-row"><td>授权 Key</td><td>${state.apiKeyPresent ? '<span class="gm-led ok"></span> <span style="color: var(--g-success);">Key已就绪</span>' : '<span class="gm-led warn"></span> <span style="color: var(--g-warning);">等待确权</span>'}</td></tr>
             </table>
           </div>
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); border-color: rgba(138, 180, 248, 0.1);">
@@ -2628,7 +2601,9 @@
           <span class="gm-activity-time gm-tech-num">待命</span>
         </div>`;
 
+      const savedForm = captureCanvasFormState(canvas);
       canvas.innerHTML = finalBody;
+      restoreCanvasFormState(savedForm);
     }
 
     const DRIFT_META = {
@@ -2653,11 +2628,11 @@
         const overall = DRIFT_META[report.overall_level] || DRIFT_META.ok;
         driftHtml = `<div style="margin-bottom:10px"><span class="gm-tech-num" style="background:${overall.bg};color:${overall.color};padding:2px 10px;border-radius:10px">总体：${overall.label}</span></div>`;
         if ((report.risk_plugins || []).length) {
-          driftHtml += `<small style="color:#f28b82">⚠ 检测到风险切换工具：${report.risk_plugins.map(p => p.name).join("、")}，可能持续改写配置。</small>`;
+          driftHtml += `<small style="color:#f28b82">⚠ 检测到风险切换工具：${report.risk_plugins.map(p => escapeHtml(p.name)).join("、")}，可能持续改写配置。</small>`;
         }
         driftHtml += `<table class="gm-status-table" style="margin-top:8px">` + (report.agents || []).map(a => {
           const meta = DRIFT_META[a.level] || DRIFT_META.ok;
-          const detail = a.configured ? (a.findings || []).map(f => f.detail).join("；") || "配置正常" : "未配置";
+          const detail = a.configured ? (a.findings || []).map(f => escapeHtml(f.detail)).join("；") || "配置正常" : "未配置";
           const repair = a.repairable ? `<button class="gm-btn gm-btn-primary" style="min-height:24px;padding:0 8px;font-size:11px" onclick="repairDrift('${a.agent_id}')">一键修复</button>` : "";
           return `<tr class="gm-handshake-row"><td>${agentLabel(a.agent_id)}</td><td><span class="gm-tech-num" style="background:${meta.bg};color:${meta.color};padding:1px 8px;border-radius:8px">${meta.label}</span> <span style="color:#929cad">${detail}</span></td><td>${repair}</td></tr>`;
         }).join("") + `</table>`;
@@ -2668,8 +2643,8 @@
       const snapHtml = snaps.length ? `<table class="gm-status-table">` + snaps.map(s => `
         <tr class="gm-handshake-row">
           <td>${s.is_original ? "🔒 官方初始" : s.created_at.slice(0,19).replace("T"," ")}</td>
-          <td style="color:#929cad">${s.reason}（${s.file_count} 文件）</td>
-          <td><button class="gm-btn" style="min-height:24px;padding:0 8px;font-size:11px" onclick="restoreSnapshot('${selAgent}','${s.name}')">回滚到此</button></td>
+          <td style="color:#929cad">${escapeHtml(s.reason)}（${s.file_count} 文件）</td>
+          <td><button class="gm-btn" style="min-height:24px;padding:0 8px;font-size:11px" onclick="restoreSnapshot('${jsStringInAttr(selAgent)}','${jsStringInAttr(s.name)}')">回滚到此</button></td>
         </tr>`).join("") + `</table>` : `<small>选择 Agent 后点击“查看配置快照”。</small>`;
 
       return `
@@ -2912,23 +2887,23 @@
           <div class="gm-canvas-grid" style="margin-bottom: 16px;">
             <div class="gm-form-field">
               <label>服务商品 ID</label>
-              <input class="gm-input" id="cslServiceProductId" placeholder="自动获取，一般不用填" value="${serviceProductId}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslServiceProductId" placeholder="自动获取，一般不用填" value="${escapeHtml(serviceProductId)}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>云端增值订单 ID</label>
-              <input class="gm-input" id="cslOrderId" placeholder="自动获取，一般不用填" value="${orderId}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslOrderId" placeholder="自动获取，一般不用填" value="${escapeHtml(orderId)}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>配置会话 ID</label>
-              <input class="gm-input" id="cslSessionId" placeholder="创建会话后自动回填，也可手动填入" value="${sessionId}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslSessionId" placeholder="创建会话后自动回填，也可手动填入" value="${escapeHtml(sessionId)}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>platform_account_id</label>
-              <input class="gm-input" id="cslPlatformAccountId" placeholder="如飞书机器人、QQ Bot、企业微信应用 ID" value="${platformAccountId}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslPlatformAccountId" placeholder="如飞书机器人、QQ Bot、企业微信应用 ID" value="${escapeHtml(platformAccountId)}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>platform_chat_id</label>
-              <input class="gm-input" id="cslPlatformChatId" placeholder="手机会话、群组、好友、企业或内部 Chat ID" value="${chatTarget}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslPlatformChatId" placeholder="手机会话、群组、好友、企业或内部 Chat ID" value="${escapeHtml(chatTarget)}" onchange="updateCSLPayload()">
             </div>
             <div class="gm-form-field">
               <label>gateway_mode</label>
@@ -2940,7 +2915,7 @@
             </div>
             <div class="gm-form-field" style="grid-column: 1 / -1;">
               <label>验收测试消息</label>
-              <input class="gm-input" id="cslTestPrompt" placeholder="发到手机/通讯软件里的测试消息" value="${testPrompt}" onchange="updateCSLPayload()">
+              <input class="gm-input" id="cslTestPrompt" placeholder="发到手机/通讯软件里的测试消息" value="${escapeHtml(testPrompt)}" onchange="updateCSLPayload()">
             </div>
           </div>
 
@@ -2950,7 +2925,7 @@
               : (s.requiresPayment ? `
           <div class="gm-canvas-card gm-hud-corners" style="margin-bottom:16px;padding:16px;">
             <b style="color:var(--g-primary);">订单支付（手机支付宝扫码）</b>
-            ${s.paymentQrDataUrl ? `
+            ${(s.paymentQrDataUrl || "").indexOf("data:image/png;base64,") === 0 ? `
               <div style="display:flex;gap:16px;align-items:center;margin-top:10px;flex-wrap:wrap;">
                 <img src="${s.paymentQrDataUrl}" alt="支付宝付款二维码" style="width:168px;height:168px;border-radius:8px;background:#fff;padding:6px;">
                 <div style="font-size:12px;color:var(--g-text-muted);line-height:1.8;">
@@ -2982,23 +2957,23 @@
         <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr);">
           <div class="gm-form-field">
             <label>源事件 ID（自动获取）</label>
-            <input class="gm-input" id="cslSourceEventId" placeholder="自动获取，一般不用填" value="${sourceEventId}" onchange="updateCSLPayload()">
+            <input class="gm-input" id="cslSourceEventId" placeholder="自动获取，一般不用填" value="${escapeHtml(sourceEventId)}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
             <label>收到的消息 ID（自动获取）</label>
-            <input class="gm-input" id="cslInboundMessageId" placeholder="自动获取，一般不用填" value="${inboundId}" onchange="updateCSLPayload()">
+            <input class="gm-input" id="cslInboundMessageId" placeholder="自动获取，一般不用填" value="${escapeHtml(inboundId)}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
             <label>AI 回复的消息 ID（自动获取）</label>
-            <input class="gm-input" id="cslOutboundMessageId" placeholder="自动获取，一般不用填" value="${outboundId}" onchange="updateCSLPayload()">
+            <input class="gm-input" id="cslOutboundMessageId" placeholder="自动获取，一般不用填" value="${escapeHtml(outboundId)}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
             <label>AI 回复校验值（自动生成）</label>
-            <input class="gm-input" id="cslAgentResponseDigest" placeholder="自动生成，一般不用填" value="${responseDigest}" onchange="updateCSLPayload()">
+            <input class="gm-input" id="cslAgentResponseDigest" placeholder="自动生成，一般不用填" value="${escapeHtml(responseDigest)}" onchange="updateCSLPayload()">
           </div>
           <div class="gm-form-field">
             <label>验收凭证链接（自动生成）</label>
-            <input class="gm-input" id="cslEvidenceUrl" placeholder="例如: https://..." value="${evidence}" onchange="updateCSLPayload()">
+            <input class="gm-input" id="cslEvidenceUrl" placeholder="例如: https://..." value="${escapeHtml(evidence)}" onchange="updateCSLPayload()">
           </div>
         </div>
         <div class="gm-chip warn" style="margin-bottom: 16px; width: 100%; border-radius: 6px; padding: 8px 12px; display: block; height: auto; text-transform: none; font-weight: normal; line-height: 1.5;">
@@ -3011,6 +2986,40 @@
           <button class="gm-btn" onclick="submitCSLGetSession()">从服务端刷新验收字段</button>
           <button class="gm-btn gm-btn-primary" onclick="submitCSLAcceptance()">提交验收</button>
         </div>`;
+    }
+
+    // 画布重建（innerHTML 全量替换）会抹掉仅存于 DOM 的输入值（第1步 Key/模型名无 state 后备）
+    // 与正在输入的焦点。后台线程随时可能 push 状态触发重绘，故重建前快照、重建后回填。
+    function captureCanvasFormState(container) {
+      if (!container) return null;
+      const domOnly = {};
+      container.querySelectorAll('input[id^="key_"], input[id^="model_"]').forEach(el => {
+        if (el.value) domOnly[el.id] = { value: el.value, type: el.type };
+      });
+      const focused = document.activeElement;
+      let focusInfo = null;
+      if (focused && container.contains(focused) && focused.id &&
+          (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")) {
+        focusInfo = { id: focused.id, value: focused.value };
+        try { focusInfo.start = focused.selectionStart; focusInfo.end = focused.selectionEnd; } catch (e) {}
+      }
+      return { domOnly, focusInfo };
+    }
+    function restoreCanvasFormState(saved) {
+      if (!saved) return;
+      Object.entries(saved.domOnly || {}).forEach(([id, info]) => {
+        const el = document.getElementById(id);
+        if (el) { el.value = info.value; if (info.type) el.type = info.type; }
+      });
+      const f = saved.focusInfo;
+      if (f) {
+        const el = document.getElementById(f.id);
+        if (el) {
+          if (typeof f.value === "string" && el.value !== f.value) el.value = f.value;
+          el.focus();
+          try { if (f.start != null) el.setSelectionRange(f.start, f.end); } catch (e) {}
+        }
+      }
     }
 
     function escapeHtml(s) {
@@ -3110,11 +3119,11 @@
             </div>
 
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
-              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近同步记录</b>
+              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">同步状态</b>
               <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
-                <div class="gm-log-row muted">[04:27:56] 系统：代理中心连接器已初始化</div>
-                <div class="gm-log-row muted">[04:27:56] 系统：等待服务端数据同步指令</div>
-                <div class="gm-log-row muted">[04:27:56] 规则：当前仅展示标准确权状态</div>
+                <div class="gm-log-row muted">系统：代理中心连接器已初始化</div>
+                <div class="gm-log-row muted">系统：等待服务端数据同步</div>
+                <div class="gm-log-row muted">规则：账目数据以服务端为准</div>
               </div>
             </div>`;
         } else {
@@ -3128,9 +3137,9 @@
               <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--g-line); padding-bottom: 12px; margin-bottom: 16px;">
                 <div>
                   <b style="font-size: 15px; color: var(--g-success);">代理数据 (已同步)</b>
-                  <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">当前记账代理等级: <strong style="color: var(--g-primary);">${level}</strong></div>
+                  <div style="font-size: 11px; color: var(--g-text-subtle); margin-top: 2px;">当前记账代理等级: <strong style="color: var(--g-primary);">${escapeHtml(level)}</strong></div>
                 </div>
-                <span class="gm-status-lock" style="color: var(--g-success); border-color: rgba(129, 201, 149, 0.3); background: rgba(129, 201, 149, 0.05);">CLOUD SNAPSHOT</span>
+                <span class="gm-status-lock" style="color: var(--g-success); border-color: rgba(129, 201, 149, 0.3); background: rgba(129, 201, 149, 0.05);">云端快照</span>
               </div>
 
               <div class="gm-canvas-grid" style="grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
@@ -3161,13 +3170,11 @@
             </div>
 
             <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.01); padding: 16px; margin-top: 16px;">
-              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">最近同步记录</b>
+              <b style="font-size: 12px; color: var(--g-primary); display: block; margin-bottom: 8px;">同步状态</b>
               <div class="gm-console-screen" style="padding: 12px; font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; background: var(--g-console-bg); border-radius: 4px;">
-                <div class="gm-log-row success">[04:27:56] 系统：代理中心连接器已初始化</div>
-                <div class="gm-log-row success">[04:27:57] 系统：已请求数据同步授权</div>
-                <div class="gm-log-row success">[04:27:58] 系统：服务端快照已同步</div>
-                <div class="gm-log-row success">[04:27:58] 状态：当前记账代理等级 [${level}]</div>
-                <div class="gm-log-row success">[04:27:58] 规则：账目数据以服务端快照为准</div>
+                <div class="gm-log-row success">系统：服务端快照已同步</div>
+                <div class="gm-log-row success">状态：当前记账代理等级 [${escapeHtml(level)}]</div>
+                <div class="gm-log-row success">规则：账目数据以服务端快照为准</div>
               </div>
             </div>`;
         }
@@ -3249,7 +3256,7 @@
                 <div class="gm-tunnel-diagram" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid var(--g-line);">
                   <div style="text-align: center;">
                     <div style="font-size: 11px; font-weight: bold; color: var(--g-text);">本地客户端</div>
-                    <div style="font-size: 9px; color: var(--g-text-subtle); margin-top: 2px;">Local Node</div>
+                    <div style="font-size: 9px; color: var(--g-text-subtle); margin-top: 2px;">你的电脑</div>
                   </div>
                   <div style="flex: 1; display: flex; flex-direction: column; align-items: center; margin: 0 16px; position: relative;">
                     <div style="font-size: 9px; color: var(--g-success); margin-bottom: 4px; font-family: var(--g-mono);">服务端数据通道</div>
@@ -3291,7 +3298,10 @@
           </div>`;
       }
 
-      document.getElementById("workCanvas").innerHTML = body;
+      const workCanvas = document.getElementById("workCanvas");
+      const savedForm = captureCanvasFormState(workCanvas);
+      workCanvas.innerHTML = body;
+      restoreCanvasFormState(savedForm);
     }
 
     function renderInspector() {
@@ -3480,6 +3490,47 @@
       setTimeout(() => { item.remove(); }, 6000);
     };
 
+    // 复制当前步骤运行日志：直接用前端已有的 logsData 在浏览器侧复制，
+    // 不再走后端 tk 剪贴板（webview 模式下后端没有 log_box/tk 剪贴板，旧实现每次必失败）。
+    function copyLogs() {
+      const active = state.activeModule === "agent" ? parseInt(state.activeSubnav || "1", 10) : 1;
+      const rows = (logsData[active] && logsData[active].length) ? logsData[active] : [];
+      const text = rows.map(line => {
+        if (line && typeof line === "object") return "[" + (line.t || "--:--:--") + "] " + (line.m || "");
+        return String(line);
+      }).join("\n");
+      if (!text.trim()) { window.showToast("当前暂无日志可复制。", "info"); return; }
+      const done = () => window.showToast("运行日志已复制到剪贴板。", "success");
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+      } else {
+        fallbackCopy(text, done);
+      }
+    }
+
+    function fallbackCopy(text, done) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+        done();
+      } catch (e) {
+        window.showToast("复制失败，请手动选择日志文本复制。", "error");
+      }
+    }
+
+    // 退出登录 / 切换账号：调后端 logout() 清会话（并关掉自动登录），
+    // 后端会 push 新状态回来重置界面；这里同时乐观重置一次，反馈更即时。
+    function doLogout() {
+      Promise.resolve(window.pywebview.api.logout())
+        .then(() => { state.isLogged = false; state.loginPassword = ""; refreshAll(); })
+        .catch(() => {});
+    }
+
     function submitLogin() {
       const username = (document.getElementById("loginUser").value || "").trim();
       const password = document.getElementById("loginPass").value || "";
@@ -3522,8 +3573,8 @@
       const accounts = state.loginAccounts || state.accounts || [];
       list.innerHTML = accounts.length ? accounts.map(a => `
         <div class="gm-saved-row">
-          <span>${a.username}</span>
-          <button onclick="event.stopPropagation(); removeAccount('${a.username}')">删除</button>
+          <span>${escapeHtml(a.username)}</span>
+          <button onclick="event.stopPropagation(); removeAccount('${jsStringInAttr(a.username)}')">删除</button>
         </div>
       `).join("") : `<div class="gm-saved-row" style="cursor: default; color: var(--g-text-subtle);">暂无历史凭证</div>`;
 
@@ -3632,6 +3683,11 @@
       Promise.resolve(window.pywebview.api.buyer_create_payment_order())
         .then(res => {
           if (res && res.success) {
+            if (res.paid) {
+              window.showToast(res.message || "订单无需付款，权益已直接发放。", "success");
+              refreshEntitlements();
+              return;
+            }
             showPaymentQrModal(res.order_id, res.payment_url, res.qr_data_url, res.message);
           } else {
             window.showToast("创建订单失败：" + ((res && res.message) || "请稍后再试"), "error");
