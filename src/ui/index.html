@@ -2007,6 +2007,7 @@
             return noopPromise();
           },
           communication_software_link_create_order: () => noopPromise(),
+          communication_software_link_get_order: () => noopPromise(),
           communication_software_link_create_session: () => noopPromise(),
           communication_software_link_disable: () => noopPromise(),
           communication_software_link_test: () => noopPromise(),
@@ -2943,8 +2944,31 @@
             </div>
           </div>
 
+          ${orderId ? (
+            (s.chargeStatus === "paid" || s.chargeStatus === "manual_review")
+              ? `<div style="margin-bottom:16px;width:100%;border-radius:6px;padding:8px 12px;line-height:1.5;background:rgba(0,242,169,.10);color:#00f2a9;border:1px solid rgba(0,242,169,.22);">✅ 订单已支付/已开通（${escapeHtml(s.chargeStatus)}），可建立通信会话。</div>`
+              : (s.requiresPayment ? `
+          <div class="gm-canvas-card gm-hud-corners" style="margin-bottom:16px;padding:16px;">
+            <b style="color:var(--g-primary);">订单支付（手机支付宝扫码）</b>
+            ${s.paymentQrDataUrl ? `
+              <div style="display:flex;gap:16px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+                <img src="${s.paymentQrDataUrl}" alt="支付宝付款二维码" style="width:168px;height:168px;border-radius:8px;background:#fff;padding:6px;">
+                <div style="font-size:12px;color:var(--g-text-muted);line-height:1.8;">
+                  <div>用<b>手机支付宝</b>扫这个码付款（手机网站支付）。</div>
+                  <div>付款完成后点下面「我已付款，刷新状态」；显示已支付后即可建立通信会话。</div>
+                  <div style="margin-top:6px;">当前收费状态：<b>${escapeHtml(s.chargeStatus || "未支付")}</b></div>
+                </div>
+              </div>`
+            : `<p style="font-size:12px;color:var(--g-text-muted);margin-top:8px;line-height:1.7;">该订单待支付/待人工复核。付费商品的付款链接由服务端下发；点下面按钮刷新状态。</p>`}
+            <div style="margin-top:12px;">
+              <button class="gm-btn gm-btn-primary" onclick="submitCSLGetOrder()">我已付款，刷新状态</button>
+            </div>
+          </div>` : ``)
+          ) : ``}
+
           <div style="display: flex; gap: 12px; flex-wrap: wrap;">
             <button class="gm-btn" onclick="submitCSLCreateOrder()">创建连接订单</button>
+            <button class="gm-btn" onclick="submitCSLGetOrder()">刷新订单/支付状态</button>
             <button class="gm-btn gm-btn-primary" onclick="submitCSLOneClickConnect()">一键连接并本地预检</button>
             <button class="gm-btn gm-btn-primary" onclick="submitCSLCreateSession()">建立通信会话</button>
             <button class="gm-btn" onclick="submitCSLDisable()">断开连接</button>
@@ -3751,6 +3775,11 @@
     function submitCSLCreateOrder() {
       updateCSLPayload();
       window.pywebview.api.communication_software_link_create_order(state.communicationSoftwareLink);
+    }
+
+    function submitCSLGetOrder() {
+      updateCSLPayload();
+      window.pywebview.api.communication_software_link_get_order(state.communicationSoftwareLink);
     }
 
     function submitCSLCreateSession() {

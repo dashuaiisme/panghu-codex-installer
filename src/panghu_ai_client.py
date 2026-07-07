@@ -7555,8 +7555,20 @@ class InstallerApp:
             "连接通讯软件最终交付必须以服务端真实验收记录为准；"
             "本地字段或离线/mock 守卫不能单独证明真实平台回调、Agent Runtime Adapter、支付和账本闭环。"
         )
+        # 付费通讯软件订单：服务端返回支付宝 WAP 付款链接，客户端本地生成二维码给买家扫码。
+        order_payment_url = str(order_status.get("payment_url") or "").strip()
+        payment_qr_data_url = ""
+        if order_payment_url:
+            try:
+                payment_qr_data_url = build_payment_qr_data_url(order_payment_url)
+            except Exception:
+                payment_qr_data_url = ""
         return {
             "order": order_status,
+            "requiresPayment": order_status.get("requires_payment") is True,
+            "chargeStatus": str(order_status.get("charge_status") or ""),
+            "paymentUrl": order_payment_url,
+            "paymentQrDataUrl": payment_qr_data_url,
             "sessionId": session_id,
             "sourceEventId": self._safe_var_value("communication_software_link_source_event_id"),
             "inboundPlatformMessageId": self._safe_var_value("communication_software_link_inbound_message_id"),

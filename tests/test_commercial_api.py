@@ -805,7 +805,8 @@ class CommercialApiContractTests(unittest.TestCase):
             {"order_id": "svc-ord-2", "status": "created", "charge_status": "manual_review"}
         )
         unpaid = parse_communication_software_link_order_status_data(
-            {"order_id": "svc-ord-3", "status": "created", "charge_status": "unpaid"}
+            {"order_id": "svc-ord-3", "status": "created", "charge_status": "unpaid",
+             "payment_url": "https://openapi.alipay.com/gateway.do?method=alipay.trade.wap.pay"}
         )
         cancelled_paid = parse_communication_software_link_order_status_data(
             {"order_id": "svc-ord-4", "status": "cancelled", "charge_status": "paid"}
@@ -818,6 +819,9 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertTrue(manual["requires_manual_review"])
         self.assertFalse(unpaid["session_allowed"])
         self.assertTrue(unpaid["requires_payment"])
+        # 付费通讯软件订单：解析出服务端下发的支付宝 WAP 付款链接，供客户端生成二维码。
+        self.assertEqual(unpaid["payment_url"], "https://openapi.alipay.com/gateway.do?method=alipay.trade.wap.pay")
+        self.assertEqual(paid["payment_url"], "")
         self.assertFalse(cancelled_paid["session_allowed"])
         self.assertTrue(cancelled_paid["terminal_order"])
 

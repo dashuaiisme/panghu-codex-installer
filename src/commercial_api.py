@@ -1018,6 +1018,8 @@ def parse_communication_software_link_order_status_data(data: dict[str, Any]) ->
         "status": status,
         "charge_status": charge_status,
         "payment_id": str(data.get("payment_id") or "").strip(),
+        # 服务端为付费通讯软件订单返回的支付宝 WAP 付款链接；客户端本地生成二维码扫码付款。
+        "payment_url": str(data.get("payment_url") or "").strip(),
         "session_allowed": session_allowed,
         "requires_payment": not session_allowed,
         "requires_manual_review": charge_status in manual_review_statuses,
