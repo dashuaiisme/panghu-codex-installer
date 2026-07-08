@@ -60,6 +60,11 @@ from commercial_api import (
     parse_communication_software_link_order_status_data,
     parse_communication_software_link_state_fields,
     parse_payment_status_data,
+    build_subscription_products_request,
+    build_subscription_order_create_request,
+    build_subscription_order_status_request,
+    parse_subscription_products_data,
+    parse_subscription_order_data,
     sanitize_commercial_text,
     stable_config_reserve_idempotency_key,
     stable_config_session_idempotency_key,
@@ -2094,9 +2099,41 @@ def commercial_api_request_with_auth(
             failure_reason=str(kwargs["failure_reason"]),
             idempotency_key=stable_config_session_idempotency_key("fail", config_session_id, diagnostic_code),
         )
+    elif action == "subscription_products":
+        request = build_subscription_products_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "subscription_order_create":
+        product_id = str(kwargs["product_id"])
+        quantity = int(kwargs.get("quantity") or 1)
+        request = build_subscription_order_create_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            product_id=product_id,
+            quantity=quantity,
+            idempotency_key=stable_order_idempotency_key(
+                product_id=f"sub:{product_id}:x{quantity}",
+                buyer_user_id=contexts.target_buyer.user_id,
+                operator_user_id=contexts.operator.user_id,
+            ),
+        )
+    elif action == "subscription_order_status":
+        request = build_subscription_order_status_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            order_id=str(kwargs["order_id"]),
+        )
     else:
         raise ValueError(f"Unknown commercial api action: {action}")
     return with_operator_auth(request, token)
+
+
+def _subscription_delivery_fields(order: dict) -> dict:
+    """从已解析 AI订阅订单里抽交付字段（卡密批/工具链接/客服微信），付款后才有值。"""
+    out: dict = {}
+    if order.get("delivery_mode") == "self_service_plus":
+        out["card_codes"] = list(order.get("card_codes") or [])
+        out["cards_shortfall"] = int(order.get("cards_shortfall") or 0)
+        out["plus_tool_url"] = order.get("plus_tool_url", "")
+    if order.get("customer_service"):
+        out["customer_service"] = order["customer_service"]
+    return out
 
 
 def build_payment_qr_data_url(payment_url: str, box_size: int = 8, border: int = 2) -> str:
@@ -5084,6 +5121,30 @@ class WebviewApi:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
+    def subscription_list_products(self):
+        try:
+            return self.app.subscription_list_products()
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_create_order(self, product_id=None, quantity=1):
+        try:
+            return self.app.subscription_create_order(str(product_id or ""), int(quantity or 1))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_query_order(self, order_id=None):
+        try:
+            return self.app.subscription_query_order(str(order_id or ""))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_open_plus_tool(self, plus_tool_url=None, code=None):
+        try:
+            return self.app.subscription_open_plus_tool(str(plus_tool_url or ""), str(code or ""))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
     def refresh_agent_center(self):
         try:
             self.app.start_refresh_agent_center()
@@ -5234,6 +5295,22 @@ class WebviewApi:
                 storage_path=self.app.current_buyer_web_profile_path(),
             )
             return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def open_sms_console(self):
+        """接码控制台：在内置 WebView 打开 sim.aitokenapi.cc（桥接买家登录态）；不可用时兜底外部浏览器。"""
+        try:
+            url = SIM_CONTROL_URL
+            opened = try_open_embedded_webview(
+                url, title="接码控制台",
+                cookie_jar=self.app.cookie_jar, log=self.app.log,
+                storage_path=self.app.current_buyer_web_profile_path(),
+            )
+            if not opened:
+                open_url(url, cookie_jar=self.app.cookie_jar, log=self.app.log,
+                         storage_path=self.app.current_buyer_web_profile_path())
+            return {"success": True, "message": "已打开接码控制台。"}
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -6974,6 +7051,93 @@ class InstallerApp:
                 else ("支付已确认但权益尚未生效，请稍候再查询。" if needs_review else "支付尚未完成，请扫码付款后再查询。")
             ),
         }
+
+    # ---------------- AI订阅服务商城（增值业务） ----------------
+
+    def subscription_list_products(self) -> dict:
+        """WebView 同步：拉取 AI订阅在架商品。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号。"}
+        request = commercial_api_request_with_auth("subscription_products", self.commercial_contexts)
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        return {"success": True, "products": parse_subscription_products_data(data)}
+
+    def subscription_create_order(self, product_id: str, quantity: int = 1) -> dict:
+        """WebView 同步：创建 AI订阅订单（支持批量），返回支付宝二维码或即时结果。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号，再购买增值服务。"}
+        product_id = str(product_id or "").strip()
+        if not product_id:
+            return {"success": False, "message": "请先选择商品。"}
+        try:
+            qty = max(1, int(quantity))
+        except (TypeError, ValueError):
+            qty = 1
+        request = commercial_api_request_with_auth(
+            "subscription_order_create", self.commercial_contexts, product_id=product_id, quantity=qty,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        order = parse_subscription_order_data(data)
+        order_id = order["order_id"]
+        if not order_id:
+            return {"success": False, "message": "创建订单返回缺少订单 ID。"}
+        payment_url = order["payment_url"]
+        # 0 元 / 已即时履约（无支付链接且已 paid）
+        if not payment_url and order["status"] in ("paid", "delivered"):
+            return {"success": True, "order_id": order_id, "paid": True, "quantity": qty,
+                    "message": "订单无需付款，已直接开通。", **_subscription_delivery_fields(order)}
+        if not payment_url:
+            return {"success": False, "message": "服务端未返回支付链接，请联系客服确认。"}
+        try:
+            qr_data_url = build_payment_qr_data_url(payment_url)
+        except Exception as exc:
+            self.log_from_worker(f"支付二维码生成失败：{exc}")
+            qr_data_url = ""
+        return {
+            "success": True, "order_id": order_id, "quantity": qty,
+            "amount_cents": order["amount_cents"], "payment_url": payment_url, "qr_data_url": qr_data_url,
+            "delivery_mode": order["delivery_mode"],
+            "message": "订单已创建，请用手机支付宝扫码付款，付款后点“我已付款，查询结果”。",
+        }
+
+    def subscription_query_order(self, order_id: str = "") -> dict:
+        """WebView 同步：轮询 AI订阅订单，付款后回带卡密批/工具链接/客服微信。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号。"}
+        order_id = str(order_id or "").strip()
+        if not order_id:
+            return {"success": False, "message": "缺少订单 ID。"}
+        request = commercial_api_request_with_auth(
+            "subscription_order_status", self.commercial_contexts, order_id=order_id,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        order = parse_subscription_order_data(data)
+        paid = order["status"] in ("paid", "delivered")
+        return {
+            "success": True, "order_id": order["order_id"], "status": order["status"],
+            "paid": paid, "delivery_mode": order["delivery_mode"],
+            "message": ("已付款。" if paid else "支付尚未完成，请扫码付款后再查询。"),
+            **_subscription_delivery_fields(order),
+        }
+
+    def subscription_open_plus_tool(self, plus_tool_url: str = "", code: str = "") -> dict:
+        """内置浏览器打开 Plus 充值工具，带 ?code=<卡密> 免手输激活。"""
+        base = str(plus_tool_url or "").strip()
+        if not base:
+            return {"success": False, "message": "缺少充值工具地址。"}
+        safe_code = quote(str(code or "").strip(), safe="")
+        sep = "&" if "?" in base else "?"
+        target = f"{base}{sep}code={safe_code}" if safe_code else base
+        opened = try_open_embedded_webview(
+            target, title="GPT Plus 自助充值", cookie_jar=None, log=self.log_from_worker,
+        )
+        if not opened:
+            # 内置 WebView 不可用时兜底走外部浏览器（仍带 code）
+            open_url(target, log=self.log_from_worker)
+        return {"success": True, "message": "已打开充值工具，请在其中完成激活。"}
 
     def start_buyer_create_order(self) -> None:
         if self.worker_running:

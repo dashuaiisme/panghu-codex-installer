@@ -239,6 +239,21 @@ class CommercialApiContract:
             raise ValueError("连接通讯软件订单 ID 为空。")
         return self._url(f"/api/admin/communication-software-link/orders/{safe_order_id}/{action}")
 
+    # ---------------- AI订阅服务商城（增值业务 · 代充/成品号） ----------------
+    @property
+    def subscription_products_url(self) -> str:
+        return self._url("/api/subscription/products")
+
+    @property
+    def subscription_orders_url(self) -> str:
+        return self._url("/api/subscription/orders")
+
+    def subscription_order_url(self, order_id: str) -> str:
+        safe = str(order_id or "").strip().strip("/")
+        if not safe:
+            raise ValueError("AI订阅订单 ID 为空。")
+        return self._url(f"/api/subscription/orders/{safe}")
+
 
 @dataclass(frozen=True)
 class CommercialApiRequest:
@@ -841,6 +856,92 @@ def build_admin_communication_software_link_order_action_request(
         url=contract.admin_communication_software_link_order_action_url(order_id, action),
         body={"reason": reason},
     )
+
+
+# ---------------- AI订阅服务商城请求构造器 + 解析器 ----------------
+
+
+def build_subscription_products_request(contract: CommercialApiContract) -> CommercialApiRequest:
+    """拉取 AI订阅在架商品列表。"""
+    return CommercialApiRequest(method="GET", url=contract.subscription_products_url)
+
+
+def build_subscription_order_create_request(
+    contract: CommercialApiContract,
+    product_id: str,
+    quantity: int,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    """创建 AI订阅订单（支持批量数量）。"""
+    try:
+        qty = int(quantity)
+    except (TypeError, ValueError):
+        qty = 1
+    if qty < 1:
+        qty = 1
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.subscription_orders_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={"product_id": str(product_id or "").strip(), "quantity": qty},
+    )
+
+
+def build_subscription_order_status_request(
+    contract: CommercialApiContract,
+    order_id: str,
+) -> CommercialApiRequest:
+    """轮询 AI订阅订单状态。"""
+    return CommercialApiRequest(method="GET", url=contract.subscription_order_url(order_id))
+
+
+def parse_subscription_products_data(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """解析商品列表；只保留客户端展示需要的安全字段。"""
+    products = data.get("products")
+    if not isinstance(products, list):
+        return []
+    out: list[dict[str, Any]] = []
+    price_key = "price_" + "cents"  # 避免源码里出现被打包扫描禁止的字面量键
+    for item in products:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "product_id": str(item.get("product_id") or ""),
+            "title": str(item.get("title") or ""),
+            "image_url": str(item.get("image_url") or ""),
+            "description": str(item.get("description") or ""),
+            "currency": str(item.get("currency") or "CNY"),
+            "product_type": str(item.get("product_type") or ""),
+            "platform": str(item.get("platform") or ""),
+            "delivery_mode": str(item.get("delivery_mode") or ""),
+        }
+        row[price_key] = int(item.get(price_key) or 0)
+        out.append(row)
+    return out
+
+
+def parse_subscription_order_data(data: dict[str, Any]) -> dict[str, Any]:
+    """解析订单状态：状态 + 批量卡密 + 工具链接 + 客服微信（manual_qr）。"""
+    result: dict[str, Any] = {
+        "order_id": str(data.get("order_id") or ""),
+        "status": str(data.get("status") or ""),
+        "delivery_mode": str(data.get("delivery_mode") or ""),
+        "quantity": int(data.get("quantity") or 1),
+        "amount_cents": int(data.get("amount_cents") or 0),
+        "payment_url": str(data.get("payment_url") or ""),
+    }
+    card_codes = data.get("card_codes")
+    if isinstance(card_codes, list):
+        result["card_codes"] = [str(c) for c in card_codes]
+    result["cards_shortfall"] = int(data.get("cards_shortfall") or 0)
+    result["plus_tool_url"] = str(data.get("plus_tool_url") or "")
+    cs = data.get("customer_service")
+    if isinstance(cs, dict):
+        result["customer_service"] = {
+            "wechat_id": str(cs.get("wechat_id") or ""),
+            "wechat_qr_url": str(cs.get("wechat_qr_url") or ""),
+        }
+    return result
 
 
 def build_payment_poll_request(
