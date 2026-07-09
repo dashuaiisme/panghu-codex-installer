@@ -3318,11 +3318,11 @@
       return `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
           <div style="font-size:12px;color:var(--g-text-muted);line-height:1.6;">接码控制台（含手机卡 / 云号码）· 号码分配、平台会话、短信回传均以服务端为准。</div>
-          <button class="gm-btn gm-btn-primary" onclick="window.pywebview.api.open_sms_console()">在独立窗口打开（带登录态）</button>
+          <button class="gm-btn gm-btn-primary" onclick="window.pywebview.api.open_sms_console()">在独立窗口打开</button>
         </div>
         <iframe src="${url}" title="接码控制台" referrerpolicy="no-referrer"
           style="width:100%;height:calc(100vh - 230px);min-height:520px;border:1px solid var(--g-line);border-radius:8px;background:#0d1526;"></iframe>
-        <div style="font-size:11px;color:var(--g-text-subtle);margin-top:8px;">若上方未显示内容（网站限制了内嵌）或需要登录，请点右上角「在独立窗口打开」，会用内置浏览器带着你的胖虎AI登录态打开。</div>`;
+        <div style="font-size:11px;color:var(--g-text-subtle);margin-top:8px;">若上方未显示内容（网站限制了内嵌）或需要登录，请点右上角「在独立窗口打开」，用内置浏览器打开；若未登录，用你的胖虎AI中转站账号登录即可。</div>`;
     }
 
     function renderServiceCanvas() {
