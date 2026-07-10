@@ -2079,13 +2079,16 @@
         sms_code: ["接码控制台", "https://sim.aitokenapi.cc", "打开接码控制台；号码分配、平台会话、短信回传与设备 Agent 状态完全依赖云端服务端。手机卡/云号码类服务也在此办理。"]
       },
       courses: {
-        agent_home: ["代理总览", `${serviceBase}/agent-center`, "展示胖虎AI服务器上的代理数据，本地不计算返佣。"],
-        agent_customers: ["下游客户", `${serviceBase}/agent-center/customers`, "客户归因、绑定与结算以后台账本为准。"],
-        agent_activation_comm: ["激活返佣", `${serviceBase}/agent-center/activation-commission`, "下游付费激活返佣来自服务端。"],
-        agent_install_comm: ["安装返佣", `${serviceBase}/agent-center/install-commission`, "安装返佣来自服务端交付事件。"],
-        agent_proxy: ["工具代理后端", `${serviceBase}/agent-center/proxy-backend`, "代理经营配置入口在服务端。"],
+        // 路由以服务端 panghu-admin 源码为准：真实路径是 /agent/*（join_page_url=/agent/join、
+        // rules_url=/agent/rules、backend_url=/agent/center），此前前端硬编码的 /agent-center/* 是错的。
+        // 客户端优先用服务端快照下发的 URL，此处仅为离线回退，故对齐到 /agent/* 与后端常量一致。
+        agent_home: ["代理总览", `${serviceBase}/agent/center`, "展示胖虎AI服务器上的代理数据，本地不计算返佣。"],
+        agent_customers: ["下游客户", `${serviceBase}/agent/customers`, "客户归因、绑定与结算以后台账本为准。"],
+        agent_activation_comm: ["激活返佣", `${serviceBase}/agent/activation-commission`, "下游付费激活返佣来自服务端。"],
+        agent_install_comm: ["安装返佣", `${serviceBase}/agent/install-commission`, "安装返佣来自服务端交付事件。"],
+        agent_proxy: ["工具代理后端", `${serviceBase}/agent/center`, "代理经营配置入口在服务端。"],
         agent_join: ["招商介绍", `${serviceBase}/agent/join`, "公开招商页由服务端维护。"],
-        agent_rules: ["代理规则", `${serviceBase}/agent-center/rules`, "等级、费用、结算、冻结和冲正规则以后台为准。"]
+        agent_rules: ["代理规则", `${serviceBase}/agent/rules`, "等级、费用、结算、冻结和冲正规则以后台为准。"]
       }
     };
 
