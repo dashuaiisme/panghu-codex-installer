@@ -1,6 +1,8 @@
 # 商业版后端 API 合同
 
-本文是“胖虎AI多 Agent 一键部署工具”商业版的服务端合同。客户端不得硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态或权益可售状态；这些值全部来自服务端。
+本文是“胖虎AI客户端”商业服务端合同，覆盖 Agent 配置交付、胖虎AI中转站权益、充值购买、增值业务、手机号/短信接码、GPT 会员服务、连接通讯软件、代理中心等服务端数据边界。客户端不得硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态、库存、履约状态或权益可售状态；这些值全部来自服务端。
+
+产品主从口径：胖虎AI客户端是主产品和客户统一入口；胖虎AI中转站、手机接码、Plus 充值 / Plus 订阅、连接通讯软件和代理中心都作为客户端功能区或分支服务承接。胖虎AI中转站只对应 API 网关、API Token、余额扣费、模型调用、用量记录、模型价格、网关侧充值记账和必要 token 返佣，不作为胖虎AI平台主后台、胖虎AI客户端后台或整个平台后台。账号、订单、支付、权益、代理、服务目录、运营配置和跨服务编排由独立胖虎AI后台管理系统负责。
 
 ## 1. 上下文模型
 
@@ -14,7 +16,7 @@
 
 所有商业接口必须要求请求头 `Authorization: Bearer <operator_token>`。服务端必须用 token 校验 `operator_context`，不能只信任客户端请求体里的 `operator_user_id`。创建订单、查询支付、刷新权益、API Key 归属校验、配置会话预占、配置成功和配置失败都必须使用当前登录买家 token。日志、摘要和诊断包不得输出完整 token 或授权头。
 
-本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID 或配置会话 ID，下一次保存必须清除。买家登录态允许通过独立 cookie 文件和内置浏览器 profile 持久化；`buyer_session.json` 只能保存非敏感买家标识。启动恢复时不得把商业污染字段或部署 token 当成当前授权，只能用保存的买家会话向服务端重新申请本次部署授权；服务端返回 401/403 时客户端必须清理保存会话并回到登录门禁。
+本地商业污染字段不得写入或继续保留在 `profile.json`。保存 profile 时必须按白名单重建 payload；如果 `profile.json` 已混入第三方身份、第三方 token、买家登录 token、邀请码、订单号、权益 ID、配置会话 ID、密码或密码 blob，下一次保存必须清除。买家登录态允许通过独立 cookie 文件和内置浏览器 profile 持久化；`buyer_session.json` 只能保存非敏感买家标识。历史账号和可选“记住密码”只能进入独立 `login_accounts.json`，其中密码必须是本机系统加密 blob，不能是明文；WebView 公开状态只能暴露账号、勾选标记和是否存在密码记录，不能暴露全量明文密码。启动恢复时不得把商业污染字段或部署 token 当成当前授权，只能用保存的买家会话向服务端重新申请本次部署授权；服务端返回 401/403 时客户端必须清理保存会话并回到登录门禁。
 
 ## 2. 商品配置
 
@@ -69,7 +71,7 @@
 
 ## 5. 支付回调
 
-支付宝支付和支付回调验签只在服务端完成。客户端只负责创建订单和轮询支付状态，不保存支付密钥。
+胖虎AI客户端是独立工具。这里的工具订单、商品、权益和扣次不从属于胖虎AI中转站订阅、充值、额度套餐或网站钱包体系；如果复用胖虎AI现有支付宝资料，只能复用支付宝商户配置、签名、通知地址、回调验签和下单参数等支付通道资料。支付宝支付和支付回调验签只在服务端完成，客户端只负责创建独立工具订单和轮询支付状态，不保存支付密钥，不把支付成功直接解释成胖虎AI站内订阅或充值完成。
 
 支付成功后服务端必须：
 
@@ -172,6 +174,7 @@
 
 - 代理等级 1 到 5 级
 - 新买家通过邀请码或邀请链接绑定代理
+- 桌面客户端未登录闸口只负责把客户填写的邀请码或邀请链接带到胖虎AI网站注册页，例如 `https://aitokenapi.cc/register?invite=<code>`；最终注册绑定、邀请码校验和上级防覆盖由服务端完成
 - 已有上级邀请人不能被新代理覆盖
 - 第 N 级代理最多拿往下 N 层的返佣
 - 代理升级价格后台配置
@@ -250,7 +253,7 @@
 - 返佣账本和佣金冲正记录
 - 客户端节点状态摘要
 
-客户端日志和诊断包不得明文包含账号密码、手机号、邮箱、API Key、token、邀请码、订单号、权益 ID 或配置会话 ID。
+客户端日志和诊断包不得明文包含账号密码、加密密码 blob、手机号、邮箱、API Key、token、邀请码、订单号、权益 ID 或配置会话 ID。
 
 客户端每次配置结束必须形成同一份客户交付报告，供弹窗、日志、客服诊断包和后端状态对齐使用：
 
@@ -268,6 +271,14 @@
 
 服务端商品、代理话术、客户端按钮和成功页必须绑定 `delivery_scope`。
 
+`delivery_scope` 只允许以下值：
+
+- `cli`：只销售和验收官方 CLI 配置交付。
+- `client`：只销售和验收官方客户端或独立客户端形态交付。
+- `both`：CLI 与客户端都销售并分别验收。
+
+服务端商品、订单、权益、配置会话和交付报告必须携带同一个 `delivery_scope`。CLI 和客户端是独立付费、独立交付范围；`delivery_scope=cli` 时，客户端未确认不得阻断 CLI 交付成功；`delivery_scope=client` 或 `both` 时，客户端启动、配置、最小任务和交付报告必须单独通过。
+
 `ClaudeCode`、`OpenClaw`、`Hermes` 在没有完成 Agent Playbook、API 接入、重启验证和最小真实任务验证前，只能设置为：
 
 - hidden
@@ -278,7 +289,144 @@
 
 `Gemini / agy` 当前只保留官方入口和待接入状态。未完成胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得作为付费完整配置交付。
 
-## 15. 后端验收清单
+## 15. 增值业务服务目录合同
+
+胖虎AI服务端必须为客户端提供统一 `value_added_services` 服务目录，用于承接 Plus 订阅、手机卡/云号码、接码控制台、连接通讯软件和后续其他增值业务。客户端只展示服务端返回的入口、权益和状态，不本地计算价格、库存、号码分配、卡密发放或履约结论。
+
+建议返回字段：
+
+- `service_id`：稳定服务 ID，例如 `gpt_plus`、`phone_card`、`sms_code`、`communication_software_link`。
+- `title`：客户可见名称。
+- `target_project`：关联履约项目，例如“Plus session.脚本工具”或“手机号接码控制中心”。
+- `status`：服务端状态，例如 `available`、`paused`、`pending_production`、`manual_review`。
+- `entry_url`：客户端 WebView 要打开的服务端入口。
+- `purchase_url`：未购买时的购买入口；可与 `entry_url` 相同。
+- `entitlement_status`：当前买家权益状态，例如 `not_purchased`、`active`、`pending_activation`、`manual_review`。
+- `requires_webview_session`：是否必须桥接当前胖虎AI买家会话。
+- `summary_url`：客户可读摘要接口。
+- `unverified_reason`：服务未完成生产验收时的原因。
+
+服务端返回样例：
+
+```json
+{
+  "value_added_services": [
+    {
+      "service_id": "gpt_plus",
+      "title": "Plus 订阅",
+      "target_project": "Plus session.脚本工具",
+      "status": "available",
+      "entry_url": "https://aitokenapi.cc/value-added/gpt-plus",
+      "purchase_url": "https://aitokenapi.cc/value-added/gpt-plus",
+      "entitlement_status": "not_purchased",
+      "requires_webview_session": true,
+      "summary_url": "https://aitokenapi.cc/api/value-added/gpt-plus/summary",
+      "unverified_reason": null
+    },
+    {
+      "service_id": "sms_code",
+      "title": "接码控制台",
+      "target_project": "手机号接码控制中心",
+      "status": "pending_production",
+      "entry_url": "https://sim.aitokenapi.cc",
+      "purchase_url": "https://aitokenapi.cc/value-added/phone-card",
+      "entitlement_status": "unknown",
+      "requires_webview_session": true,
+      "summary_url": "https://aitokenapi.cc/api/value-added/sms-code/summary",
+      "unverified_reason": "生产 DNS、正式 AGENT_TOKEN、真实设备和数据库尚未验收"
+    }
+  ]
+}
+```
+
+Plus 订阅边界：
+
+- 支付、发码、激活码兑换、Session Token 处理、续费取消、自动化履约、失败重试、人工复核和日志回写由服务端与 Plus session.脚本工具承担。
+- 客户端不得保存、输出或转储 Plus Session Token、激活服务管理 token、执行器后台密钥或客户第三方账号密码。
+- 客户端只能打开购买页或履约入口，并展示服务端摘要状态。
+
+接码边界：
+
+- 手机卡、云号码、号码托管、短信回传、设备 Agent、平台会话、真实数据库、多手机/白卡绑定和审计由手机号接码控制中心承担。
+- 客户端不得保存短信全文、号码分配规则、接码设备 token、平台会话密钥或短信网关密钥。
+- 客户端只能打开 `sim` 子域名或服务端下发入口，并展示客户可读摘要。
+
+生产验收前，服务端必须用 `status=pending_production` 或 `unverified_reason` 明确标识，客户端不得把该服务展示成已完成交付。
+
+## 16. 连接通讯软件独立服务合同
+
+连接通讯软件是独立增值服务，固定 `service_type=communication_software_link`。它用于把已可用 Agent 接入 QQ、微信、飞书、钉钉、企业微信等通讯软件或办公协同通道。
+
+命名规则：接口、数据表、账本事件、客户文案、产品手册、验收说明和界面统一使用“连接通讯软件”口径；技术 slug 统一为 `communication-software-link` / `communication_software_link`。
+
+它不得与基础 Agent 配置共用：
+
+- 商品
+- 订单
+- 权益
+- 配置会话
+- 验收记录
+- 扣费事件
+- 返佣事件
+
+基础 Agent 配置交付事件建议继续使用 `agent_install_delivered`。连接通讯软件交付事件必须单独使用 `communication_software_link_delivered`。
+
+服务端数据模型至少应覆盖：
+
+- `service_products`: `service_type`、名称、价格、状态、支持的 Agent、支持的平台通道、介绍文案和最低客户端版本。
+- `service_orders`: 买家、服务商品、Agent、通道、订单状态、收费状态、支付 ID、创建时间、交付时间和取消时间。
+- `communication_software_link_sessions`: 订单、买家、Agent、通道、平台账号、聊天对象、网关模式、状态、最近探测时间和验收时间。
+- `communication_software_link_platform_auth_sessions`: 订单、买家、Agent、通道、网关模式、授权 URL/二维码、平台授权状态、平台账号、聊天对象、过期时间和失败原因。
+- `communication_software_link_acceptance_records`: 入站平台消息 ID、出站平台消息 ID、测试提示词、Agent 响应摘要、证据链接、验收人、验收时间和唯一 `source_event_id`。
+- `service_ledger_events`: `service_type`、订单、买家、金额、状态和唯一 `source_event_id`。
+
+Agent 来源不能只限定为“本工具本次基础配置会话已完成”。服务端必须支持：
+
+- 当前订单刚完成基础 Agent 交付。
+- 买家历史订单已有基础 Agent 交付。
+- 买家电脑本来已有可用 Agent，客户端检测或人工复核后进入连接通讯软件。
+- 无法自动确认时进入 `manual_review`，而不是直接隐藏入口。
+
+建议接口：
+
+- `GET /api/communication-software-link/offering`
+- `POST /api/communication-software-link/orders`
+- `GET /api/communication-software-link/orders/:id`
+- `POST /api/communication-software-link/platform-auth`
+- `GET /api/communication-software-link/platform-auth/:id`
+- `POST /api/communication-software-link/sessions`
+- `GET /api/communication-software-link/sessions/:id`
+- `POST /api/communication-software-link/sessions/:id/test`
+- `POST /api/communication-software-link/sessions/:id/acceptance`
+- `POST /api/communication-software-link/sessions/:id/disable`
+- `POST /api/communication-software-link/callbacks/qq-bot`
+- `POST /api/communication-software-link/callbacks/feishu`
+- `POST /api/communication-software-link/callbacks/dingtalk`
+- `POST /api/communication-software-link/callbacks/wecom`
+- `POST /api/communication-software-link/callbacks/weixin`
+- `GET/PUT /api/admin/communication-software-link/products`
+- `GET/PUT /api/admin/communication-software-link/channel-policies`
+- `GET /api/admin/communication-software-link/sessions`
+- `POST /api/admin/communication-software-link/sessions/:id/freeze`
+- `POST /api/admin/communication-software-link/sessions/:id/release`
+- `POST /api/admin/communication-software-link/orders/:id/refund`
+- `POST /api/admin/communication-software-link/orders/:id/manual-review`
+
+验收与扣费规则：
+
+- 付费订单的支付走支付宝 WAP（`alipay.trade.wap.pay`）：`POST /api/communication-software-link/orders` 及 `GET /api/communication-software-link/orders/:id` 对「已下单未付款」订单返回 `payment_url`（服务端按 `CommLinkProduct.price_cents` 定价并创建 `PaymentOrder`），客户端本地据此生成二维码给买家扫码；支付宝异步回调命中后服务端把订单 `charge_status` 置为 `paid`。0 元产品无需 `payment_url`。
+- `POST /api/communication-software-link/sessions` 前，订单必须已支付（`charge_status=paid`），或明确进入后台人工预售/人工复核状态；未支付订单不得创建配置会话、不得写入平台账号或聊天对象。
+- 验收为**服务端自动验收**：服务端凭入站/出站/证据链自行判定，会话响应回传 `acceptance_status`、`charged`、`client_may_claim_delivery_complete` 等字段；客户端只轮询这些状态，**不提交** `source_event_id`、`inbound/outbound_platform_message_id` 等服务端内部验收字段。
+- 如果客户端没有平台账号或聊天对象，必须先通过 `POST /api/communication-software-link/platform-auth` 创建平台授权会话；服务端返回 `auth_session_id`、`authorization_url` 或 `qr_code_url`，客户端打开给买家扫码/授权，并通过 `GET /api/communication-software-link/platform-auth/:id` 轮询，拿到 `platform_account_id`、`platform_chat_id` 和 `gateway_mode` 后才能继续创建配置会话。
+- 服务端不得要求买家在客户端手填机器人密钥、个人微信密码、平台 access token 或长期授权密钥；这些敏感凭据只能在平台官方授权页、服务端安全回调或人工复核链路中处理。
+- 连接通讯软件必须记录入站平台消息、Agent 执行证据和出站平台回复证据。
+- 未形成上述证据时，不得标记 `communication_software_link_delivered`。
+- 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，只能进入暂停、重试或人工复核，不得自动判定为配置失败、自动退款或取消收费。
+- 收费、返佣和结算必须基于不可重复的 `source_event_id` 幂等处理。
+- 连接通讯软件退款、失败或人工复核不得自动撤销基础 Agent 配置交付。
+- 如果连接通讯软件未来参与代理返佣，返佣事件也必须使用独立 `communication_software_link_delivered`，不得复用 `agent_install_delivered`。
+
+## 17. 后端验收清单
 
 - 商品配置由后台控制，客户端不写死价格、次数、有效期、设备数或上架状态。
 - 商业部署清单必须返回 `manifest_signature`、`manifest_issued_at`、`manifest_signature_algorithm` 和 `manifest_key_id`，且能通过客户端内置 Ed25519 公钥验签；缺失或验签失败时客户端拒绝商业配置。
@@ -290,11 +438,16 @@
 - 订单撤销会回收权益、终止配置会话、释放预占并执行佣金冲正。
 - 后台可通过 `diagnostic_code` 查到完整链路。
 - 代理返佣比例、代理等级升级价格和展示开关全部由后台配置。
-- 代理中心必须区分 token 返佣、下游付费激活返佣和付费安装 Agent 返佣，不能把三者混成一个普通推广返佣字段。
+- 代理中心必须区分下游付费激活返佣和付费安装 Agent 返佣，不能混成一个普通推广返佣字段。（**token 返佣 / token 消耗返佣已废弃**：业务上从未存在、服务端已下架且恒 0，代理中心不再展示；`token_commission_cents` 字段暂保留兼容，待与服务端协同后移除。见 `docs/待办_token消耗返佣废弃_服务端已下架_2026-07-10.md`。）
+- 增值业务服务目录必须由服务端下发，覆盖 Plus 订阅、手机卡/云号码、接码控制台、连接通讯软件等入口、状态、权益和未验收原因。
+- Plus 订阅不得让客户端保存 Session Token、激活服务密钥或履约密钥；接码服务不得让客户端保存短信内容、设备 token 或号码分配规则。
+- 连接通讯软件必须作为独立 `service_type=communication_software_link` 处理，不能复用基础 Agent 配置的订单、权益、配置会话、验收记录或扣费事件。
+- 连接通讯软件入口不能被“本工具本次基础配置会话是否完成”硬锁死；已有可用 Agent、历史交付或人工复核必须能进入单独配置链路。
+- 连接通讯软件交付不能只以实时消息是否还能回传为准；验收证据已形成后，客户断网、禁 Key、取消平台授权或阻断回调不得自动免单。
 - 后端或客户端商业合同变更后，必须先运行 `python scripts/commercial_flow_acceptance.py --json`，离线验收订单、支付、权益、配置会话、设备超限不扣次、失败不扣次、成功扣次和佣金冲正主链路。
-- 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作。
+- 商业版客户端、商业 manifest、构建脚本或客户包前置逻辑变更后，必须运行 `python scripts/commercial_release_acceptance.py --json` 做本地轻量验收；发布前深度验收或 CI 再运行 `python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json`，验收三端客户包、Windows 包内自检、商业合同流、生成公钥模块、私钥材料和发布边界扫描。该脚本只读本地源码与 `release/`，不得作为 GitHub Release、下载页、`latest.json` 或生产服务器发布动作；其中 `communication_link_real_delivery_claim_found` 必须为 `false`，防止客户端把连接通讯软件写成可自行声明真实交付完成。
 
-## 16. 代理业务管理
+## 18. 代理业务管理
 
 胖虎AI管理员账号必须新增一级菜单“代理业务管理”。该菜单是代理业务的唯一运营配置入口，至少包含：代理产品介绍、五级费用设置、返佣规则、代理审核、下游客户、佣金账本、结算提现、推广素材、风控冻结。桌面客户端不得复制这些配置规则，只能展示服务端快照和入口。
 
@@ -308,7 +461,7 @@
 - `agent_chain_snapshots`: 每次订单、token 消费、激活或安装交付事件保存当时 1-5 级上级链路。
 - `commission_policies`: 佣金政策主表，只允许后台启用、停用和发布新版本。
 - `commission_policy_rules`: 按 `event_type + receiver_level + depth` 配置 `rate_bps`，只影响新事件，历史订单使用历史快照。
-- `commission_events`: 事件类型限定为 `token_usage_settled`、`activation_paid`、`agent_install_delivered`，每个事件必须有唯一 `source_event_id` 防止重复返佣。
+- `commission_events`: 实际在用的事件类型为 `tool_order_paid`、`activation_paid`、`agent_install_delivered` 三类（`token_usage_settled` **已废弃**：服务端无事件源、已下架；字段与枚举暂保留兼容，待协同后移除）；连接通讯软件如参与返佣，必须使用独立 `communication_software_link_delivered`。每个事件必须有唯一 `source_event_id` 防止重复返佣。
 - `commission_ledger`: 佣金账本状态为 `pending`、`frozen`、`available`、`settled`、`reversed`、`manual_review`，金额字段统一使用 `commission_cents`。
 - `settlement_requests`: 提现和结算申请表，记录申请金额、关联佣金、状态、审核人、放款流水和失败原因。
 - `agent_marketing_content`: 招募页、FAQ、素材、话术、等级说明和风险边界。
@@ -319,11 +472,11 @@
 - 客户端与内置网站接口：
   - GET `/api/agent/public/offering`: 返回公开代理产品、介绍页内容、可申请等级。
   - POST `/api/agent/apply`: 申请成为代理；0 元产品可直接开通或进入审核。
-  - GET `/api/agent/center`: 当前代理总览、邀请链接、下游、三类佣金、结算状态。
+  - GET `/api/agent/center`: 当前代理总览、邀请链接、下游、四类佣金、结算状态。
   - GET `/api/agent/downstreams`: 当前代理的下游客户列表和分页游标。
   - GET `/api/agent/commissions`: 当前代理的佣金账本查询，支持状态、事件类型和分页。
   - POST `/api/agent/settlements`: 代理发起提现或结算申请，默认只能申请 `available` 金额。
-  - POST `/api/referrals/bind`: 邀请码绑定；已有绑定直接返回原上级，不覆盖。
+  - 邀请码绑定：**无独立 `/api/referrals/bind` 路由**（历史设想，服务端未实现）。归因绑定在注册环节完成——主站注册页 `register?invite=<code>` 或 `POST /api/agent/apply` 携带 `invite_code`；已有绑定直接返回原上级、永久不可覆盖（对应 `referral_bindings` 表）。
 - 后台管理端接口：
   - GET/PUT `/api/admin/agent/products`
   - GET/PUT `/api/admin/agent/policies`

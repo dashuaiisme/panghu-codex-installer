@@ -8,7 +8,7 @@ from qrcode.constants import ERROR_CORRECT_H
 ROOT = Path(__file__).resolve().parents[1]
 DOWNLOAD_URL = "https://aitokenapi.cc/deployer/download"
 QR_OUTPUT = ROOT / "assets" / "deployer-download-qr.png"
-CARD_OUTPUT = ROOT / "docs" / "多Agent一键配置工具下载二维码.png"
+CARD_OUTPUT = ROOT / "docs" / "胖虎AI下载二维码.png"
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -68,7 +68,7 @@ def make_card(qr_image: Image.Image) -> Image.Image:
     draw.rounded_rectangle((42, 42, width - 42, 236), radius=36, fill="#111827")
     draw.rectangle((42, 160, width - 42, 236), fill="#111827")
 
-    centered_text(draw, (width // 2, 82), "胖虎AI 多 Agent 一键配置工具", font(44, bold=True), "#FFFFFF")
+    centered_text(draw, (width // 2, 82), "胖虎AI客户端", font(40, bold=True), "#FFFFFF")
     centered_text(draw, (width // 2, 152), "扫码选择 Windows / Mac 客户版", font(30), "#D1FAE5")
 
     qr_size = 620

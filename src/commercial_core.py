@@ -167,6 +167,24 @@ class CommercialProduct:
 
 
 @dataclass(frozen=True)
+class ValueAddedServiceEntry:
+    service_id: str
+    title: str
+    target_project: str
+    status: str
+    entry_url: str
+    purchase_url: str
+    entitlement_status: str
+    requires_webview_session: bool
+    summary_url: str = ""
+    unverified_reason: str = ""
+
+    @property
+    def is_available(self) -> bool:
+        return self.status == "available" and not self.unverified_reason
+
+
+@dataclass(frozen=True)
 class EntitlementContract:
     entitlement_id: str
     buyer_user_id: str
@@ -427,7 +445,7 @@ AGENT_LABELS: dict[str, str] = {
     "claude_code": "ClaudeCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "gemini_agy": "Gemini / agy",
+    "gemini_agy": "Google 反重力（agy）",
 }
 
 ENTITLEMENT_STATUS_LABELS: dict[str, str] = {
@@ -635,12 +653,28 @@ def format_customer_price(price_cents: int, currency: str) -> str:
     return f"{amount:.2f}"
 
 
-def build_customer_purchase_product_lines(products: list[CommercialProduct]) -> list[str]:
+def build_customer_purchase_product_lines(
+    products: list[CommercialProduct],
+    app_version: str = "",
+    buyer_user_id: str = "",
+) -> list[str]:
     lines: list[str] = []
     for product in products:
         if not product.is_listed:
             continue
         if not _valid_until_is_active(product.valid_until):
+            continue
+        # 与 find_orderable_product 同口径过滤：展示的"可购买商品"必须真能下单，否则会展示
+        # 交付范围不符/版本门槛未达/买家白名单外的商品，买家一点"创建订单"就是死单(B-CAT-CONSIST)。
+        if product.delivery_scope not in (
+            DeliveryScope.FULL_CONFIG,
+            DeliveryScope.ASSISTED_FULL_CONFIG,
+            DeliveryScope.GUIDED_FULL_CONFIG,
+        ):
+            continue
+        if not _client_version_allowed(app_version, product.min_client_version):
+            continue
+        if not _buyer_allowed(buyer_user_id, product.allowed_buyer_user_ids):
             continue
         uses_label = "不限次" if product.is_unlimited else f"{max(0, product.remaining_uses)}次"
         device_label = f"{max(1, product.device_limit)}台设备"
@@ -650,6 +684,102 @@ def build_customer_purchase_product_lines(products: list[CommercialProduct]) -> 
             f"{product.title}：{format_customer_price(product.price_cents, product.currency)} / "
             f"{uses_label} / {device_label} / 有效期 {valid_until}{dual_state_label}"
         )
+    return lines
+
+
+VALUE_ADDED_SERVICE_STATUS_LABELS: dict[str, str] = {
+    "available": "已开放",
+    "paused": "已暂停",
+    "pending_production": "待生产验收",
+    "manual_review": "人工复核",
+}
+
+VALUE_ADDED_ENTITLEMENT_STATUS_LABELS: dict[str, str] = {
+    "not_purchased": "未购买",
+    "active": "已开通",
+    "pending_activation": "待激活",
+    "manual_review": "人工复核",
+    "unknown": "待服务端确认",
+}
+
+VALUE_ADDED_FORBIDDEN_KEYS: frozenset[str] = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "activation_service_token",
+        "agent_token",
+        "session_token",
+        "plus_session_token",
+        "sms_text",
+        "sms_code",
+        "phone_number",
+        "device_token",
+        "payment_secret",
+        "private_key",
+    }
+)
+
+
+def build_value_added_service_catalog(manifest: dict[str, Any]) -> list[ValueAddedServiceEntry]:
+    services = manifest.get("value_added_services") or []
+    if not isinstance(services, list):
+        return []
+
+    catalog: list[ValueAddedServiceEntry] = []
+    for item in services:
+        if not isinstance(item, dict):
+            continue
+        if any(key in item and item.get(key) for key in VALUE_ADDED_FORBIDDEN_KEYS):
+            continue
+        service_id = str(item.get("service_id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        target_project = str(item.get("target_project") or "").strip()
+        status = str(item.get("status") or "").strip()
+        entry_url = str(item.get("entry_url") or "").strip()
+        entitlement_status = str(item.get("entitlement_status") or "").strip()
+        if not all((service_id, title, target_project, status, entry_url, entitlement_status)):
+            continue
+        if status not in VALUE_ADDED_SERVICE_STATUS_LABELS:
+            continue
+        purchase_url = str(item.get("purchase_url") or entry_url).strip()
+        requires_webview_session = item.get("requires_webview_session")
+        if not isinstance(requires_webview_session, bool):
+            continue
+        catalog.append(
+            ValueAddedServiceEntry(
+                service_id=service_id,
+                title=title,
+                target_project=target_project,
+                status=status,
+                entry_url=entry_url,
+                purchase_url=purchase_url,
+                entitlement_status=entitlement_status,
+                requires_webview_session=requires_webview_session,
+                summary_url=str(item.get("summary_url") or "").strip(),
+                unverified_reason=str(item.get("unverified_reason") or "").strip(),
+            )
+        )
+    return catalog
+
+
+def build_value_added_service_summary_lines(services: list[ValueAddedServiceEntry]) -> list[str]:
+    if not services:
+        return ["增值业务：服务端暂未下发目录，请以网站后台开关为准。"]
+
+    lines = ["增值业务：服务端目录已同步"]
+    for service in services:
+        status_label = VALUE_ADDED_SERVICE_STATUS_LABELS.get(service.status, service.status)
+        entitlement_label = VALUE_ADDED_ENTITLEMENT_STATUS_LABELS.get(
+            service.entitlement_status,
+            service.entitlement_status or "待服务端确认",
+        )
+        bridge_label = "需要客户端登录会话" if service.requires_webview_session else "普通服务端入口"
+        line = f"{service.title}：{status_label} / {entitlement_label} / {bridge_label}"
+        if service.unverified_reason:
+            line += f" / {service.unverified_reason}"
+        lines.append(line)
     return lines
 
 
@@ -687,7 +817,7 @@ def build_agent_center_summary_lines(manifest: dict[str, Any]) -> list[str]:
         if downstream_count is not None:
             lines.append(f"下游客户：{downstream_count} 人")
         for key, label in (
-            ("token_commission_cents", "token 返佣"),
+            # token_commission_cents（token 消耗返佣）已废弃、服务端恒 0，不再进摘要展示；字段暂保留兼容。
             ("activation_commission_cents", "激活返佣"),
             ("agent_install_commission_cents", "安装返佣"),
             ("available_settlement_cents", "可结算"),
@@ -884,7 +1014,7 @@ def validate_commercial_manifest_trust(
 ) -> CommercialManifestTrustDecision:
     has_commercial_controls = any(
         key in manifest
-        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center")
+        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center", "value_added_services")
     )
     if not has_commercial_controls:
         return CommercialManifestTrustDecision(
@@ -980,6 +1110,42 @@ def verify_real_task_evidence(
         status=NodeStatus.FAILED,
         customer_message="真实任务验证失败，暂不扣次；请按诊断码交给客服排查。",
         response_excerpt=response_excerpt.strip()[:200],
+    )
+
+
+def verify_client_scope_delivery_evidence(
+    diagnostic_code: str,
+    agent_id: str,
+    mode_key: str,
+    client_installed: bool,
+    config_written: bool,
+    detail: str,
+) -> RealTaskVerificationResult:
+    """客户端（桌面 App）形态的验收判定。
+
+    产品决策：桌面客户端无法自动驱动图形界面做联网对话验收，因此退而求其次——
+    只要官方客户端已安装（检测到）且胖虎AI网关配置已写入，即视为客户端交付合格并扣次。
+    这条规则只用于官方提供客户端的 Agent（Codex/ClaudeCode/Antigravity）；CLI-only
+    的 Agent 在 verify_agent_client_scope 处就已判定 client_installed=False，不会走到通过分支。
+    """
+    if client_installed and config_written:
+        return RealTaskVerificationResult(
+            diagnostic_code=diagnostic_code,
+            agent_id=agent_id,
+            mode_key=mode_key,
+            passed=True,
+            status=NodeStatus.PASS,
+            customer_message="官方客户端已安装并写入胖虎AI网关配置，客户端交付已完成（客户端形态不做联网对话验收）。",
+            response_excerpt=detail.strip()[:200],
+        )
+    return RealTaskVerificationResult(
+        diagnostic_code=diagnostic_code,
+        agent_id=agent_id,
+        mode_key=mode_key,
+        passed=False,
+        status=NodeStatus.FAILED,
+        customer_message="官方客户端未确认或配置未写入，暂不扣次；请按诊断码交给客服排查。",
+        response_excerpt=detail.strip()[:200],
     )
 
 

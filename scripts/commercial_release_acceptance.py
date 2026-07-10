@@ -23,20 +23,15 @@ from commercial_flow_acceptance import run_acceptance  # noqa: E402
 
 def customer_app_name() -> str:
     try:
-        from panghu_codex_installer import APP_NAME
+        from panghu_ai_client import APP_NAME
     except Exception:
         name_parts = (
             chr(0x80D6),
             chr(0x864E),
             "AI",
-            chr(0x591A),
-            "Agent",
-            chr(0x4E00),
-            chr(0x952E),
-            chr(0x90E8),
-            chr(0x7F72),
-            chr(0x5DE5),
-            chr(0x5177),
+            chr(0x5BA2),
+            chr(0x6237),
+            chr(0x7AEF),
         )
         return "".join(name_parts)
     return APP_NAME
@@ -85,7 +80,7 @@ PACKAGED_APP_COMMERCIAL_STATIC_VALUE_PATTERNS = [
 ]
 
 PACKAGED_APP_COMMERCIAL_SOURCE_FILES = {
-    "src/panghu_codex_installer.py",
+    "src/panghu_ai_client.py",
     "src/commercial_core.py",
     "src/commercial_api.py",
 }
@@ -107,6 +102,14 @@ NON_CODEX_FULL_CONFIG_PATTERN = re.compile(
     r"(?P<allowed>full_config_allowed\s*[:=]\s*True|\"full_config_allowed\"\s*:\s*true)",
     re.IGNORECASE | re.DOTALL,
 )
+COMMUNICATION_LINK_REAL_DELIVERY_CLAIM_PATTERNS = [
+    re.compile(r"clientMayClaimDeliveryComplete[\"']?\s*[:=]\s*True\b"),
+    re.compile(r'"clientMayClaimDeliveryComplete"\s*:\s*true\b', re.IGNORECASE),
+    re.compile(r"client_may_claim_delivery_complete[\"']?\s*[:=]\s*True\b"),
+    re.compile(r'"client_may_claim_delivery_complete"\s*:\s*true\b', re.IGNORECASE),
+    re.compile(r"realServiceStatus[\"']?\s*[:=]\s*[\"'](?:completed|delivered|pass|passed)[\"']", re.IGNORECASE),
+    re.compile(r'"real_service_status"\s*:\s*"(?:completed|delivered|pass|passed)"', re.IGNORECASE),
+]
 
 PACKAGED_SELF_TEST_TIMEOUT_SECONDS = 30
 LOCAL_PACKAGED_SELF_TEST_OPT_IN_ENV = "PANGHU_ALLOW_LOCAL_PACKAGED_SELF_TEST"
@@ -177,7 +180,8 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
     report = {}
     source_baseline = _source_baseline_mtime()
     for artifact_name in artifact_names:
-        path = ROOT / "release" / artifact_name
+        path, resolved_from, resolved_name = resolve_release_artifact_path(artifact_name)
+        canonical_path = ROOT / "release" / artifact_name
         exists = path.exists()
         mtime = path.stat().st_mtime if exists else None
         freshness = "missing"
@@ -185,6 +189,10 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
             freshness = "fresh" if mtime is not None and mtime >= source_baseline else "stale"
         report[artifact_name] = {
             "exists": exists,
+            "canonical_exists": canonical_path.exists(),
+            "resolved_from": resolved_from,
+            "resolved_name": resolved_name,
+            "resolved_path": path.relative_to(ROOT).as_posix() if exists else "",
             "size": path.stat().st_size if exists else 0,
             "sha256": _sha256(path) if exists else "",
             "last_write_time": mtime,
@@ -194,13 +202,30 @@ def build_release_artifact_report(artifact_scope: str = "all") -> dict:
     return report
 
 
+def release_artifact_aliases(artifact_name: str) -> list[str]:
+    return [artifact_name]
+
+
+def resolve_release_artifact_path(artifact_name: str) -> tuple[Path, str, str]:
+    for index, candidate_name in enumerate(release_artifact_aliases(artifact_name)):
+        candidate_path = ROOT / "release" / candidate_name
+        if candidate_path.exists():
+            return candidate_path, "canonical" if index == 0 else "legacy", candidate_name
+    return ROOT / "release" / artifact_name, "missing", artifact_name
+
+
 def _is_packaged_internal_file(name: str) -> bool:
     normalized = name.replace("\\", "/").lstrip("/")
     lowered = normalized.lower()
-    if normalized in PACKAGED_INTERNAL_EXACT_PATHS:
-        return True
-    if any(lowered.startswith(prefix.lower()) for prefix in PACKAGED_INTERNAL_PREFIXES):
-        return True
+    path_variants = [normalized]
+    parts = [part for part in normalized.split("/") if part]
+    path_variants.extend("/".join(parts[index:]) for index in range(1, len(parts)))
+    for variant in path_variants:
+        lowered_variant = variant.lower()
+        if variant in PACKAGED_INTERNAL_EXACT_PATHS:
+            return True
+        if any(lowered_variant.startswith(prefix.lower()) for prefix in PACKAGED_INTERNAL_PREFIXES):
+            return True
     filename = Path(normalized).name
     if filename.lower() in PACKAGED_SENSITIVE_FILENAMES:
         return True
@@ -236,7 +261,12 @@ def inspect_packaged_zip_contents(path: Path) -> dict:
 def build_packaged_artifact_content_report(artifact_scope: str = "all") -> dict:
     report = {}
     for artifact_name in ARTIFACT_SCOPES[artifact_scope]:
-        report[artifact_name] = inspect_packaged_zip_contents(ROOT / "release" / artifact_name)
+        path, resolved_from, resolved_name = resolve_release_artifact_path(artifact_name)
+        artifact_report = inspect_packaged_zip_contents(path)
+        artifact_report["resolved_from"] = resolved_from
+        artifact_report["resolved_name"] = resolved_name
+        artifact_report["resolved_path"] = path.relative_to(ROOT).as_posix() if path.exists() else ""
+        report[artifact_name] = artifact_report
     return report
 
 
@@ -308,6 +338,7 @@ def build_hard_boundary_report(deep_scan: bool = False) -> dict:
     packaged_app_commercial_literal_hits = []
     packaged_app_commercial_static_value_hits = []
     non_codex_full_config_delivery_hits = []
+    communication_link_real_delivery_claim_hits = []
     packaged_app_source_files_scanned = []
     for path in tracked_text_files:
         try:
@@ -337,6 +368,11 @@ def build_hard_boundary_report(deep_scan: bool = False) -> dict:
                         "pattern": "non_codex_full_config_allowed",
                     }
                 )
+            for pattern in COMMUNICATION_LINK_REAL_DELIVERY_CLAIM_PATTERNS:
+                if pattern.search(text):
+                    communication_link_real_delivery_claim_hits.append(
+                        {"file": relative, "pattern": pattern.pattern}
+                    )
 
     return {
         "scan_mode": "deep" if deep_scan else "light",
@@ -352,6 +388,8 @@ def build_hard_boundary_report(deep_scan: bool = False) -> dict:
         "packaged_app_source_files_scanned": sorted(set(packaged_app_source_files_scanned)),
         "non_codex_full_config_delivery_found": bool(non_codex_full_config_delivery_hits),
         "non_codex_full_config_delivery_hits": non_codex_full_config_delivery_hits,
+        "communication_link_real_delivery_claim_found": bool(communication_link_real_delivery_claim_hits),
+        "communication_link_real_delivery_claim_hits": communication_link_real_delivery_claim_hits,
     }
 
 
@@ -478,6 +516,9 @@ def build_report(include_exe_self_test: bool, artifact_scope: str = "all", deep_
     packaged_content_report = build_packaged_artifact_content_report(artifact_scope=artifact_scope)
     release_temp_files = build_release_temp_file_report()
     missing_artifacts = [name for name, info in artifact_report.items() if not info["exists"]]
+    canonical_missing_artifacts = [
+        name for name, info in artifact_report.items() if info["exists"] and not info.get("canonical_exists")
+    ]
     commercial_flow = run_acceptance()
     generated_public_key = build_generated_public_key_module_report()
     hard_boundaries = build_hard_boundary_report(deep_scan=deep_scan)
@@ -498,6 +539,8 @@ def build_report(include_exe_self_test: bool, artifact_scope: str = "all", deep_
     review_notes = []
     if missing_artifacts:
         warnings.append("缺少本地客户包：" + ", ".join(missing_artifacts))
+    if canonical_missing_artifacts:
+        warnings.append("当前仅找到旧名历史客户包，新产品名客户包需要重包：" + ", ".join(canonical_missing_artifacts))
     stale_artifacts = [name for name, info in artifact_report.items() if info.get("freshness") == "stale"]
     if stale_artifacts:
         warnings.append("以下客户包早于当前源码或构建脚本，需要重包：" + ", ".join(stale_artifacts))
@@ -511,6 +554,8 @@ def build_report(include_exe_self_test: bool, artifact_scope: str = "all", deep_
         warnings.append("客户包主程序包含商业次数、有效期、设备数或上架状态样例，请移到测试或服务端清单。")
     if hard_boundaries["non_codex_full_config_delivery_found"]:
         warnings.append("客户包主程序疑似把未通过功能验收矩阵的 Agent 标为完整付费交付，请先完成配置写入、启动检测和最小对话验证。")
+    if hard_boundaries["communication_link_real_delivery_claim_found"]:
+        warnings.append("客户包主程序疑似允许连接通讯软件客户端声明真实交付完成；最终交付必须以服务端真实验收记录为准。")
     content_hits = [
         f"{name}: " + ", ".join(info["internal_file_hits"])
         for name, info in packaged_content_report.items()

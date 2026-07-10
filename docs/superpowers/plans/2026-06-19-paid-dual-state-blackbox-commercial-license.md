@@ -1,8 +1,10 @@
 # 付费双态、黑箱保护与商业授权实施计划
 
+> **历史/非权威说明：** 本文件是 2026-06-19 阶段的商业化方案草稿，不是当前产品规则来源。文中的价格、次数、有效期、设备数、套餐、版本、返佣比例、提现门槛、结算状态、上架状态和发布建议均不得作为当前交付口径使用；当前权威以 `docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md`、`docs/TECHNICAL_MAINTENANCE_MANUAL.md`、`docs/COMMERCIAL_BACKEND_API_CONTRACT.md`、`FINAL_REPORT.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在原版“胖虎AI多 Agent 一键部署工具”基础上，增加双态模式 20 元付费解锁、客户端黑箱保护、商业传播/代安装授权三层产品能力。
+**Goal:** 在原版“胖虎AI客户端”基础上，增加双态模式 20 元付费解锁、客户端黑箱保护、商业传播/代安装授权三层产品能力。
 
 **Architecture:** 以胖虎AI服务端作为授权和支付中心，客户端只负责登录、展示状态、发起支付、拉取权益清单、执行本机配置。普通一键配置保持现有免费/低门槛路径，双态模式和商业传播能力通过服务端权益决定是否放行。客户端打包做混淆、签名、完整性校验和关键逻辑服务端化，但不承诺绝对不可破解。
 
@@ -225,7 +227,7 @@ GET https://aitokenapi.cc/api/deployer/order/status?order_no=DEPLOYER_DUAL_20260
 当前客户端主文件：
 
 ```text
-C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py
+C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py
 ```
 
 当前相关位置：
@@ -358,7 +360,7 @@ Windows 和 Mac 包都做：
 建议后续把当前单文件拆成模块后再混淆：
 
 ```text
-src/panghu_codex_installer/
+src/panghu_ai_client/
   app.py
   auth_client.py
   entitlement_client.py
@@ -415,9 +417,9 @@ Mac：
 
 **Files:**
 
-- Create: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\docs\PAID_DUAL_STATE_AND_COMMERCIAL_LICENSE.md`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\docs\TECHNICAL_MAINTENANCE_MANUAL.md`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\README.md`
+- Create: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\docs\PAID_DUAL_STATE_AND_COMMERCIAL_LICENSE.md`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\docs\TECHNICAL_MAINTENANCE_MANUAL.md`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\README.md`
 
 - [ ] **Step 1: 新增产品方案文档**
 
@@ -470,7 +472,7 @@ Mac：
 Run:
 
 ```powershell
-rg -n "20元|双态模式|商业授权|dual_state_pro" C:\Users\Administrator\Documents\codex\panghu-codex-installer\README.md C:\Users\Administrator\Documents\codex\panghu-codex-installer\docs
+rg -n "20元|双态模式|商业授权|dual_state_pro" C:\Users\Administrator\Documents\codex\胖虎AI客户端\README.md C:\Users\Administrator\Documents\codex\胖虎AI客户端\docs
 ```
 
 Expected: 能看到新方案、README 和维护手册里都提到付费双态和商业授权。
@@ -585,7 +587,7 @@ failed
 
 **Files:**
 
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py`
 - Test: `--self-test`
 
 - [ ] **Step 1: 新增接口常量**
@@ -629,7 +631,7 @@ def create_deployer_order(
 ) -> tuple[bool, str, dict]:
     user_id = str(user.get("id") or user.get("user_id") or "").strip()
     if not user_id or not deployer_token:
-        return False, "缺少登录授权，请重新登录胖虎AI账号。", {}
+        return False, "缺少登录授权，请重新恢复或登录胖虎AI账号。", {}
     try:
         payload = open_json_with_cookies(
             DEPLOYER_ORDER_CREATE_URL,
@@ -703,7 +705,7 @@ assert manifest_products({"products": {"dual_state_pro": {"price_cents": 2000}}}
 Run:
 
 ```powershell
-python C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py --self-test
+python C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py --self-test
 ```
 
 Expected: self-test passed.
@@ -712,7 +714,7 @@ Expected: self-test passed.
 
 **Files:**
 
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py`
 - Test: `--self-test` 和手动 UI 验证
 
 - [ ] **Step 1: 拉取 manifest 后刷新双态按钮**
@@ -776,8 +778,8 @@ if not feature_enabled(self.deployer_manifest or {}, "dual_state_pro"):
 
 **Files:**
 
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\README.md`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\README.md`
 
 - [ ] **Step 1: 解析 commercial_usage**
 
@@ -838,10 +840,10 @@ commercial_200
 
 **Files:**
 
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\scripts\build-windows-exe.ps1`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\scripts\build-mac-app.command`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\.github\workflows\build-mac-release.yml`
-- Create: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\docs\CLIENT_PROTECTION_NOTES.md`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\scripts\build-windows-exe.ps1`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\scripts\build-mac-app.command`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\.github\workflows\build-mac-release.yml`
+- Create: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\docs\CLIENT_PROTECTION_NOTES.md`
 
 - [ ] **Step 1: 先记录保护边界**
 
@@ -885,7 +887,7 @@ build-manifest.json
   "app_version": "1.0.16",
   "built_at": "2026-06-19T12:00:00+08:00",
   "files": {
-    "胖虎AI多Agent一键部署工具.exe": "sha256:..."
+    "胖虎AI客户端.exe": "sha256:..."
   }
 }
 ```
@@ -908,11 +910,11 @@ Mac 当前未公证状态继续写清楚，不把未公证说成已签名。
 
 **Files:**
 
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\README.md`
-- Modify: `C:\Users\Administrator\Documents\codex\panghu-codex-installer\docs\TECHNICAL_MAINTENANCE_MANUAL.md`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\README.md`
+- Modify: `C:\Users\Administrator\Documents\codex\胖虎AI客户端\docs\TECHNICAL_MAINTENANCE_MANUAL.md`
 - Modify: `C:\Users\Administrator\Documents\codex\工具项目目录\PROJECTS.md`
-- Modify: `C:\Users\Administrator\Documents\codex\工具项目目录\projects\多 Agent 一键配置工具.md`
+- Modify: `C:\Users\Administrator\Documents\codex\工具项目目录\projects\胖虎AI客户端.md`
 
 - [ ] **Step 1: 升级版本**
 
@@ -935,7 +937,7 @@ APP_VERSION = "1.0.16"
 Run:
 
 ```powershell
-python C:\Users\Administrator\Documents\codex\panghu-codex-installer\src\panghu_codex_installer.py --self-test
+python C:\Users\Administrator\Documents\codex\胖虎AI客户端\src\panghu_ai_client.py --self-test
 ```
 
 Expected:
@@ -949,14 +951,14 @@ self-test passed
 Run:
 
 ```powershell
-cd C:\Users\Administrator\Documents\codex\panghu-codex-installer
+cd C:\Users\Administrator\Documents\codex\胖虎AI客户端
 scripts\build-windows-exe.bat
 ```
 
 Expected:
 
 ```text
-release\胖虎AI多Agent一键部署工具-Windows.zip
+release\胖虎AI客户端-Windows.zip
 ```
 
 存在，并且 exe 能打开登录页。

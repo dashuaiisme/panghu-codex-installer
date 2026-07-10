@@ -77,7 +77,6 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             "GET `/api/agent/downstreams`",
             "GET `/api/agent/commissions`",
             "POST `/api/agent/settlements`",
-            "POST `/api/referrals/bind`",
             "GET/PUT `/api/admin/agent/products`",
             "GET/PUT `/api/admin/agent/policies`",
             "GET/PUT `/api/admin/agent/marketing-content`",
@@ -99,6 +98,64 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIn(term, text)
 
+    def test_backend_contract_doc_covers_communication_software_link_independent_service_contract(self) -> None:
+        path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
+        text = path.read_text(encoding="utf-8")
+
+        required_terms = [
+            "连接通讯软件独立服务合同",
+            "`service_type=communication_software_link`",
+            "`communication_software_link_delivered`",
+            "`service_products`",
+            "`service_orders`",
+            "`communication_software_link_sessions`",
+            "`communication_software_link_acceptance_records`",
+            "`service_ledger_events`",
+            "GET /api/communication-software-link/offering",
+            "POST /api/communication-software-link/orders",
+            "POST /api/communication-software-link/sessions",
+            "POST /api/communication-software-link/sessions/:id/test",
+            "POST /api/communication-software-link/sessions/:id/acceptance",
+            "POST /api/communication-software-link/callbacks/qq-bot",
+            "GET/PUT /api/admin/communication-software-link/products",
+            "GET/PUT /api/admin/communication-software-link/channel-policies",
+            "POST /api/admin/communication-software-link/orders/:id/refund",
+            "已有可用 Agent",
+            "订单必须已支付",
+            "未支付订单不得创建配置会话",
+            "不得写入平台账号或聊天对象",
+            "入站平台消息",
+            "出站平台回复",
+            "不得自动判定为配置失败、自动退款或取消收费",
+            "不得复用 `agent_install_delivered`",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, text)
+
+    def test_backend_contract_doc_covers_value_added_service_catalog(self) -> None:
+        path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
+        text = path.read_text(encoding="utf-8")
+
+        required_terms = [
+            "增值业务服务目录合同",
+            "`value_added_services`",
+            "`gpt_plus`",
+            "`phone_card`",
+            "`sms_code`",
+            "`communication_software_link`",
+            "Plus session.脚本工具",
+            "手机号接码控制中心",
+            "Plus Session Token",
+            "接码设备 token",
+            "https://sim.aitokenapi.cc",
+            "`status=pending_production`",
+            "`unverified_reason`",
+        ]
+        for term in required_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, text)
+
     def test_backend_contract_doc_covers_legacy_profile_pollution_cleanup(self) -> None:
         path = ROOT / "docs" / "COMMERCIAL_BACKEND_API_CONTRACT.md"
         text = path.read_text(encoding="utf-8")
@@ -107,9 +164,9 @@ class CommercialBackendContractDocsTests(unittest.TestCase):
             "本地商业污染字段不得写入或继续保留在 `profile.json`",
             "profile.json",
             "第三方身份、第三方 token、买家登录 token",
-            "启动恢复时不得把商业污染字段或买家 token 当成当前账号",
-            "只能恢复账号提示、API Key、模型和界面偏好",
-            "真正的登录、授权和部署 token 必须来自本次重新登录",
+            "买家登录态允许通过独立 cookie 文件和内置浏览器 profile 持久化",
+            "启动恢复时不得把商业污染字段或部署 token 当成当前授权",
+            "只能用保存的买家会话向服务端重新申请本次部署授权",
             "代理身份只来自登录后的服务端权益",
         ]
         for term in required_terms:

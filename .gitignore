@@ -1,12 +1,24 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
 
 build/
 dist/
 release/
 artifacts/
 output/
+outputs/
+tmp/
+logs/
+node_modules/
+scratch/
 *.spec
 
 .venv/
@@ -19,5 +31,18 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+
+# 一次性构建/提交/预览脚本与临时产物（跑完即弃，不进终版仓库）
+# 锚定到仓库根，避免误伤 tests/__init__.py 等嵌套 dunder 文件
+/_*.bat
+/_*.ps1
+/_*.py
+/_*.txt
+/_*.js
+.workbuddy/
+
+# Claude Code / 预览工具的本地产物（不进仓库）
+.claude/
+.playwright-mcp/
 
 src/commercial_manifest_public_key.py

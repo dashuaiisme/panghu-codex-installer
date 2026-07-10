@@ -1,6 +1,6 @@
 # 产品验收标准
 
-最后更新：2026-06-26
+最后更新：2026-07-03
 
 ## 0. 本文件职责
 
@@ -12,23 +12,30 @@
 
 本文件不负责记录当前状态、过程流水或执行方法。
 
+每轮验收记录必须按执行域验收，并写清：执行域、命令来源、执行命令、退出结果、证据路径、未验证原因、残留风险。未验证项必须显式标注，不能用本地截图、单元测试或离线 mock 替代真实客户闭环。验收记录写入 `FINAL_REPORT.md`，验证数字归口 `TESTING.md`，不留在本文件。
+
 ## 1. A 级：代码健康验收
 
 必须通过：
 
-- `python -m py_compile src\panghu_codex_installer.py scripts\agent_delivery_acceptance.py scripts\customer_web_entry_acceptance.py`
-- `python src\panghu_codex_installer.py --self-test`
+- `python -m py_compile src\panghu_ai_client.py scripts\agent_delivery_acceptance.py scripts\customer_web_entry_acceptance.py`
+- `python src\panghu_ai_client.py --self-test`
 - `python -m unittest discover -s tests -p "test_*.py"`
 
 说明：
 
 - A 级通过只代表代码健康通过，不代表产品可交付。
+- 历史验证数字和最近记录统一见 `TESTING.md`；未重新执行前不得写成当前已复验。
 
 ## 2. B 级：客户界面验收
 
-必须具备截图证据：
+当前客户 UI 入口仍是 `src/ui/index.html`。已清理的是旧 WebView shell、旧截图和旧输出证据；B 级客户界面验收必须使用当前脚本新生成的截图，不再引用旧截图作为当前证据。
+
+复验必须重新生成截图证据并覆盖：
 
 - 未登录登录闸口
+- 登录页自动登录 / 记住密码勾选项、账号下拉切换和账号删除入口
+- 登录后设置菜单：切换账号、切换主题、退出当前账号
 - 登录后配置Agent模块
 - 胖虎AI网站模块
 - 增值业务模块
@@ -36,13 +43,16 @@
 - 普通窗口
 - 全屏窗口
 
-必须满足：
+新 UI 必须满足：
 
 - 登录前不暴露完整控制台
-- 顶部、左侧、中间、右侧、底部结构稳定
-- 左侧只展示当前模块子导航
-- 中间区域不堆满所有步骤
-- 右侧账号 / 权益 / Agent 交付状态清晰
+- 登录后必须覆盖品牌账号、业务入口、任务流程、主操作区、权益 / Agent 交付状态、日志或诊断能力
+- Gemini / agy 可以自由决定导航、面板、抽屉、命令区、状态区和日志区的布局，不再按顶部 / 左侧 / 中间 / 右侧 / 底部固定结构验收
+- 配置Agent 的步骤层级必须清晰，但不强制单步骤卡片或左侧子导航
+- 账号 / 权益 / Agent 交付状态必须清晰可见或可快速展开，但不强制右侧固定面板
+- 不能把所有步骤无层级地堆成一整页
+
+说明：历史截图不得作为新前端或当前上线判断证据。
 
 ## 3. C 级：胖虎AI网站入口验收
 
@@ -54,11 +64,13 @@
 - 充值购买页面入口正确
 - 代理中心入口正确
 - `pywebview` 可用时优先内置打开
-- `pywebview` 不可用时明确回退外部浏览器
+- `pywebview` 不可用时明确阻断并提示内置浏览器未完成；客户站点入口不得自动打开系统浏览器
 
 说明：
 
 - 入口和依赖前提通过，不等于真实业务闭环通过。
+- 历史记录中 `.venv\Scripts\python.exe scripts\customer_web_entry_acceptance.py` 返回 `web_entry_status` = `ready`。
+- 当前未见 `.venv`；后续 C 级入口前提复验需先重建项目虚拟环境。
 
 ## 4. D 级：代理中心业务验收
 
@@ -79,6 +91,19 @@
 - OpenClaw
 - Hermes
 
+交付范围必须绑定 `delivery_scope`：
+
+- `cli`：只验收官方 CLI 安装、配置写入、启动检查和最小中文对话。
+- `client`：只验收官方客户端或独立客户端形态。
+- `both`：CLI 和客户端都必须分别验收通过。
+
+CLI 和客户端是独立付费、独立交付范围。只购买 CLI 时，不得因为客户端未确认阻断 CLI 交付；购买 `client` 或 `both` 时，客户端入口、启动、配置和真实任务必须单独验收。
+
+客户端 scope 口径（用户决策 2026-07-03 修正版）：
+
+- 官方提供客户端安装的 Agent —— Codex（Windows 官方包）、ClaudeCode（Claude Desktop）、Gemini / agy（Google Antigravity）—— 必须做真实客户端交付：检测/安装官方客户端、完成配置，并按验收矩阵单独验收客户端内最小中文任务。
+- 官方未提供客户端安装的 Agent —— OpenClaw、Hermes —— 只销售 CLI 交付，不提供 `client` scope；商品不得按 client/both 上架。
+
 每个已接入 Agent 必须分别验收五维状态：
 
 - 安装状态
@@ -89,7 +114,7 @@
 
 最低通过条件：
 
-- 官方 CLI 或客户端入口真实可用
+- 所购 `delivery_scope` 对应的官方 CLI 或客户端入口真实可用
 - 配置写入目标文件正确
 - 重开或启动检查通过
 - 最小中文对话返回有效内容
@@ -97,9 +122,12 @@
 
 未完成真实对话验收前，不得标记为完整付费交付。
 
-待接入或入口型 Agent：
+CLI-only 通过不等于客户端 scope 通过，也不等于三端客户包发布完成。
 
-- Gemini / agy 当前只保留官方安装或打开入口；未接入胖虎AI API Key 配置、启动检测、最小中文对话和功能验收矩阵前，不得计入完整配置交付。
+Gemini / agy（Google Antigravity）：
+
+- 已接入完整配置链路：写入 `~/.gemini/.env`（GOOGLE_GEMINI_BASE_URL / GEMINI_API_KEY / GEMINI_MODEL），走胖虎AI网关 Gemini 格式。
+- 与其他 Agent 相同：必须完成配置写入、重开 agy 启动检测、最小中文对话（`agy -m <model> -p ...`）和功能验收矩阵后才计完整配置交付。
 
 Codex 额外必须验收三种配置模式：
 
@@ -121,7 +149,9 @@ Codex 模式切换必须验收：
 - API Key 不输出到日志
 - 保留胖虎AI买家会话 cookie 和内置浏览器 profile，重启后优先自动恢复买家登录态
 - 服务端部署授权 token 不写入 `profile.json` 或买家会话文件，启动恢复时必须重新向服务端申请
-- 不保存账号密码、第三方账号密码、部署授权 token、订单号、权益 ID 或配置会话 ID
+- 胖虎AI买家密码只有用户勾选“记住密码”时才允许本机系统加密保存；不得保存明文密码；自动登录必须依赖可解密密码记录
+- WebView 初始状态和账号下拉不得接收全部账号的明文密码，只能显示账号、勾选标记和是否存在保存密码
+- 不保存第三方账号密码、部署授权 token、订单号、权益 ID 或配置会话 ID
 - 所有客户默认请求走 `https://aitokenapi.cc`
 - 不硬编码价格、次数、有效期、设备数、返佣比例、商品上架状态
 - 不硬编码 token 返佣、激活返佣、安装返佣、下游客户归因、代理等级或结算状态
@@ -129,13 +159,53 @@ Codex 模式切换必须验收：
 - 胖虎AI账号不能被写成 Codex 登录账号。
 - 官方直登不应创建胖虎AI商业配置会话，不应扣胖虎AI配置次数。
 
-## 7. G 级：发布前验收
+## 7. G 级：连接通讯软件增值服务验收
 
-只有 A 到 F 全部通过，才允许进入：
+连接通讯软件必须与基础 Agent 配置分开验收：
+
+- 基础 Agent 配置交付通过，不自动代表连接通讯软件通过。
+- 连接通讯软件失败，不自动回滚基础 Agent 配置交付。
+- 连接通讯软件必须有独立订单、独立配置会话、独立验收记录和独立收费事件。
+- 入口不能被“本工具本次基础配置会话已完成”硬锁死；已有可用 Agent、历史交付或人工复核必须能进入检测和单独配置链路。
+
+最低通过条件：
+
+- 平台通道配置成功。
+- 通讯软件聊天窗口（手机或电脑端）发送指定测试消息。
+- 服务端记录入站平台消息 ID。
+- Agent Runtime Adapter 成功执行请求。
+- 平台聊天窗口收到 Agent 回复。
+- 服务端记录出站消息 ID、响应摘要、验收时间和唯一 `source_event_id`。
+
+防卡扣费验收：
+
+- 已形成验收证据后，客户断网、禁用 API Key、取消平台授权、关闭机器人、删除群聊或阻断回调，不得自动判定为配置失败、自动退款或不收费。
+- 未形成入站消息、Agent 调用和出站回复证据时，不得标记连接通讯软件交付完成。
+- 重复平台回调或重复验收提交不得重复扣费、重复返佣。
+
+## 8. H 级：跨项目增值业务集成验收
+
+手机号接码控制中心和 Plus session.脚本工具必须以独立项目验收，但胖虎AI客户端需要完成统一入口验收：
+
+- 服务端下发 `value_added_services` 服务目录，覆盖 Plus 订阅、国外手机卡 / 云号码、接码控制台和连接通讯软件。
+- 客户端只展示服务端返回的入口、状态、权益摘要和未验收原因，不本地硬编码价格、库存、号码分配、Plus 激活码、Session Token 或短信内容。
+- 接码控制台入口能在内置 WebView 打开服务端下发 URL；生产闭环必须包含 `sim` 子域名、正式 `AGENT_TOKEN`、真实数据库、真实设备 Agent、真实短信回传和客服可追踪记录。
+- Plus 订阅入口能在内置 WebView 打开服务端购买或履约入口；生产闭环必须包含支付成功、激活码发放、Plus 执行器兑换、Session Token 临时处理、自动化履约、日志回写和人工复核。
+- 未完成生产验收的服务必须显示待接入、待生产验收或人工复核，不能显示为已交付。
+
+## 9. I 级：发布前验收
+
+只有 A 到 H 全部通过，才允许进入：
 
 - Windows 打包
 - Mac 打包
 - GitHub Release
 - 下载页和 `latest.json` 更新
 
-当前是否允许进入 F 级，不在本文件判断，由 `FINAL_REPORT.md` 判断。
+当前是否允许进入发布前阶段（I 级），不在本文件判断，由 `FINAL_REPORT.md` 判断。
+
+最近发布前相关判定：
+
+- `commercial_flow_acceptance.py --json` 最近记录为 `status=PASS`，但属于 `offline_only` / `offline_guarded` / `mock_guarded` 范围。
+- `commercial_release_acceptance.py --json` 最近记录为 `status=WARN`，原因是旧客户包已清理、三端本地客户包缺失、未注入商业清单生产公钥。
+- 只要轻量发布前检查仍为 `WARN`，不得进入 Windows/Mac 打包、GitHub Release、下载页或 `latest.json` 更新流程。

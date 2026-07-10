@@ -12,7 +12,7 @@ $python = Join-Path $root ".venv\Scripts\python.exe"
 $assets = Join-Path $root "assets"
 $ui = Join-Path $root "src\ui"
 $icon = Join-Path $assets "panghu-avatar.ico"
-$appName = [string]::Concat([char]0x80D6, [char]0x864E, "AI", [char]0x591A, "Agent", [char]0x4E00, [char]0x952E, [char]0x90E8, [char]0x7F72, [char]0x5DE5, [char]0x5177)
+$appName = [string]::Concat([char]0x80D6, [char]0x864E, "AI", [char]0x5BA2, [char]0x6237, [char]0x7AEF)
 & $python -m pip install --upgrade pip
 & $python -m pip install -r requirements-build.txt
 $publicKeyModule = Join-Path $root "src\commercial_manifest_public_key.py"
@@ -39,7 +39,7 @@ $pyinstallerArgs = @(
     "--distpath", "release",
     "--workpath", "build",
     "--specpath", "build",
-    "src\panghu_codex_installer.py"
+    "src\panghu_ai_client.py"
 )
 & $python @pyinstallerArgs
 $releaseDir = Join-Path (Join-Path $root "release") $appName

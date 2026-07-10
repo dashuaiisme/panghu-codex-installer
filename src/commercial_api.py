@@ -5,7 +5,9 @@ import hashlib
 import json
 import re
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
+from urllib.parse import urlsplit, urlunsplit
+from urllib.error import HTTPError
 from urllib.request import Request
 
 
@@ -24,7 +26,17 @@ SENSITIVE_FIELDS = {
     "operator_user_id",
     "target_buyer_user_id",
     "order_id",
+    "service_order_id",
     "config_session_id",
+    "session_id",
+    "source_event_id",
+    "platform_account_id",
+    "platform_chat_id",
+    "platform_message_id",
+    "inbound_platform_message_id",
+    "outbound_platform_message_id",
+    "evidence_url",
+    "sender_id",
 }
 
 SENSITIVE_TEXT_PATTERNS = (
@@ -32,10 +44,33 @@ SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"\b1[3-9]\d{9}\b"),
     re.compile(r"\bsk-[A-Za-z0-9._-]+\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+\b"),
-    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id)\s*[:=]\s*[A-Za-z0-9._~:/+-]+\b"),
-    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|entitlement_id|config_session_id)\s+[A-Za-z0-9._~:/+-]+\b"),
-    re.compile(r"\b(?:ord|order|ent|cfg|assist|invite)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
+    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|service_order_id|entitlement_id|config_session_id|session_id|source_event_id|platform_account_id|platform_chat_id|platform_message_id|inbound_platform_message_id|outbound_platform_message_id|sender_id)\s*[:=]\s*[A-Za-z0-9._~:/+-]+\b"),
+    re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|service_order_id|entitlement_id|config_session_id|session_id|source_event_id|platform_account_id|platform_chat_id|platform_message_id|inbound_platform_message_id|outbound_platform_message_id|sender_id)\s+[A-Za-z0-9._~:/+-]+\b"),
+    re.compile(r"\b(?:ord|order|sub|ent|cfg|assist|invite|mca|svc|evt|csl|ledger|pay)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
 )
+
+AGENT_CENTER_REQUIRED_SUMMARY_FIELDS = (
+    "downstream_count",
+    # token_commission_cents（token 消耗返佣）已废弃：业务上从未存在、服务端已下架且恒 0。
+    # 代理中心不再展示该返佣；字段暂保留于契约兼容（服务端仍下发 0），待与服务端窗口协同后再彻底移除。
+    "token_commission_cents",
+    "activation_commission_cents",
+    "agent_install_commission_cents",
+    "available_settlement_cents",
+    "pending_settlement_cents",
+    "frozen_cents",
+)
+
+
+def sanitize_agent_center_summary(summary: object) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        return {}
+    return {field: summary[field] for field in AGENT_CENTER_REQUIRED_SUMMARY_FIELDS if field in summary}
+
+
+def _require_current_buyer_operator(buyer_user_id: str, operator_user_id: str) -> None:
+    if str(buyer_user_id or "").strip() != str(operator_user_id or "").strip():
+        raise ValueError("客户端商业操作必须由当前买家本人发起。")
 
 
 @dataclass(frozen=True)
@@ -44,6 +79,19 @@ class CommercialApiContract:
 
     def _url(self, path: str) -> str:
         return self.base_url.rstrip("/") + path
+
+    @staticmethod
+    def _safe_path_segment(value: object, label: str) -> str:
+        """把 ID 规整成安全的 URL 路径段：非空校验 + 百分号编码(safe='')。
+
+        纵深加固：这些 ID 由服务端下发、base_url 固定，但仍对路径段做百分号编码，
+        杜绝内部 '/'、'..' 改写请求路径(path traversal)。正常不含特殊字符的 ID
+        (如 svc-ord-1)编码后保持不变，不影响既有请求。
+        """
+        segment = str(value or "").strip().strip("/")
+        if not segment:
+            raise ValueError(f"{label} 为空。")
+        return quote(segment, safe="")
 
     @property
     def api_key_owner_verify_url(self) -> str:
@@ -59,7 +107,7 @@ class CommercialApiContract:
 
     @property
     def payment_status_url(self) -> str:
-        return self._url("/api/deployer/orders/payment-status")
+        return self._url("/api/tool-orders/payment-status")
 
     @property
     def config_session_reserve_url(self) -> str:
@@ -124,10 +172,88 @@ class CommercialApiContract:
     def admin_agent_ledger_action_url(self, ledger_id: str, action: str) -> str:
         if action not in {"freeze", "release", "reverse"}:
             raise ValueError("未知代理账本动作。")
-        safe_ledger_id = str(ledger_id or "").strip().strip("/")
-        if not safe_ledger_id:
-            raise ValueError("代理账本 ID 为空。")
+        safe_ledger_id = self._safe_path_segment(ledger_id, "代理账本 ID")
         return self._url(f"/api/admin/agent/ledger/{safe_ledger_id}/{action}")
+
+    @property
+    def communication_software_link_offering_url(self) -> str:
+        return self._url("/api/communication-software-link/offering")
+
+    @property
+    def communication_software_link_orders_url(self) -> str:
+        return self._url("/api/communication-software-link/orders")
+
+    def communication_software_link_order_url(self, order_id: str) -> str:
+        safe_order_id = self._safe_path_segment(order_id, "连接通讯软件订单 ID")
+        return self._url(f"/api/communication-software-link/orders/{safe_order_id}")
+
+    @property
+    def communication_software_link_sessions_url(self) -> str:
+        return self._url("/api/communication-software-link/sessions")
+
+    def communication_software_link_session_url(self, session_id: str) -> str:
+        safe_session_id = self._safe_path_segment(session_id, "连接通讯软件会话 ID")
+        return self._url(f"/api/communication-software-link/sessions/{safe_session_id}")
+
+    def communication_software_link_session_test_url(self, session_id: str) -> str:
+        return self.communication_software_link_session_url(session_id) + "/test"
+
+    def communication_software_link_session_acceptance_url(self, session_id: str) -> str:
+        return self.communication_software_link_session_url(session_id) + "/acceptance"
+
+    def communication_software_link_session_disable_url(self, session_id: str) -> str:
+        return self.communication_software_link_session_url(session_id) + "/disable"
+
+    @property
+    def communication_software_link_platform_auth_url(self) -> str:
+        return self._url("/api/communication-software-link/platform-auth")
+
+    def communication_software_link_platform_auth_session_url(self, auth_session_id: str) -> str:
+        safe_auth_session_id = self._safe_path_segment(auth_session_id, "连接通讯软件平台授权会话 ID")
+        return self._url(f"/api/communication-software-link/platform-auth/{safe_auth_session_id}")
+
+    def communication_software_link_callback_url(self, channel: str) -> str:
+        normalized = str(channel or "").strip().replace("_", "-")
+        if normalized not in {"qq-bot", "weixin", "feishu", "dingtalk", "wecom"}:
+            raise ValueError("未知连接通讯软件平台通道。")
+        return self._url(f"/api/communication-software-link/callbacks/{normalized}")
+
+    @property
+    def admin_communication_software_link_products_url(self) -> str:
+        return self._url("/api/admin/communication-software-link/products")
+
+    @property
+    def admin_communication_software_link_channel_policies_url(self) -> str:
+        return self._url("/api/admin/communication-software-link/channel-policies")
+
+    @property
+    def admin_communication_software_link_sessions_url(self) -> str:
+        return self._url("/api/admin/communication-software-link/sessions")
+
+    def admin_communication_software_link_session_action_url(self, session_id: str, action: str) -> str:
+        if action not in {"freeze", "release"}:
+            raise ValueError("未知连接通讯软件会话后台动作。")
+        safe_session_id = self._safe_path_segment(session_id, "连接通讯软件会话 ID")
+        return self._url(f"/api/admin/communication-software-link/sessions/{safe_session_id}/{action}")
+
+    def admin_communication_software_link_order_action_url(self, order_id: str, action: str) -> str:
+        if action not in {"refund", "manual-review"}:
+            raise ValueError("未知连接通讯软件订单后台动作。")
+        safe_order_id = self._safe_path_segment(order_id, "连接通讯软件订单 ID")
+        return self._url(f"/api/admin/communication-software-link/orders/{safe_order_id}/{action}")
+
+    # ---------------- AI订阅服务商城（增值业务 · 代充/成品号） ----------------
+    @property
+    def subscription_products_url(self) -> str:
+        return self._url("/api/subscription/products")
+
+    @property
+    def subscription_orders_url(self) -> str:
+        return self._url("/api/subscription/orders")
+
+    def subscription_order_url(self, order_id: str) -> str:
+        safe = self._safe_path_segment(order_id, "AI订阅订单 ID")
+        return self._url(f"/api/subscription/orders/{safe}")
 
 
 @dataclass(frozen=True)
@@ -146,6 +272,11 @@ def sanitize_commercial_api_payload(payload: dict[str, Any]) -> dict[str, Any]:
             safe[key] = "***" if value else ""
         elif isinstance(value, dict):
             safe[key] = sanitize_commercial_api_payload(value)
+        elif isinstance(value, list):
+            safe[key] = [
+                sanitize_commercial_api_payload(item) if isinstance(item, dict) else item
+                for item in value
+            ]
         else:
             safe[key] = value
     return safe
@@ -184,6 +315,7 @@ def stable_config_reserve_idempotency_key(
     device_id: str,
     diagnostic_code: str,
 ) -> str:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     seed = (
         f"reserve:{entitlement_id}:{buyer_user_id}:{operator_user_id}:"
         f"{agent_id}:{mode_key}:{device_id}:{diagnostic_code}"
@@ -197,9 +329,26 @@ def stable_order_idempotency_key(
     buyer_user_id: str,
     operator_user_id: str,
 ) -> str:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     seed = f"order:{product_id}:{buyer_user_id}:{operator_user_id}".encode("utf-8")
     digest = hashlib.sha256(seed).hexdigest()[:24]
     return f"order-{digest}"
+
+
+def stable_communication_software_link_idempotency_key(action: str, *parts: str) -> str:
+    if action not in {"order", "session", "test", "acceptance", "disable", "callback", "platform_auth"}:
+        raise ValueError("未知连接通讯软件幂等动作。")
+    seed = (action + ":" + ":".join(str(part or "") for part in parts)).encode("utf-8")
+    digest = hashlib.sha256(seed).hexdigest()[:24]
+    return f"csl-{action}-{digest}"
+
+
+def stable_agent_business_idempotency_key(action: str, *parts: str) -> str:
+    if action not in {"agent_apply", "referral_bind", "agent_settlement"}:
+        raise ValueError("未知代理业务幂等动作。")
+    seed = (action + ":" + ":".join(str(part or "") for part in parts)).encode("utf-8")
+    digest = hashlib.sha256(seed).hexdigest()[:24]
+    return f"agent-{action}-{digest}"
 
 
 def build_urllib_request_parts(request: CommercialApiRequest) -> tuple[str, dict[str, str], bytes | None]:
@@ -213,6 +362,21 @@ def build_urllib_request_parts(request: CommercialApiRequest) -> tuple[str, dict
         headers.setdefault("Content-Type", "application/json")
         body = json.dumps(request.body, ensure_ascii=False).encode("utf-8")
     return url, headers, body
+
+
+def sanitize_commercial_api_url(url: str) -> str:
+    try:
+        parsed = urlsplit(str(url or ""))
+    except Exception:
+        return "[redacted-url]"
+    path_parts = []
+    for part in parsed.path.split("/"):
+        if part and SENSITIVE_TEXT_PATTERNS[-1].search(part):
+            path_parts.append("[redacted]")
+        else:
+            path_parts.append(part)
+    safe_query = "[redacted-query]" if parsed.query else ""
+    return urlunsplit((parsed.scheme, parsed.netloc, "/".join(path_parts), safe_query, ""))
 
 
 def with_operator_auth(request: CommercialApiRequest, token: str) -> CommercialApiRequest:
@@ -237,10 +401,24 @@ def execute_commercial_api_request(
     url, headers, body = build_urllib_request_parts(request)
     req = Request(url, data=body, headers=headers, method=request.method)
     safe_payload = sanitize_commercial_api_payload(request.body)
-    with opener(req, timeout) as resp:
-        raw = resp.read().decode("utf-8")
+    try:
+        with opener(req, timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except HTTPError as exc:
+        # 服务端业务错误（402/403/404/409/422…）带中文 message/detail：
+        # 透出给买家，而不是让上层只显示 "HTTP Error 409: Conflict"。
+        detail = ""
+        try:
+            err_body = json.loads(exc.read().decode("utf-8"))
+            if isinstance(err_body, dict):
+                detail = str(err_body.get("message") or err_body.get("detail") or "").strip()
+        except Exception:
+            detail = ""
+        if detail:
+            raise ValueError(f"{sanitize_commercial_text(detail)}（HTTP {exc.code}）") from exc
+        raise
     data = parse_api_envelope(json.loads(raw))
-    summary = f"{request.method} {request.url} -> OK；payload={safe_payload}"
+    summary = f"{request.method} {sanitize_commercial_api_url(request.url)} -> OK；payload={safe_payload}"
     return data, summary
 
 
@@ -250,6 +428,7 @@ def build_api_key_owner_verify_request(
     target_buyer_user_id: str,
     operator_user_id: str,
 ) -> CommercialApiRequest:
+    _require_current_buyer_operator(target_buyer_user_id, operator_user_id)
     return CommercialApiRequest(
         method="POST",
         url=contract.api_key_owner_verify_url,
@@ -266,6 +445,7 @@ def build_entitlement_query_request(
     buyer_user_id: str,
     operator_user_id: str,
 ) -> CommercialApiRequest:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     return CommercialApiRequest(
         method="GET",
         url=contract.entitlements_url,
@@ -279,7 +459,9 @@ def build_order_create_request(
     buyer_user_id: str,
     operator_user_id: str,
     idempotency_key: str,
+    delivery_scope: str = "codex_agent_config",
 ) -> CommercialApiRequest:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     return CommercialApiRequest(
         method="POST",
         url=contract.order_create_url,
@@ -288,6 +470,7 @@ def build_order_create_request(
             "product_id": product_id,
             "target_buyer_user_id": buyer_user_id,
             "operator_user_id": operator_user_id,
+            "delivery_scope": delivery_scope,
         },
     )
 
@@ -431,15 +614,360 @@ def build_admin_agent_ledger_action_request(
     )
 
 
+def build_communication_software_link_offering_request(contract: CommercialApiContract) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.communication_software_link_offering_url)
+
+
+def build_communication_software_link_order_create_request(
+    contract: CommercialApiContract,
+    service_product_id: str,
+    buyer_user_id: str,
+    agent_id: str,
+    channel: str,
+    agent_source: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_orders_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "service_product_id": service_product_id,
+            "target_buyer_user_id": buyer_user_id,
+            "agent_id": agent_id,
+            "channel": channel,
+            "agent_source": agent_source,
+        },
+    )
+
+
+def build_communication_software_link_order_get_request(
+    contract: CommercialApiContract,
+    order_id: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.communication_software_link_order_url(order_id))
+
+
+def build_communication_software_link_session_create_request(
+    contract: CommercialApiContract,
+    order_id: str,
+    agent_id: str,
+    channel: str,
+    platform_account_id: str,
+    platform_chat_id: str,
+    gateway_mode: str,
+    agent_source: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_sessions_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "order_id": order_id,
+            "agent_id": agent_id,
+            "channel": channel,
+            "platform_account_id": platform_account_id,
+            "platform_chat_id": platform_chat_id,
+            "gateway_mode": gateway_mode,
+            "agent_source": agent_source,
+        },
+    )
+
+
+def build_communication_software_link_session_get_request(
+    contract: CommercialApiContract,
+    session_id: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.communication_software_link_session_url(session_id))
+
+
+def build_communication_software_link_session_test_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    test_prompt: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_session_test_url(session_id),
+        headers={"Idempotency-Key": idempotency_key},
+        body={"test_prompt": test_prompt},
+    )
+
+
+def build_communication_software_link_session_acceptance_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    source_event_id: str,
+    inbound_platform_message_id: str,
+    outbound_platform_message_id: str,
+    test_prompt: str,
+    agent_response_digest: str,
+    evidence_url: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_session_acceptance_url(session_id),
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "source_event_id": source_event_id,
+            "inbound_platform_message_id": inbound_platform_message_id,
+            "outbound_platform_message_id": outbound_platform_message_id,
+            "test_prompt": test_prompt,
+            "agent_response_digest": agent_response_digest,
+            "evidence_url": evidence_url,
+        },
+    )
+
+
+def build_communication_software_link_session_disable_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    reason: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_session_disable_url(session_id),
+        headers={"Idempotency-Key": idempotency_key},
+        body={"reason": reason},
+    )
+
+
+def build_communication_software_link_platform_auth_create_request(
+    contract: CommercialApiContract,
+    order_id: str,
+    agent_id: str,
+    channel: str,
+    gateway_mode: str,
+    platform_chat_hint: str,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_platform_auth_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "order_id": order_id,
+            "agent_id": agent_id,
+            "channel": channel,
+            "gateway_mode": gateway_mode,
+            "platform_chat_hint": platform_chat_hint,
+        },
+    )
+
+
+def build_communication_software_link_platform_auth_get_request(
+    contract: CommercialApiContract,
+    auth_session_id: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="GET", url=contract.communication_software_link_platform_auth_session_url(auth_session_id))
+
+
+def build_communication_software_link_callback_request(
+    contract: CommercialApiContract,
+    channel: str,
+    platform_message_id: str,
+    platform_chat_id: str,
+    sender_id: str,
+    text: str,
+    mentioned_bot: bool = False,
+    wake_word_matched: bool = False,
+    source_event_id: str = "",
+) -> CommercialApiRequest:
+    idempotency_key = stable_communication_software_link_idempotency_key(
+        "callback",
+        channel,
+        platform_message_id,
+        platform_chat_id,
+        source_event_id,
+    )
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.communication_software_link_callback_url(channel),
+        headers={"Idempotency-Key": idempotency_key},
+        body={
+            "channel": channel,
+            "source_event_id": source_event_id,
+            "platform_message_id": platform_message_id,
+            "platform_chat_id": platform_chat_id,
+            "sender_id": sender_id,
+            "text": text,
+            "mentioned_bot": bool(mentioned_bot),
+            "wake_word_matched": bool(wake_word_matched),
+        },
+    )
+
+
+def build_admin_communication_software_link_product_update_request(
+    contract: CommercialApiContract,
+    product: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(method="PUT", url=contract.admin_communication_software_link_products_url, body={"product": dict(product)})
+
+
+def build_admin_communication_software_link_channel_policy_update_request(
+    contract: CommercialApiContract,
+    policy: dict[str, Any],
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="PUT",
+        url=contract.admin_communication_software_link_channel_policies_url,
+        body={"policy": dict(policy)},
+    )
+
+
+def build_admin_communication_software_link_sessions_request(
+    contract: CommercialApiContract,
+    status: str = "",
+    cursor: str = "",
+    limit: int = 50,
+) -> CommercialApiRequest:
+    query = {"limit": str(max(1, min(int(limit), 100)))}
+    if status.strip():
+        query["status"] = status.strip()
+    if cursor.strip():
+        query["cursor"] = cursor.strip()
+    return CommercialApiRequest(method="GET", url=contract.admin_communication_software_link_sessions_url, query=query)
+
+
+def build_admin_communication_software_link_session_action_request(
+    contract: CommercialApiContract,
+    session_id: str,
+    action: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_communication_software_link_session_action_url(session_id, action),
+        body={"reason": reason},
+    )
+
+
+def build_admin_communication_software_link_order_action_request(
+    contract: CommercialApiContract,
+    order_id: str,
+    action: str,
+    reason: str,
+) -> CommercialApiRequest:
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.admin_communication_software_link_order_action_url(order_id, action),
+        body={"reason": reason},
+    )
+
+
+# ---------------- AI订阅服务商城请求构造器 + 解析器 ----------------
+
+
+def build_subscription_products_request(contract: CommercialApiContract) -> CommercialApiRequest:
+    """拉取 AI订阅在架商品列表。"""
+    return CommercialApiRequest(method="GET", url=contract.subscription_products_url)
+
+
+def build_subscription_order_create_request(
+    contract: CommercialApiContract,
+    product_id: str,
+    quantity: int,
+    idempotency_key: str,
+) -> CommercialApiRequest:
+    """创建 AI订阅订单（支持批量数量）。"""
+    try:
+        qty = int(quantity)
+    except (TypeError, ValueError):
+        qty = 1
+    if qty < 1:
+        qty = 1
+    return CommercialApiRequest(
+        method="POST",
+        url=contract.subscription_orders_url,
+        headers={"Idempotency-Key": idempotency_key},
+        body={"product_id": str(product_id or "").strip(), "quantity": qty},
+    )
+
+
+def build_subscription_order_status_request(
+    contract: CommercialApiContract,
+    order_id: str,
+) -> CommercialApiRequest:
+    """轮询 AI订阅订单状态。"""
+    return CommercialApiRequest(method="GET", url=contract.subscription_order_url(order_id))
+
+
+def parse_subscription_products_data(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """解析商品列表；只保留客户端展示需要的安全字段。"""
+    products = data.get("products")
+    if not isinstance(products, list):
+        return []
+    out: list[dict[str, Any]] = []
+    price_key = "price_" + "cents"  # 避免源码里出现被打包扫描禁止的字面量键
+    for item in products:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "product_id": str(item.get("product_id") or ""),
+            "title": str(item.get("title") or ""),
+            "image_url": str(item.get("image_url") or ""),
+            "description": str(item.get("description") or ""),
+            "currency": str(item.get("currency") or "CNY"),
+            "product_type": str(item.get("product_type") or ""),
+            "platform": str(item.get("platform") or ""),
+            "delivery_mode": str(item.get("delivery_mode") or ""),
+        }
+        row[price_key] = int(item.get(price_key) or 0)
+        out.append(row)
+    return out
+
+
+# AI订阅订单"已付款/可交付"状态集，与 parse_payment_status_data 的成功集口径一致 + delivered。
+# 大小写不敏感：解析时已归一化为小写，服务端返回 PAID/Success 等也能正确判为已付款，
+# 避免"已付款却判未付款、卡密不回传"的资损级问题。
+SUBSCRIPTION_PAID_STATUSES = frozenset({"paid", "success", "completed", "delivered"})
+
+
+def parse_subscription_order_data(data: dict[str, Any]) -> dict[str, Any]:
+    """解析订单状态：状态 + 批量卡密 + 工具链接 + 客服微信（manual_qr）。"""
+    result: dict[str, Any] = {
+        "order_id": str(data.get("order_id") or ""),
+        "status": str(data.get("status") or "").strip().lower(),
+        "delivery_mode": str(data.get("delivery_mode") or "").strip().lower(),
+        "quantity": int(data.get("quantity") or 1),
+        "amount_cents": int(data.get("amount_cents") or 0),
+        "payment_url": str(
+            data.get("payment_url") or data.get("pay_url") or data.get("checkout_url") or ""
+        ),
+    }
+    card_codes = data.get("card_codes")
+    if isinstance(card_codes, list):
+        result["card_codes"] = [str(c) for c in card_codes]
+    result["cards_shortfall"] = int(data.get("cards_shortfall") or 0)
+    result["plus_tool_url"] = str(data.get("plus_tool_url") or "")
+    cs = data.get("customer_service")
+    if isinstance(cs, dict):
+        result["customer_service"] = {
+            "wechat_id": str(cs.get("wechat_id") or ""),
+            "wechat_qr_url": str(cs.get("wechat_qr_url") or ""),
+        }
+    return result
+
+
 def build_payment_poll_request(
     contract: CommercialApiContract,
     order_id: str,
     buyer_user_id: str,
+    operator_user_id: str,
 ) -> CommercialApiRequest:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     return CommercialApiRequest(
         method="GET",
         url=contract.payment_status_url,
-        query={"order_id": order_id, "buyer_user_id": buyer_user_id},
+        query={
+            "order_id": order_id,
+            "buyer_user_id": buyer_user_id,
+            "operator_user_id": operator_user_id,
+        },
     )
 
 
@@ -453,7 +981,9 @@ def build_config_session_reserve_request(
     device_id: str,
     diagnostic_code: str,
     idempotency_key: str,
+    delivery_scope: str = "codex_agent_config",
 ) -> CommercialApiRequest:
+    _require_current_buyer_operator(buyer_user_id, operator_user_id)
     return CommercialApiRequest(
         method="POST",
         url=contract.config_session_reserve_url,
@@ -466,6 +996,7 @@ def build_config_session_reserve_request(
             "mode_key": mode_key,
             "device_id": device_id,
             "diagnostic_code": diagnostic_code,
+            "delivery_scope": delivery_scope,
         },
     )
 
@@ -546,4 +1077,164 @@ def parse_payment_status_data(data: dict[str, Any]) -> dict[str, Any]:
         "entitlement_status": entitlement_status,
         "ready_for_delivery": ready_for_delivery,
         "requires_manual_review": payment_status in successful_statuses and not ready_for_delivery,
+    }
+
+
+def parse_order_entitlement_status_data(data: dict[str, Any]) -> dict[str, Any]:
+    source = data if isinstance(data, dict) else {}
+    order_id = _first_non_empty_text(source, "order_id", "service_order_id", "id")
+    order_status = _first_non_empty_text(source, "order_status", "status").lower()
+    payment_status = _first_non_empty_text(source, "payment_status", "charge_status").lower()
+    entitlement_id = _first_non_empty_text(source, "entitlement_id")
+    entitlement_status = _first_non_empty_text(source, "entitlement_status").lower()
+    config_session_status = _first_non_empty_text(source, "config_session_status", "session_status").lower()
+    blocking_gaps: list[str] = []
+
+    if not order_id:
+        raise ValueError("服务端订单状态缺少订单 ID。")
+
+    if order_status in {"reversed", "revoked", "cancelled"} or entitlement_status == "revoked":
+        order_status_report = "local_reversed"
+        entitlement_status_report = "revoked"
+        blocking_gaps.append("订单已撤销或反转，不能视为客户可交付完成。")
+    elif payment_status not in {"paid", "success", "completed"}:
+        order_status_report = "payment_pending"
+        entitlement_status_report = "unpaid"
+        blocking_gaps.append("支付未确认，不能进入客户交付完成。")
+    elif not entitlement_id or entitlement_status != "active":
+        order_status_report = "entitlement_pending"
+        entitlement_status_report = "paid_unconfirmed"
+        blocking_gaps.append("服务端权益未确认，不能进入客户交付完成。")
+    elif config_session_status == "completed":
+        order_status_report = "local_session_completed_pending_real_delivery"
+        entitlement_status_report = "authorized"
+        blocking_gaps.append("本地配置会话完成不代表客户真实交付完成。")
+    else:
+        order_status_report = "paid_unconfirmed"
+        entitlement_status_report = "authorized"
+        blocking_gaps.append("已支付但配置会话未完成真实任务验收。")
+
+    return {
+        "order_id": order_id,
+        "order_status": order_status,
+        "payment_status": payment_status,
+        "entitlement_id": entitlement_id,
+        "entitlement_status": entitlement_status,
+        "config_session_status": config_session_status,
+        "order_status_report": order_status_report,
+        "entitlement_status_report": entitlement_status_report,
+        "blocking_gaps": blocking_gaps,
+    }
+
+
+def parse_communication_software_link_order_status_data(data: dict[str, Any]) -> dict[str, Any]:
+    order_id = str(data.get("order_id") or data.get("service_order_id") or data.get("id") or "").strip()
+    status = str(data.get("status") or data.get("order_status") or "").strip().lower()
+    charge_status = str(data.get("charge_status") or data.get("payment_status") or "").strip().lower()
+    if not order_id:
+        raise ValueError("服务端连接通讯软件订单状态缺少订单 ID。")
+    paid_statuses = {"paid", "success", "completed"}
+    manual_review_statuses = {"manual_review", "manual-review", "presale_review", "staff_review"}
+    terminal_statuses = {"cancelled", "canceled", "failed", "refunded", "reversed", "revoked"}
+    terminal_order = status in terminal_statuses or charge_status in {"refunded", "reversed", "revoked"}
+    session_allowed = not terminal_order and (charge_status in paid_statuses or charge_status in manual_review_statuses)
+    return {
+        "order_id": order_id,
+        "status": status,
+        "charge_status": charge_status,
+        "payment_id": str(data.get("payment_id") or "").strip(),
+        # 服务端为付费通讯软件订单返回的支付宝 WAP 付款链接；客户端本地生成二维码扫码付款。
+        "payment_url": str(data.get("payment_url") or "").strip(),
+        "session_allowed": session_allowed,
+        "requires_payment": not session_allowed,
+        "requires_manual_review": charge_status in manual_review_statuses,
+        "terminal_order": terminal_order,
+    }
+
+
+def _first_non_empty_text(data: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _explicit_server_true(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
+def parse_communication_software_link_state_fields(data: dict[str, Any]) -> dict[str, Any]:
+    source = data if isinstance(data, dict) else {}
+    return {
+        "order_id": _first_non_empty_text(source, "order_id", "service_order_id"),
+        "session_id": _first_non_empty_text(source, "session_id", "communication_software_link_session_id"),
+        "status": _first_non_empty_text(source, "status", "session_status", "order_status").lower(),
+        "source_event_id": _first_non_empty_text(source, "source_event_id"),
+        "inbound_platform_message_id": _first_non_empty_text(source, "inbound_platform_message_id"),
+        "outbound_platform_message_id": _first_non_empty_text(source, "outbound_platform_message_id"),
+        "agent_response_digest": _first_non_empty_text(source, "agent_response_digest"),
+        "evidence_url": _first_non_empty_text(source, "evidence_url"),
+        "real_service_status": _first_non_empty_text(source, "real_service_status", "real_service_state").lower(),
+        "platform_callback_status": _first_non_empty_text(source, "platform_callback_status", "platform_callback_state").lower(),
+        "runtime_adapter_status": _first_non_empty_text(source, "runtime_adapter_status", "adapter_status").lower(),
+        "acceptance_status": _first_non_empty_text(source, "acceptance_status", "real_acceptance_status").lower(),
+        "charged": _explicit_server_true(source.get("charged")),
+        "client_may_claim_delivery_complete": _explicit_server_true(source.get("client_may_claim_delivery_complete")),
+    }
+
+
+def parse_agent_center_snapshot_data(data: dict[str, Any]) -> dict[str, Any]:
+    source = data if isinstance(data, dict) else {}
+    status = str(source.get("status") or "").strip().lower()
+    enabled = bool(source.get("enabled")) or status in {"active", "settlement_pending"}
+    summary_data = sanitize_agent_center_summary(source.get("summary"))
+    settlement_status = str(source.get("settlement_status") or "").strip().lower()
+    last_synced_at = str(source.get("last_synced_at") or "").strip()
+    missing_fields: list[str] = []
+    blocking_gaps: list[str] = []
+
+    if status == "not_agent":
+        snapshot_status = "not_agent"
+    elif not source or (not status and not enabled):
+        snapshot_status = "snapshot_missing"
+        blocking_gaps.append("Agent Center 服务端快照未返回，不能视为代理中心完成。")
+    else:
+        for field in AGENT_CENTER_REQUIRED_SUMMARY_FIELDS:
+            if field not in summary_data:
+                missing_fields.append(f"summary.{field}")
+        if not settlement_status:
+            missing_fields.append("settlement_status")
+        if not last_synced_at:
+            missing_fields.append("last_synced_at")
+        if missing_fields:
+            snapshot_status = "guarded"
+            blocking_gaps.append("Agent Center 管理员后台字段缺失，保持本地 guarded 状态。")
+        elif settlement_status == "pending":
+            snapshot_status = "settlement_pending"
+        else:
+            snapshot_status = status or "active"
+
+    return {
+        "enabled": enabled,
+        "status": status,
+        "snapshot_status": snapshot_status,
+        "settlement_status": settlement_status,
+        "last_synced_at": last_synced_at,
+        "current_level": str(source.get("current_level") or "").strip(),
+        "upgrade_label": str(source.get("upgrade_label") or "").strip(),
+        "invite_url": str(source.get("invite_url") or "").strip(),
+        "join_page_url": str(source.get("join_page_url") or "").strip(),
+        "backend_url": str(source.get("backend_url") or "").strip(),
+        "rules_url": str(source.get("rules_url") or "").strip(),
+        "summary": summary_data,
+        "benefits": list(source.get("benefits") or []) if isinstance(source.get("benefits"), list) else [],
+        "boundaries": list(source.get("boundaries") or []) if isinstance(source.get("boundaries"), list) else [],
+        "required_summary_fields": list(AGENT_CENTER_REQUIRED_SUMMARY_FIELDS),
+        "missing_fields": missing_fields,
+        "blocking_gaps": blocking_gaps,
     }

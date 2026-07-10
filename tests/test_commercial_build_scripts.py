@@ -72,6 +72,16 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertIn("Windows zip validation failed", text)
         self.assertIn("Move-Item -LiteralPath $tempZip -Destination $zip -Force", text)
 
+    def test_build_scripts_package_webview_ui_shell(self) -> None:
+        windows = (ROOT / "scripts" / "build-windows-exe.ps1").read_text(encoding="utf-8")
+        mac = (ROOT / "scripts" / "build-mac-app.command").read_text(encoding="utf-8")
+
+        self.assertTrue((ROOT / "src" / "ui" / "index.html").exists())
+        self.assertIn("src\\ui", windows)
+        self.assertIn(";ui", windows)
+        self.assertIn("src/ui:ui", mac)
+        self.assertIn('cp -R "$ROOT/src/ui"', mac)
+
     def test_generated_public_key_module_is_not_tracked(self) -> None:
         text = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
@@ -85,7 +95,21 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertIn("commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope windows --strict", text)
         self.assertIn("package_scope: mac-intel", text)
         self.assertIn("package_scope: mac-apple-silicon", text)
-        self.assertIn("commercial_release_acceptance.py --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict", text)
+        self.assertIn("commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict", text)
+        self.assertIn("Verify public release gate", text)
+        self.assertIn("Public Release upload is blocked because commercial release acceptance", text)
+
+    def test_github_workflow_uses_current_customer_package_names_only(self) -> None:
+        text = (ROOT / ".github" / "workflows" / "build-mac-release.yml").read_text(encoding="utf-8")
+        old_english_prefix = "".join(["AI", ".", "Agent"])
+        old_chinese_tool_name = "".join(["胖虎AI", "多", "Agent", "一键", "部署", "工具"])
+        old_spaced_tool_name = "".join(["多", " Agent", " 一键", "配置", "工具"])
+
+        self.assertIn("胖虎AI客户端-Windows.zip", text)
+        self.assertIn("胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip", text)
+        self.assertNotIn(old_english_prefix, text)
+        self.assertNotIn(old_chinese_tool_name, text)
+        self.assertNotIn(old_spaced_tool_name, text)
 
     def test_mac_workflow_revalidates_final_zip_after_notarization_repack(self) -> None:
         text = (ROOT / ".github" / "workflows" / "build-mac-release.yml").read_text(encoding="utf-8")
@@ -96,7 +120,7 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertGreater(mac_job.index(final_acceptance), mac_job.index("Notarize app"))
         self.assertLess(mac_job.index(final_acceptance), mac_job.index("Prepare release asset"))
         self.assertGreaterEqual(
-            mac_job.count("python scripts/commercial_release_acceptance.py --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict"),
+            mac_job.count("python scripts/commercial_release_acceptance.py --with-exe-self-test --deep-scan --json --artifact-scope ${{ matrix.package_scope }} --strict"),
             2,
         )
 
@@ -110,9 +134,9 @@ class CommercialBuildScriptTests(unittest.TestCase):
         self.assertGreater(mac_job.index(final_zip_test), mac_job.index("Notarize app"))
         self.assertLess(mac_job.index(final_zip_test), mac_job.index(final_acceptance))
         self.assertLess(mac_job.index(final_zip_test), mac_job.index("Prepare release asset"))
-        self.assertIn('ZIP_PATH="release/胖虎AI多Agent一键部署工具-Mac-${{ matrix.package_suffix }}.zip"', mac_job)
+        self.assertIn('ZIP_PATH="release/胖虎AI客户端-Mac-${{ matrix.package_suffix }}.zip"', mac_job)
         self.assertIn("/usr/bin/ditto -x -k \"$ZIP_PATH\" \"$FINAL_ZIP_TEST_DIR\"", mac_job)
-        self.assertIn("\"$FINAL_ZIP_TEST_DIR/胖虎AI多Agent一键部署工具.app/Contents/MacOS/胖虎AI多Agent一键部署工具\" --self-test", mac_job)
+        self.assertIn("\"$FINAL_ZIP_TEST_DIR/胖虎AI客户端.app/Contents/MacOS/胖虎AI客户端\" --self-test", mac_job)
 
 
 if __name__ == "__main__":

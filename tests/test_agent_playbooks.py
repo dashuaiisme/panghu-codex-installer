@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-import panghu_codex_installer as installer  # noqa: E402
+import panghu_ai_client as installer  # noqa: E402
 
 
 class AgentPlaybookTests(unittest.TestCase):
@@ -20,24 +20,26 @@ class AgentPlaybookTests(unittest.TestCase):
             {"codex", "claude_code", "hermes", "openclaw", "gemini_agy"},
         )
 
-    def test_every_agent_has_cli_and_client_modes_marked_configurable(self) -> None:
+    def test_agent_modes_follow_official_client_availability(self) -> None:
+        # 用户决策（2026-07-03 修正版）：官方有客户端的做客户端交付；没有的只做 CLI
         for agent in installer.AGENTS:
             modes = {mode.id: mode for mode in agent.modes}
             self.assertIn("cli", modes, agent.id)
-            self.assertIn("client", modes, agent.id)
-            if agent.id == "gemini_agy":
-                self.assertFalse(modes["cli"].supports_config, agent.id)
-                self.assertFalse(modes["client"].supports_config, agent.id)
-            else:
-                self.assertTrue(modes["cli"].supports_config, agent.id)
+            self.assertTrue(modes["cli"].supports_config, agent.id)
+            if agent.id in installer.AGENTS_WITH_OFFICIAL_CLIENT:
+                self.assertIn("client", modes, agent.id)
                 self.assertTrue(modes["client"].supports_config, agent.id)
+            else:
+                self.assertNotIn("client", modes, agent.id)
+        self.assertEqual(installer.AGENTS_WITH_OFFICIAL_CLIENT, {"codex", "claude_code", "gemini_agy"})
+        self.assertEqual(installer.CLI_ONLY_DELIVERY_AGENTS, {"openclaw", "hermes"})
 
     def test_non_codex_agents_have_complete_direct_conversation_playbooks(self) -> None:
         for agent_id in ("claude_code", "openclaw", "hermes"):
             playbook = installer.agent_delivery_playbook(agent_id)
             self.assertEqual(playbook.agent_id, agent_id)
             self.assertTrue(playbook.cli_supported)
-            self.assertTrue(playbook.client_supported)
+            self.assertEqual(playbook.client_supported, agent_id in installer.AGENTS_WITH_OFFICIAL_CLIENT)
             self.assertTrue(playbook.skip_third_party_channels)
             self.assertIn("对话", playbook.customer_goal)
             expected_base = "https://aitokenapi.cc" if agent_id == "claude_code" else "https://aitokenapi.cc/v1"
@@ -64,47 +66,144 @@ class AgentPlaybookTests(unittest.TestCase):
                     agent_id=agent.id,
                     mode_id=mode,
                     api_key="sk-test-secret-123456",
-                    model="gpt-5.4",
+                    model="gpt-5.5",
                 )
                 text = "\n".join(plan)
                 self.assertIn(agent.id, text)
                 if agent.id == "gemini_agy":
-                    self.assertIn("配置待开发", text)
-                    self.assertIn("Google 账号自行登录", text)
+                    self.assertIn("https://aitokenapi.cc", text)
+                    self.assertIn("gpt-5.5", text)
+                    self.assertIn("第三方通道默认跳过", text)
+                    self.assertIn("最小对话验证", text)
                     self.assertNotIn("sk-test-secret-123456", text)
+                elif agent.id == "claude_code":
+                    # ClaudeCode 走 ANTHROPIC_BASE_URL（不带 /v1）；plan 不得对它硬写 /v1。
+                    self.assertIn("https://aitokenapi.cc", text)
+                    self.assertNotIn("https://aitokenapi.cc/v1", text)
+                    self.assertIn("gpt-5.5", text)
+                    self.assertIn("第三方通道默认跳过", text)
+                    self.assertIn("最小对话验证", text)
                 else:
                     self.assertIn("https://aitokenapi.cc/v1", text)
-                    self.assertIn("gpt-5.4", text)
+                    self.assertIn("gpt-5.5", text)
                     self.assertIn("第三方通道默认跳过", text)
                     self.assertIn("最小对话验证", text)
                 self.assertNotIn("QQ", text)
                 self.assertNotIn("微信", text)
                 self.assertNotIn("Telegram", text)
 
-    def test_gemini_agy_is_install_only_and_not_complete_delivery(self) -> None:
+    def test_gemini_agy_full_config_chain_targets_panghu_gateway(self) -> None:
         gemini = next(agent for agent in installer.AGENTS if agent.id == "gemini_agy")
 
         self.assertEqual(gemini.verify_command, ("agy", "--version"))
-        self.assertFalse(installer.apply_agent_config(gemini, "cli", "sk-test-secret-123456", "gpt-5.4", lambda _msg: None))
-        self.assertIn("配置待开发", installer.agent_dialogue_probe_command_text(gemini, "gpt-5.4"))
-        ok, message = installer.run_agent_dialogue_probe(gemini, "cli", "gpt-5.4")
+
+        env_text = installer.build_gemini_agy_env("", "sk-test-secret-123456", "gpt-5.5")
+        self.assertIn(f"GOOGLE_GEMINI_BASE_URL={installer.DEFAULT_BASE_URL}", env_text)
+        self.assertIn("GEMINI_API_KEY=sk-test-secret-123456", env_text)
+        self.assertIn("GEMINI_MODEL=gpt-5.5", env_text)
+
+        merged = installer.build_gemini_agy_env(
+            "# user comment\nOTHER_TOOL_FLAG=1\nGEMINI_API_KEY=old-key\n",
+            "sk-test-secret-123456",
+            "gpt-5.5",
+        )
+        self.assertIn("# user comment", merged)
+        self.assertIn("OTHER_TOOL_FLAG=1", merged)
+        self.assertIn("GEMINI_API_KEY=sk-test-secret-123456", merged)
+        self.assertNotIn("old-key", merged)
+
+        command = installer.agent_dialogue_probe_command("gemini_agy", "gpt-5.5")
+        self.assertEqual(command[0], "agy")
+        self.assertIn("gpt-5.5", command)
+        self.assertIn(installer.AGENT_DIALOGUE_PROBE_PROMPT, command)
+
+        command_text = installer.agent_dialogue_probe_command_text(gemini, "gpt-5.5")
+        self.assertIn("agy", command_text)
+        self.assertNotIn("配置待开发", command_text)
+
+    def test_client_scope_official_client_policy(self) -> None:
+        # 用户决策（修正版）：官方有客户端的做真客户端交付；没有的 client scope 不适用
+        hermes = next(agent for agent in installer.AGENTS if agent.id == "hermes")
+        ok, message = installer.verify_agent_client_scope(hermes, "client")
         self.assertFalse(ok)
-        self.assertIn("配置待开发", message)
+        self.assertIn("只销售 CLI 交付", message)
+
+        claude = next(agent for agent in installer.AGENTS if agent.id == "claude_code")
+        with patch.object(installer, "agent_client_status", return_value=(False, "未在常见安装位置检测到")):
+            ok, message = installer.verify_agent_client_scope(claude, "client")
+        self.assertFalse(ok)
+        self.assertIn("未检测到", message)
+
+        with patch.object(installer, "agent_client_status", return_value=(True, "Claude Desktop：C:/fake/claude.exe")):
+            ok, message = installer.verify_agent_client_scope(claude, "client")
+        self.assertTrue(ok)
+        self.assertIn("验收矩阵", message)
+
+        gemini = next(agent for agent in installer.AGENTS if agent.id == "gemini_agy")
+        with patch.object(installer, "agent_client_status", return_value=(True, "Antigravity：/Applications/Antigravity.app")):
+            ok, _message = installer.verify_agent_client_scope(gemini, "client")
+        self.assertTrue(ok)
+
+    def test_claude_code_install_prefers_official_native_quickstart_entry(self) -> None:
+        calls = []
+        logs = []
+
+        def fake_run(command, timeout=900):
+            calls.append(command)
+            return True, "installed"
+
+        with patch.object(installer.platform, "system", return_value="Windows"), patch.object(installer, "run_command", side_effect=fake_run):
+            self.assertTrue(installer.install_claude_code_cli(logs.append))
+
+        self.assertEqual(calls[0][0], "powershell")
+        self.assertIn("https://claude.ai/install.ps1", " ".join(calls[0]))
+        self.assertTrue(any("官方 Quickstart 原生安装入口" in line for line in logs))
+
+    def test_claude_code_install_falls_back_to_official_npm_package(self) -> None:
+        calls = []
+        logs = []
+
+        def fake_run(command, timeout=900):
+            calls.append(command)
+            if "claude.ai/install" in " ".join(command):
+                return False, "native failed"
+            return True, "npm installed"
+
+        with patch.object(installer.platform, "system", return_value="Windows"), \
+             patch.object(installer, "run_command", side_effect=fake_run), \
+             patch.object(installer.shutil, "which", return_value="npm.exe"):
+            self.assertTrue(installer.install_claude_code_cli(logs.append))
+
+        self.assertEqual(calls[1], ["npm", "install", "-g", "@anthropic-ai/claude-code"])
+        self.assertTrue(any("官方 npm 包替代入口" in line for line in logs))
+
+    def test_claude_code_install_opens_official_docs_when_auto_install_fails(self) -> None:
+        opened = []
+        logs = []
+
+        with patch.object(installer.platform, "system", return_value="Windows"), \
+             patch.object(installer, "run_command", return_value=(False, "failed")), \
+             patch.object(installer.shutil, "which", return_value=None), \
+             patch.object(installer, "open_url", side_effect=lambda url: opened.append(url)):
+            self.assertFalse(installer.install_claude_code_cli(logs.append))
+
+        self.assertEqual(opened, [installer.CLAUDE_CODE_DOCS_URL])
+        self.assertTrue(any("官方 Quickstart" in line for line in logs))
 
     def test_claude_code_config_writes_official_settings_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
             logs = []
             with patch.object(installer.Path, "home", return_value=home):
-                self.assertTrue(installer.install_claude_code_config("sk-test-secret-123456", "gpt-5.4", logs.append))
+                self.assertTrue(installer.install_claude_code_config("sk-test-secret-123456", "gpt-5.5", logs.append))
 
             settings_path = home / ".claude" / "settings.json"
             text = settings_path.read_text(encoding="utf-8")
             self.assertIn('"ANTHROPIC_BASE_URL": "https://aitokenapi.cc"', text)
             self.assertIn('"ANTHROPIC_AUTH_TOKEN": "sk-test-secret-123456"', text)
             self.assertIn('"ANTHROPIC_API_KEY": "sk-test-secret-123456"', text)
-            self.assertIn('"ANTHROPIC_MODEL": "gpt-5.4"', text)
-            self.assertIn('"ANTHROPIC_CUSTOM_MODEL_OPTION": "gpt-5.4"', text)
+            self.assertIn('"ANTHROPIC_MODEL": "gpt-5.5"', text)
+            self.assertIn('"ANTHROPIC_CUSTOM_MODEL_OPTION": "gpt-5.5"', text)
             self.assertIn("已写入 Claude Code/CC 设置", "\n".join(logs))
 
     def test_claude_code_config_can_use_isolated_settings_path(self) -> None:
@@ -112,17 +211,17 @@ class AgentPlaybookTests(unittest.TestCase):
             settings_path = Path(temp) / "settings.json"
             logs = []
             with patch.dict(installer.os.environ, {"CLAUDE_CODE_SETTINGS_PATH": str(settings_path)}):
-                self.assertTrue(installer.install_claude_code_config("sk-test-secret-123456", "gpt-5.4", logs.append))
+                self.assertTrue(installer.install_claude_code_config("sk-test-secret-123456", "gpt-5.5", logs.append))
                 self.assertEqual(installer.claude_code_settings_path(), settings_path)
                 self.assertEqual(
-                    installer.agent_dialogue_probe_command("claude_code", "gpt-5.4"),
+                    installer.agent_dialogue_probe_command("claude_code", "gpt-5.5"),
                     [
                         "claude",
                         "--settings",
                         str(settings_path),
                         "--bare",
                         "--model",
-                        "gpt-5.4",
+                        "gpt-5.5",
                         "-p",
                         installer.AGENT_DIALOGUE_PROBE_PROMPT,
                     ],
@@ -133,15 +232,15 @@ class AgentPlaybookTests(unittest.TestCase):
             config_path = Path(temp) / "openclaw.json"
             logs = []
             with patch.object(installer, "openclaw_config_path", return_value=config_path):
-                self.assertTrue(installer.install_openclaw_config("sk-test-secret-123456", "gpt-5.4", logs.append))
+                self.assertTrue(installer.install_openclaw_config("sk-test-secret-123456", "gpt-5.5", logs.append))
 
             text = config_path.read_text(encoding="utf-8")
             self.assertIn('"baseUrl": "https://aitokenapi.cc/v1"', text)
             self.assertIn('"api": "openai-completions"', text)
             self.assertIn('"apiKey": "sk-test-secret-123456"', text)
-            self.assertIn('"primary": "panghuai/gpt-5.4"', text)
+            self.assertIn('"primary": "panghuai/gpt-5.5"', text)
             self.assertIn('"models": {', text)
-            self.assertIn('"panghuai/gpt-5.4": {}', text)
+            self.assertIn('"panghuai/gpt-5.5": {}', text)
             self.assertNotIn("third_party_channels", text)
             self.assertNotIn("QQ", text)
             self.assertNotIn("微信", text)
@@ -154,7 +253,7 @@ class AgentPlaybookTests(unittest.TestCase):
             with patch.object(installer, "hermes_config_path", return_value=root / "config.yaml"), patch.object(
                 installer, "hermes_env_path", return_value=root / ".env"
             ), patch.object(installer.shutil, "which", return_value=None):
-                self.assertTrue(installer.install_hermes_config("sk-test-secret-123456", "gpt-5.4", logs.append))
+                self.assertTrue(installer.install_hermes_config("sk-test-secret-123456", "gpt-5.5", logs.append))
 
             config_text = (root / "config.yaml").read_text(encoding="utf-8")
             env_text = (root / ".env").read_text(encoding="utf-8")
@@ -163,38 +262,54 @@ class AgentPlaybookTests(unittest.TestCase):
             self.assertIn("base_url: https://aitokenapi.cc/v1", config_text)
             self.assertIn("key_env: PANGHUAI_API_KEY", config_text)
             self.assertIn("provider: custom:panghuai", config_text)
-            self.assertIn('default: "gpt-5.4"', config_text)
+            self.assertIn('default: "gpt-5.5"', config_text)
             self.assertIn("api_mode: chat_completions", config_text)
             self.assertNotIn("third_party_default", config_text)
             self.assertEqual(env_text, "PANGHUAI_API_KEY=sk-test-secret-123456\n")
 
+    def test_hermes_install_uses_official_native_guide_windows_script(self) -> None:
+        calls = []
+
+        def fake_run(command, timeout=900):
+            calls.append(command)
+            return True, "installed"
+
+        with patch.object(installer.platform, "system", return_value="Windows"), patch.object(installer, "run_command", side_effect=fake_run):
+            self.assertTrue(installer.install_hermes_cli(lambda _line: None))
+
+        self.assertEqual(calls[0][0], "powershell")
+        self.assertIn(
+            "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1",
+            " ".join(calls[0]),
+        )
+
     def test_non_codex_dialogue_probe_commands_are_real_cli_checks(self) -> None:
         self.assertEqual(
-            installer.agent_dialogue_probe_command("claude_code", "gpt-5.4"),
-            ["claude", "--model", "gpt-5.4", "-p", installer.AGENT_DIALOGUE_PROBE_PROMPT],
+            installer.agent_dialogue_probe_command("claude_code", "gpt-5.5"),
+            ["claude", "--model", "gpt-5.5", "-p", installer.AGENT_DIALOGUE_PROBE_PROMPT],
         )
         self.assertEqual(
-            installer.agent_dialogue_probe_command("openclaw", "gpt-5.4"),
+            installer.agent_dialogue_probe_command("openclaw", "gpt-5.5"),
             [
                 "openclaw",
                 "infer",
                 "model",
                 "run",
                 "--model",
-                "panghuai/gpt-5.4",
+                "panghuai/gpt-5.5",
                 "--prompt",
                 installer.AGENT_DIALOGUE_PROBE_PROMPT,
                 "--json",
             ],
         )
         self.assertEqual(
-            installer.agent_dialogue_probe_command("hermes", "gpt-5.4"),
+            installer.agent_dialogue_probe_command("hermes", "gpt-5.5"),
             [
                 "hermes",
                 "--provider",
                 "custom:panghuai",
                 "--model",
-                "gpt-5.4",
+                "gpt-5.5",
                 "-z",
                 installer.AGENT_DIALOGUE_PROBE_PROMPT,
             ],
@@ -204,9 +319,9 @@ class AgentPlaybookTests(unittest.TestCase):
         openclaw = next(agent for agent in installer.AGENTS if agent.id == "openclaw")
         codex = next(agent for agent in installer.AGENTS if agent.id == "codex")
 
-        self.assertIn("openclaw infer model run", installer.agent_dialogue_probe_command_text(openclaw, "gpt-5.4"))
-        self.assertIn("--prompt", installer.agent_dialogue_probe_command_text(openclaw, "gpt-5.4"))
-        self.assertIn("胖虎AI /v1/chat/completions", installer.agent_dialogue_probe_command_text(codex, "gpt-5.4"))
+        self.assertIn("openclaw infer model run", installer.agent_dialogue_probe_command_text(openclaw, "gpt-5.5"))
+        self.assertIn("--prompt", installer.agent_dialogue_probe_command_text(openclaw, "gpt-5.5"))
+        self.assertIn("胖虎AI /v1/chat/completions", installer.agent_dialogue_probe_command_text(codex, "gpt-5.5"))
 
     def test_hermes_error_summary_reads_request_dump_without_leaking_key(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -276,7 +391,7 @@ class AgentPlaybookTests(unittest.TestCase):
         self.assertIn("Codex(CLI)：完整交付", matrix)
         self.assertIn("Hermes(客户端)：未完整交付", matrix)
         self.assertIn("最小对话：失败", matrix)
-        self.assertIn("复验命令：hermes --provider custom:panghuai --model gpt-5.4 -z", matrix)
+        self.assertIn("复验命令：hermes --provider custom:panghuai --model gpt-5.5 -z", matrix)
         self.assertIn("诊断码：PH-CFG-MATRIX", matrix)
 
 

@@ -14,5 +14,5 @@ if errorlevel 1 (
     if errorlevel 1 exit /b 1
 )
 
-".venv\Scripts\python.exe" src\panghu_codex_installer.py
+".venv\Scripts\python.exe" src\panghu_ai_client.py
 endlocal

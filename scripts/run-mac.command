@@ -10,4 +10,4 @@ if [ $? -ne 0 ]; then
   .venv/bin/python -m pip install -r requirements-build.txt || exit 1
 fi
 
-.venv/bin/python src/panghu_codex_installer.py
+.venv/bin/python src/panghu_ai_client.py

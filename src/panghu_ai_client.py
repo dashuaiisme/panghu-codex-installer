@@ -1,6 +1,9 @@
+import base64
 import http.cookiejar
 import hashlib
+import io
 import json
+from datetime import datetime
 import os
 import platform
 import re
@@ -10,6 +13,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import queue
 import threading
 import time
 import tkinter as tk
@@ -20,25 +24,53 @@ from enum import Enum
 from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse, urlsplit, urlunsplit
 from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener, urlopen
 
 from commercial_api import (
     CommercialApiContract,
+    build_agent_apply_request,
+    build_agent_center_request,
+    build_agent_commissions_request,
+    build_agent_downstreams_request,
+    build_agent_public_offering_request,
+    build_agent_settlement_request,
     build_api_key_owner_verify_request,
     build_config_session_complete_request,
     build_config_session_fail_request,
     build_config_session_reserve_request,
     build_entitlement_query_request,
+    build_communication_software_link_offering_request,
+    build_communication_software_link_order_create_request,
+    build_communication_software_link_order_get_request,
+    build_communication_software_link_session_acceptance_request,
+    build_communication_software_link_session_create_request,
+    build_communication_software_link_session_disable_request,
+    build_communication_software_link_session_get_request,
+    build_communication_software_link_platform_auth_create_request,
+    build_communication_software_link_platform_auth_get_request,
+    build_communication_software_link_session_test_request,
     build_order_create_request,
     build_payment_poll_request,
+    build_referral_bind_request,
     execute_commercial_api_request,
     mask_business_identifier,
     parse_config_session_reserve_data,
+    parse_agent_center_snapshot_data,
+    parse_communication_software_link_order_status_data,
+    parse_communication_software_link_state_fields,
     parse_payment_status_data,
+    build_subscription_products_request,
+    build_subscription_order_create_request,
+    build_subscription_order_status_request,
+    parse_subscription_products_data,
+    parse_subscription_order_data,
+    SUBSCRIPTION_PAID_STATUSES,
     sanitize_commercial_text,
     stable_config_reserve_idempotency_key,
     stable_config_session_idempotency_key,
+    stable_agent_business_idempotency_key,
+    stable_communication_software_link_idempotency_key,
     stable_order_idempotency_key,
     with_operator_auth,
 )
@@ -64,6 +96,8 @@ from commercial_core import (
     build_node_status_rows,
     build_persistent_profile_payload,
     build_real_task_diagnostic_summary,
+    build_value_added_service_catalog,
+    build_value_added_service_summary_lines,
     api_key_owner_gate,
     commercial_config_gate,
     commercial_deployment_blockers,
@@ -74,6 +108,7 @@ from commercial_core import (
     find_orderable_product,
     validate_commercial_manifest_trust,
     verify_real_task_evidence,
+    verify_client_scope_delivery_evidence,
 )
 
 try:
@@ -87,20 +122,26 @@ except Exception:  # pragma: no cover - optional dependency for embedded custome
     webview = None
 
 
-APP_NAME = "胖虎AI多Agent一键部署工具"
-APP_VERSION = "1.0.15"
-HTTP_USER_AGENT = f"PanghuAI-Agent-Deployer/{APP_VERSION}"
-DEFAULT_BASE_URL = "https://aitokenapi.cc"
-DEFAULT_MODEL = "gpt-5.4"
-CODEX_PROVIDER_NAME = "panghuAI"
-CODEX_BASE_URL = "https://aitokenapi.cc/v1"
-CLAUDE_CODE_BASE_URL = DEFAULT_BASE_URL
-TEMP_OPENAI_ACCESS_SECONDS = 600
-TEMP_OPENAI_ACCESS_MAX_SECONDS = 600
-AGENT_DIALOGUE_PROBE_PROMPT = "请用一句中文回复：胖虎AI配置验证成功"
+
+# 常量已抽出到 panghu_constants.py（拆分大文件，行为不变）
+from panghu_constants import *  # noqa: F401,F403
+from panghu_agents import *  # noqa: F401,F403 (数据模型/Agent 目录已抽出)
+from panghu_paths import *  # noqa: F401,F403 (路径助手已抽出)
+
+def empty_flow_logs() -> dict[int, list]:
+    return {idx: [] for idx, _title, _subtitle in FLOW_STEPS}
 
 
 def load_commercial_manifest_public_key() -> str:
+    # 本地联调开关（仅开发用）：src/commercial_manifest_public_key.py 是构建
+    # 注入的生成文件，会遮蔽 PYTHONPATH；联调时用环境变量显式指定测试公钥
+    # PEM 文件。生产构建不设置此变量，行为不变。
+    dev_override_file = os.environ.get("PANGHU_DEV_MANIFEST_PUBLIC_KEY_FILE", "").strip()
+    if dev_override_file:
+        try:
+            return Path(dev_override_file).read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
     try:
         from commercial_manifest_public_key import PUBLIC_KEY_PEM
     except Exception:
@@ -109,470 +150,29 @@ def load_commercial_manifest_public_key() -> str:
 
 
 COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM = load_commercial_manifest_public_key()
-GITHUB_RELEASE_API = "https://api.github.com/repos/dashuaiisme/panghu-codex-installer/releases/latest"
-PUBLIC_UPDATE_MANIFEST_URL = f"{DEFAULT_BASE_URL}/deployer/latest.json"
-WINDOWS_RELEASE_DIR_NAME = "胖虎AI多Agent一键部署工具"
-WINDOWS_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Windows.zip"
-WINDOWS_RELEASE_ASSET_ALIASES = (WINDOWS_RELEASE_ASSET_NAME, "AI.Agent.-Windows.zip")
-MAC_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac.zip"
-MAC_RELEASE_ASSET_ALIASES = (MAC_RELEASE_ASSET_NAME, "AI.Agent.-Mac.zip")
-MAC_APPLE_SILICON_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-AppleSilicon.zip"
-MAC_INTEL_RELEASE_ASSET_NAME = f"{WINDOWS_RELEASE_DIR_NAME}-Mac-Intel.zip"
-MAC_APPLE_SILICON_RELEASE_ASSET_ALIASES = (
-    MAC_APPLE_SILICON_RELEASE_ASSET_NAME,
-    "AI.Agent.-Mac-AppleSilicon.zip",
-    MAC_RELEASE_ASSET_NAME,
-    "AI.Agent.-Mac.zip",
-)
-MAC_INTEL_RELEASE_ASSET_ALIASES = (MAC_INTEL_RELEASE_ASSET_NAME, "AI.Agent.-Mac-Intel.zip")
-LOGIN_URL = f"{DEFAULT_BASE_URL}/api/user/login?turnstile="
-DEPLOYER_ACTIVATE_URL = f"{DEFAULT_BASE_URL}/api/deployer/activate"
-DEPLOYER_MANIFEST_URL = f"{DEFAULT_BASE_URL}/api/deployer/manifest"
-REGISTER_URL = f"{DEFAULT_BASE_URL}/register"
-PANGHU_HOME_URL = DEFAULT_BASE_URL
-KEY_CREATE_URL = f"{DEFAULT_BASE_URL}/console/token"
-CONSOLE_URL = f"{DEFAULT_BASE_URL}/console"
-BUY_URL = f"{DEFAULT_BASE_URL}/buy"
-AFFILIATE_URL = f"{DEFAULT_BASE_URL}/affiliate"
-AGENT_CENTER_URL = f"{DEFAULT_BASE_URL}/agent"
-AGENT_CUSTOMERS_URL = f"{DEFAULT_BASE_URL}/agent/customers"
-AGENT_TOKEN_COMM_URL = f"{DEFAULT_BASE_URL}/agent/token-commission"
-AGENT_ACTIVATION_COMM_URL = f"{DEFAULT_BASE_URL}/agent/activation-commission"
-AGENT_INSTALL_COMM_URL = f"{DEFAULT_BASE_URL}/agent/install-commission"
-AGENT_PROXY_URL = f"{DEFAULT_BASE_URL}/agent/proxy"
-AGENT_RULES_URL = f"{DEFAULT_BASE_URL}/agent/rules"
-VALUE_ADDED_URLS = {
-    "gpt_plus": f"{DEFAULT_BASE_URL}/services?entry=gpt-plus",
-    "phone_card": f"{DEFAULT_BASE_URL}/services?entry=phone-card",
-    "sms_code": f"{DEFAULT_BASE_URL}/services?entry=sms-code",
-}
-CODEX_WINDOWS_STORE_URL = "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
-CODEX_DOWNLOAD_URL = "https://developers.openai.com/codex/"
-CLAUDE_CODE_DOCS_URL = "https://code.claude.com/docs/en/quickstart"
-OPENCLAW_DOCS_URL = "https://docs.openclaw.ai/start/getting-started"
-HERMES_DOCS_URL = "https://hermes-agent.nousresearch.com/docs/zh-Hans/getting-started/installation"
-GEMINI_AGY_DOCS_URL = "https://antigravity.google/"
-OFFICIAL_PACKAGE_SUFFIXES = (".msixbundle", ".msix", ".appx", ".appxbundle", ".appinstaller")
-PANGHU_AGENTS_START = "<!-- PANGHUAI_CODEX_RULES_START -->"
-PANGHU_AGENTS_END = "<!-- PANGHUAI_CODEX_RULES_END -->"
-APP_BG = "#e8e8ed"
-SURFACE_BG = "#f5f5f7"
-SIDEBAR_BG = "#ebebec"
-CARD_BG = "#ffffff"
-PANEL_BG = "#f7f7f8"
-INK = "#1d1d1f"
-SECONDARY = "#424245"
-MUTED = "#86868b"
-FAINT = "#b0b0b5"
-PRIMARY = "#0071e3"
-PRIMARY_HOVER = "#0077ed"
-PRIMARY_DARK = "#0062c0"
-PRIMARY_LIGHT = "#eff7ff"
-PRIMARY_TINT = "#e8f2ff"
-ACCENT = "#1a7f37"
-BORDER = "#d2d2d7"
-LIGHT_BORDER = "#e5e5e7"
-WARNING_BG = "#fff7df"
-GOLD = "#b06000"
-GOLD_SOFT = "#fff7df"
-LOCKED_BG = "#f1f3f4"
-WAIT_BG = "#f1f3f4"
-WAIT_BORDER = "#dadce0"
-SUCCESS_BG = "#e6f4ea"
-SUCCESS_BORDER = "#ceead6"
-INFO_BG = "#eaf4ff"
-FAIL_BG = "#fdebe5"
-FAIL_BORDER = "#fad2cf"
-FAIL = "#c5221f"
-RUNNING = "#b06000"
-SUCCESS = "#1a7f37"
-NEUTRAL_DOT = "#9a9aa0"
-INPUT_BG = "#ffffff"
-LOG_BG = "#1d1d1f"
-LOG_FG = "#f5f5f7"
-SEGMENTED_BG = "#e3e3e6"
-SEGMENTED_ACTIVE = "#ffffff"
-APP_FRAME_BG = SURFACE_BG
-APP_FRAME_BORDER = BORDER
-TOPBAR_HEIGHT = 52
-LEFT_PANEL_WIDTH = 220
-RIGHT_PANEL_WIDTH = 300
-FLOW_STEPS = (
-    (1, "登录胖虎AI账号", "客服确认账号和授权"),
-    (2, "创建或填写API Key", "填入调用令牌并测试"),
-    (3, "检测系统环境", "先排查电脑和风险工具"),
-    (4, "选择Agent模式", "选择要交付的 Agent"),
-    (5, "执行安装", "按引导安装并配置"),
-    (6, "写入配置", "写入网关、Key 和模型"),
-    (7, "启动检测", "确认入口可以打开"),
-    (8, "最小中文对话验收", "确认能直接中文对话"),
-    (9, "功能验收矩阵", "逐项确认是否达标"),
-    (10, "完成交付", "矩阵通过后再交付"),
-)
-
-MODULE_AGENT = "agent"
-MODULE_SITE = "site"
-MODULE_VALUE_ADDED = "value_added"
-MODULE_COURSES = "courses"
-TOP_MODULES = (
-    (MODULE_AGENT, "配置Agent", "安装配置与验收"),
-    (MODULE_SITE, "胖虎AI网站", "控制台、Key、充值"),
-    (MODULE_VALUE_ADDED, "增值业务", "账号会员与服务"),
-    (MODULE_COURSES, "代理中心", "代理分销与返佣"),
-)
-MODULE_SIDE_NAV_ITEMS = {
-    MODULE_AGENT: tuple((str(idx), title, subtitle) for idx, title, subtitle in FLOW_STEPS),
-    MODULE_SITE: (
-        ("account", "控制台", "打开胖虎AI首页或控制台"),
-        ("key", "创建 API Key", "进入令牌管理页面"),
-        ("recharge", "充值购买", "跳转官方在线购买页"),
-        ("register", "推广返佣", "查看邀请码与返佣入口"),
-    ),
-    MODULE_VALUE_ADDED: (
-        ("gpt_plus", "GPT 账号会员", "Plus、Team、Pro 服务入口"),
-        ("phone_card", "国外手机卡", "海外号码与通信服务"),
-        ("sms_code", "接码服务", "验证码接收与临时号服务"),
-    ),
-    MODULE_COURSES: (
-        ("agent_home", "代理总览", "代理等级、邀请入口与结算摘要"),
-        ("agent_customers", "下游客户", "查看服务端下游客户归因"),
-        ("agent_token_comm", "token 返佣", "下游 token 消费返佣摘要"),
-        ("agent_activation_comm", "激活返佣", "下游付费激活返佣摘要"),
-        ("agent_install_comm", "安装返佣", "下游客户付费安装 Agent 返佣"),
-        ("agent_proxy", "工具代理后端", "进入工具代理业务后台"),
-        ("agent_rules", "代理规则", "查看结算、升级与风控规则"),
-    ),
-}
-MODULE_PAGE_META = {
-    MODULE_SITE: {
-        "account": ("胖虎AI控制台", CONSOLE_URL, "主工作区直接显示胖虎AI首页或控制台入口，登录后可继续管理账号、额度和节点。"),
-        "key": ("令牌管理", KEY_CREATE_URL, "从网站服务端打开令牌管理页面，创建或复制当前买家自己的 API Key。"),
-        "recharge": ("在线购买", BUY_URL, "从网站服务端打开官方在线购买页，完成套餐、余额或升级购买。"),
-        "register": ("推广返佣", AFFILIATE_URL, "从网站服务端打开推广返佣页，查看邀请码、返佣记录和邀请入口。"),
-    },
-    MODULE_VALUE_ADDED: {
-        "gpt_plus": ("GPT 账号会员", VALUE_ADDED_URLS["gpt_plus"], "进入增值业务页的 GPT 账号会员分区，具体上架状态和价格以服务端为准。"),
-        "phone_card": ("国外手机卡", VALUE_ADDED_URLS["phone_card"], "进入增值业务页的海外号码与通信服务分区，所有商品信息由网站服务端控制。"),
-        "sms_code": ("接码服务", VALUE_ADDED_URLS["sms_code"], "进入增值业务页的接码服务分区，购买规则与时长不在本地硬编码。"),
-    },
-    MODULE_COURSES: {
-        "agent_home": ("代理总览", AGENT_CENTER_URL, "查看当前代理状态、等级、邀请入口和结算摘要。"),
-        "agent_customers": ("下游客户", AGENT_CUSTOMERS_URL, "查看下游客户归因、绑定时间和服务端客户摘要。"),
-        "agent_token_comm": ("token 返佣", AGENT_TOKEN_COMM_URL, "查看下游 token/API 消费产生的返佣摘要。"),
-        "agent_activation_comm": ("激活返佣", AGENT_ACTIVATION_COMM_URL, "查看下游付费激活、充值或购买产生的返佣摘要。"),
-        "agent_install_comm": ("安装返佣", AGENT_INSTALL_COMM_URL, "查看下游客户付费安装 Agent 服务产生的返佣摘要。"),
-        "agent_proxy": ("工具代理后端", AGENT_PROXY_URL, "进入工具代理业务后台，管理代理业务入口和服务端状态。"),
-        "agent_rules": ("代理规则", AGENT_RULES_URL, "查看代理费用、升级、返佣、提现、冻结和冲正规则。"),
-    },
-}
-MODULE_ACTION_CARDS = {
-    MODULE_SITE: {
-        "account": (
-            ("先看哪里", "优先看控制台首页、额度余额、节点状态和当前账号信息。"),
-            ("适合做什么", "登录后直接继续管理控制台，不需要再单独打开第三方浏览器。"),
-            ("客服怎么指引", "客服只需要让客户在这里完成控制台里的下一步操作。"),
-            ("注意事项", "控制台内的业务状态以胖虎AI网站服务端返回为准。"),
-        ),
-        "key": (
-            ("现在要做什么", "进入令牌管理后创建新 Key，复制完整的 sk- 内容回来填写。"),
-            ("做完看哪里", "返回本工具第二步，粘贴后点“保存并测试 Key”。"),
-            ("客服确认点", "确认 Key 属于当前买家账号，且账户已充值或有可用额度。"),
-            ("安全边界", "API Key 不写入执行日志；profile.json 只保存账号提示、Key、模型和界面偏好。"),
-        ),
-        "recharge": (
-            ("现在要做什么", "在官方在线购买页完成套餐购买、余额充值或升级付款。"),
-            ("做完看哪里", "支付完成后回到工具，再继续创建 Key 或执行部署步骤。"),
-            ("客服确认点", "若余额仍不足，先刷新网站订单状态，再继续本地配置。"),
-            ("注意事项", "价格、次数、有效期、设备数都以服务端页面为准，不在本地写死。"),
-        ),
-        "register": (
-            ("现在要做什么", "打开推广返佣页，查看邀请码、推广链接和返佣记录。"),
-            ("做完看哪里", "需要注册新买家时，也从这里继续进入返佣或邀请相关入口。"),
-            ("客服确认点", "代理身份、邀请码绑定和返佣结算全部以网站服务端为准。"),
-            ("注意事项", "邀请码、返佣和代理身份均由胖虎AI网站服务端处理。"),
-        ),
-    },
-    MODULE_VALUE_ADDED: {
-        "gpt_plus": (
-            ("服务入口", "展示 GPT Plus、Team、Pro 等会员服务的独立入口。"),
-            ("订单承接", "具体服务能否购买、如何购买，以服务端上架内容为准。"),
-            ("客服协同", "客户可把本页记录复制给客服，继续人工确认套餐细节。"),
-            ("交付边界", "本地工具不保存这类第三方账号的登录态或支付信息。"),
-        ),
-        "phone_card": (
-            ("服务入口", "展示国外手机卡、海外通信号码和辅助服务入口。"),
-            ("适用场景", "用于 OpenAI、Claude 等海外平台注册或长期通信场景。"),
-            ("客服协同", "具体国家、库存与价格只从网站服务端读取。"),
-            ("交付边界", "客户端不硬编码国家库存、价格或开卡规则。"),
-        ),
-        "sms_code": (
-            ("服务入口", "展示接码服务、备用号和不同国家通道入口。"),
-            ("适用场景", "适合 AI 服务注册、二次验证或辅助接收短信验证码。"),
-            ("客服协同", "服务状态和购买逻辑依旧由网站服务端控制。"),
-            ("交付边界", "客户端不本地计算接码时长、价格或退款规则。"),
-        ),
-    },
-    MODULE_COURSES: {
-        "agent_home": (
-            ("先看哪里", "优先查看当前代理等级、邀请入口、下游数量和结算摘要。"),
-            ("收益来源", "服务端区分 token 返佣、激活返佣和安装返佣三类收入。"),
-            ("如何邀请", "通过专属邀请链接或注册邀请码绑定下游客户，已有上级不覆盖。"),
-            ("结算边界", "所有收益、冻结、冲正和提现状态以服务端账本为准。"),
-        ),
-        "agent_customers": (
-            ("数据来源", "下游客户归因只来自胖虎AI服务端，不从本地邀请码记录推算。"),
-            ("客户分类", "可按注册、付费激活、已安装 Agent 服务等状态查看。"),
-            ("跟进策略", "客服可结合后端诊断码和客户状态辅助交付。"),
-            ("绑定边界", "已有上级代理的客户不能被新邀请码覆盖。"),
-        ),
-        "agent_token_comm": (
-            ("收益类型", "展示下游 token/API 真实消费产生的返佣摘要。"),
-            ("事件来源", "以服务端结算后的真实消费事件为准，重复事件不重复入账。"),
-            ("结算周期", "默认 T+7 从待结算转为可结算，具体以后台设置为准。"),
-            ("状态说明", "退款、异常消费或风控命中后可冻结或冲正。"),
-        ),
-        "agent_activation_comm": (
-            ("收益类型", "展示下游付费激活、购买或充值产生的返佣摘要。"),
-            ("订单快照", "佣金按订单发生时的代理链路和返佣规则快照计算。"),
-            ("结算周期", "默认 T+7 进入可结算，后台可按业务策略调整。"),
-            ("异常处理", "订单撤销或退款后必须写入冲正记录。"),
-        ),
-        "agent_install_comm": (
-            ("安装返佣", "每当下游客户成功安装并激活一个 Agent，您可获得专属返佣。"),
-            ("结算比例", "服务端按实际安装的 Agent 类型和授权节点数量动态计算。"),
-            ("状态说明", "需要客户完成“功能验收矩阵”并在本地成功跑通中文对话。"),
-            ("注意事项", "已退款或非正常部署的节点不会计入有效安装返佣。"),
-        ),
-        "agent_proxy": (
-            ("后端入口", "工具代理相关后端统一从胖虎AI网站和服务端代理中心进入。"),
-            ("服务开关", "哪些代理能力已开放，由服务端和代理后端决定。"),
-            ("接入计划", "后续代理工具诊断、回调和售后入口也统一归到这里。"),
-            ("注意事项", "客户端只提供入口和状态衔接，不在本地重做代理业务规则。"),
-        ),
-        "agent_rules": (
-            ("费用规则", "代理费用、免费开通、付费升级、押金或年费都由管理员后台配置。"),
-            ("等级规则", "代理采用 L1-L5 纯五级模型，等级越高可覆盖的下游层级越深。"),
-            ("风控说明", "禁止自行邀请自己或利用多账号刷取安装返佣，异常收益可冻结。"),
-            ("服务端为准", "所有比例、费率、提现、冲正和待接入状态以胖虎AI服务端实时规则为准。"),
-        ),
-    },
-}
-
-
-@dataclass(frozen=True)
-class AgentMode:
-    id: str
-    label: str
-    note: str
-    supports_auto_install: bool = True
-    supports_config: bool = False
-
-
-@dataclass(frozen=True)
-class AgentSpec:
-    id: str
-    name: str
-    description: str
-    verify_command: tuple[str, ...]
-    modes: tuple[AgentMode, ...]
-    config_note: str
-
-
-@dataclass(frozen=True)
-class AgentDeliveryPlaybook:
-    agent_id: str
-    cli_supported: bool
-    client_supported: bool
-    skip_third_party_channels: bool
-    customer_goal: str
-    config_commands: tuple[str, ...]
-    minimal_dialogue_check: str
-
-
-@dataclass(frozen=True)
-class RiskPluginSpec:
-    id: str
-    name: str
-    aliases: tuple[str, ...]
-    npm_packages: tuple[str, ...]
-    marker_paths: tuple[Path, ...]
-    uninstall_hint: str
-
-
-@dataclass(frozen=True)
-class RiskPluginFinding:
-    name: str
-    source: str
-    detail: str
-    uninstall_hint: str
-
-
-@dataclass(frozen=True)
-class TemporaryOpenAIAccessConfig:
-    proxy: str
-    duration_seconds: int = TEMP_OPENAI_ACCESS_SECONDS
-
-
-@dataclass(frozen=True)
-class CustomerPageOpenResult:
-    url: str
-    title: str
-    method: str
-    ok: bool
-    message: str
-
-
-class CodexConfigMode(str, Enum):
-    DIRECT_API = "direct_api"
-    DUAL_STATE = "dual_state"
-    OFFICIAL_CHATGPT = "official_chatgpt"
-
-
-AGENTS = (
-    AgentSpec(
-        id="codex",
-        name="Codex",
-        description="OpenAI 官方 Codex Agent，支持 CLI 与 Windows 客户端安装/修复。",
-        verify_command=("codex", "--version"),
-        modes=(
-            AgentMode("cli", "CLI", "安装官方 Codex CLI。", supports_config=True),
-            AgentMode("client", "客户端", "Windows 走官方 Store/App 包；其他系统打开官方入口。", supports_config=True),
-        ),
-        config_note="可自动写入胖虎AI API Key、接口、模型、中文规则和默认工作区。",
-    ),
-    AgentSpec(
-        id="claude_code",
-        name="ClaudeCode",
-        description="Anthropic 官方 Claude Code Agent，按 CC 口径覆盖 CLI 和官方客户端入口。",
-        verify_command=("claude", "--version"),
-        modes=(
-            AgentMode("cli", "CLI", "使用官方 npm 包安装 Claude Code，并写入胖虎AI网关配置。", supports_config=True),
-            AgentMode("client", "客户端", "打开官方客户端入口，并按同一胖虎AI网关配置口径验收。", supports_config=True),
-        ),
-        config_note="写入胖虎AI网关配置，跳过 IDE 插件和第三方通道，目标是安装后可直接对话。",
-    ),
-    AgentSpec(
-        id="openclaw",
-        name="OpenClaw",
-        description="OpenClaw Agent，优先走官方在线安装与官方客户端入口。",
-        verify_command=("openclaw", "--version"),
-        modes=(
-            AgentMode("cli", "CLI", "使用 OpenClaw 官方在线脚本安装，并写入胖虎AI网关配置。", supports_config=True),
-            AgentMode("client", "客户端", "安装或打开 OpenClaw 官方 Hub/客户端，并按胖虎AI网关配置验收。", supports_config=True),
-        ),
-        config_note="默认跳过 QQ/微信/TG 等第三方通道，只配置最短可用对话链路。",
-    ),
-    AgentSpec(
-        id="hermes",
-        name="Hermes",
-        description="Nous Research Hermes Agent，优先走官方在线安装。",
-        verify_command=("hermes", "--version"),
-        modes=(
-            AgentMode("cli", "CLI", "使用 Hermes 官方在线安装入口，并写入胖虎AI网关配置。", supports_config=True),
-            AgentMode("client", "客户端", "安装或打开 Hermes 官方客户端入口，并按胖虎AI网关配置验收。", supports_config=True),
-        ),
-        config_note="默认跳过 QQ/微信/TG 等第三方通道，只配置最短可用对话链路。",
-    ),
-    AgentSpec(
-        id="gemini_agy",
-        name="Gemini / agy",
-        description="Google Gemini / Antigravity Agent，本版只保留官方 CLI 与客户端入口。",
-        verify_command=("agy", "--version"),
-        modes=(
-            AgentMode("cli", "CLI", "安装 Google Antigravity CLI；默认通过 Google 账号自行登录。", supports_config=False),
-            AgentMode("client", "客户端", "打开 Google Antigravity 官方入口；配置功能待开发。", supports_auto_install=False, supports_config=False),
-        ),
-        config_note="配置待开发：暂不写入胖虎AI API Key 或网关配置，客户通过 Google 账号自行登录。",
-    ),
-)
-
-AGENT_DELIVERY_PLAYBOOKS = {
-    "codex": AgentDeliveryPlaybook(
-        agent_id="codex",
-        cli_supported=True,
-        client_supported=True,
-        skip_third_party_channels=True,
-        customer_goal="安装和配置后，买家可以直接打开 Codex 对话。",
-        config_commands=(
-            f"写入 Codex config.toml: base_url={CODEX_BASE_URL}, model={DEFAULT_MODEL}",
-            "写入 Codex auth.json: OPENAI_API_KEY=买家胖虎AI API Key",
-        ),
-        minimal_dialogue_check="用胖虎AI /v1/chat/completions 执行一句中文回复验证。",
-    ),
-    "claude_code": AgentDeliveryPlaybook(
-        agent_id="claude_code",
-        cli_supported=True,
-        client_supported=True,
-        skip_third_party_channels=True,
-        customer_goal="安装和配置后，买家可以直接打开 Claude Code/CC 对话。",
-        config_commands=(
-            f"设置 ANTHROPIC_BASE_URL={CLAUDE_CODE_BASE_URL}",
-            "设置 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY=买家胖虎AI API Key",
-            f"设置默认模型={DEFAULT_MODEL}",
-        ),
-        minimal_dialogue_check="运行 claude/CC 最小中文对话命令，确认能返回模型回复。",
-    ),
-    "openclaw": AgentDeliveryPlaybook(
-        agent_id="openclaw",
-        cli_supported=True,
-        client_supported=True,
-        skip_third_party_channels=True,
-        customer_goal="安装和配置后，买家可以直接打开 OpenClaw 对话。",
-        config_commands=(
-            f"设置 OpenClaw OpenAI-compatible base_url={CODEX_BASE_URL}",
-            "设置 OpenClaw API key=买家胖虎AI API Key",
-            f"设置 OpenClaw model={DEFAULT_MODEL}",
-        ),
-        minimal_dialogue_check="运行 OpenClaw 最小 prompt，对胖虎AI网关发起一次中文对话验证。",
-    ),
-    "hermes": AgentDeliveryPlaybook(
-        agent_id="hermes",
-        cli_supported=True,
-        client_supported=True,
-        skip_third_party_channels=True,
-        customer_goal="安装和配置后，买家可以直接打开 Hermes 对话。",
-        config_commands=(
-            f"写入 custom_providers.panghuai.base_url={CODEX_BASE_URL}",
-            "写入 custom_providers.panghuai.key_env=PANGHUAI_API_KEY",
-            f"设置 model.provider=custom:panghuai, model.default={DEFAULT_MODEL}",
-        ),
-        minimal_dialogue_check="运行 Hermes 官方 oneshot 命令，确认能通过胖虎AI网关返回。",
-    ),
-    "gemini_agy": AgentDeliveryPlaybook(
-        agent_id="gemini_agy",
-        cli_supported=True,
-        client_supported=True,
-        skip_third_party_channels=True,
-        customer_goal="本版只保留 Gemini / agy 官方安装入口；客户通过 Google 账号自行登录。",
-        config_commands=(
-            "配置待开发：不写入胖虎AI API Key。",
-            "配置待开发：不写入胖虎AI网关或模型。",
-        ),
-        minimal_dialogue_check="配置待开发：暂不执行胖虎AI网关最小中文对话，不计为完整交付。",
-    ),
-}
-
-
-def agent_delivery_playbook(agent_id: str) -> AgentDeliveryPlaybook:
-    try:
-        return AGENT_DELIVERY_PLAYBOOKS[agent_id]
-    except KeyError as exc:
-        raise ValueError(f"未知 Agent：{agent_id}") from exc
 
 
 def build_agent_config_plan(agent_id: str, mode_id: str, api_key: str, model: str) -> list[str]:
     if agent_id == "gemini_agy":
+        playbook = agent_delivery_playbook(agent_id)
+        masked_key = mask_key(api_key)
         return [
             f"gemini_agy/{mode_id}：使用 Google Antigravity 官方入口安装或检测。",
-            f"gemini_agy/{mode_id}：配置待开发，本版不写入胖虎AI网关、模型或 API Key。",
-            f"gemini_agy/{mode_id}：客户通过 Google 账号自行登录。",
-            f"gemini_agy/{mode_id}：未接入胖虎AI网关最小中文对话验收，不计为完整交付。",
+            f"gemini_agy/{mode_id}：写入胖虎AI网关（Gemini 格式）{DEFAULT_BASE_URL}。",
+            f"gemini_agy/{mode_id}：写入模型 {model}。",
+            f"gemini_agy/{mode_id}：写入买家胖虎AI API Key {masked_key}。",
+            f"gemini_agy/{mode_id}：第三方通道默认跳过。",
+            f"gemini_agy/{mode_id}：{('；'.join(playbook.config_commands))}",
+            f"gemini_agy/{mode_id}：最小对话验证：{playbook.minimal_dialogue_check}",
         ]
     playbook = agent_delivery_playbook(agent_id)
     masked_key = mask_key(api_key)
+    # ClaudeCode 走 ANTHROPIC_BASE_URL（不带 /v1），其余 openai 格式走带 /v1 的网关；
+    # 别对所有 agent 硬写 /v1，否则与实际写入及本函数下方的 config_commands 自相矛盾。
+    gateway_display = CLAUDE_CODE_BASE_URL if agent_id == "claude_code" else CODEX_BASE_URL
     return [
         f"{agent_id}/{mode_id}：使用官方发行入口安装或检测。",
-        f"{agent_id}/{mode_id}：写入胖虎AI网关 https://aitokenapi.cc/v1。",
+        f"{agent_id}/{mode_id}：写入胖虎AI网关 {gateway_display}。",
         f"{agent_id}/{mode_id}：写入模型 {model}。",
         f"{agent_id}/{mode_id}：写入买家胖虎AI API Key {masked_key}。",
         f"{agent_id}/{mode_id}：第三方通道默认跳过。",
@@ -644,114 +244,20 @@ def customer_error_with_diagnostic(message: object, diagnostic_code: str) -> str
     return f"诊断码：{code}\n{safe_message}\n请把诊断码发给客服排查。"
 
 
-def codex_home() -> Path:
-    return Path.home() / ".codex"
 
 
-def codex_auth_path() -> Path:
-    return codex_home() / "auth.json"
-
-
-def codex_mode_snapshots_root() -> Path:
-    return codex_home() / "panghu_modes"
-
-
-def workspace_root() -> Path:
-    return Path.home() / "Documents" / "胖虎AI-Agent工作区"
-
-
-def claude_code_settings_path() -> Path:
-    return Path(os.environ.get("CLAUDE_CODE_SETTINGS_PATH") or (Path.home() / ".claude" / "settings.json"))
-
-
-def openclaw_config_path() -> Path:
-    return Path(os.environ.get("OPENCLAW_CONFIG_PATH") or (Path.home() / ".openclaw" / "openclaw.json"))
-
-
-def hermes_home_path() -> Path:
-    explicit = os.environ.get("HERMES_HOME")
-    if explicit:
-        return Path(explicit)
-    if platform.system() == "Windows":
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        if local_app_data:
-            return Path(local_app_data) / "hermes"
-    return Path.home() / ".hermes"
-
-
-def hermes_config_path() -> Path:
-    return hermes_home_path() / "config.yaml"
-
-
-def hermes_env_path() -> Path:
-    return hermes_home_path() / ".env"
-
-
-def customer_acceptance_matrix_path() -> Path:
-    return workspace_root() / "胖虎AI-Agent功能验收矩阵.txt"
-
-
-def app_data_dir() -> Path:
-    base = os.environ.get("APPDATA")
-    if base:
-        return Path(base) / "PanghuAI-Agent-Deployer"
-    return Path.home() / ".panghuai-agent-deployer"
-
-
-def profile_path() -> Path:
-    return app_data_dir() / "profile.json"
-
-
-def buyer_session_metadata_path() -> Path:
-    return app_data_dir() / "buyer_session.json"
-
-
-def buyer_session_cookie_path() -> Path:
-    return app_data_dir() / "buyer_session_cookies.txt"
-
-
-def web_profile_root() -> Path:
-    return app_data_dir() / "web_profiles"
-
-
-def app_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
-
-
-def asset_path(name: str) -> Path:
-    bundled_root = getattr(sys, "_MEIPASS", None)
-    if bundled_root:
-        bundled = Path(bundled_root) / "assets" / name
-        if bundled.exists():
-            return bundled
-    root = app_root()
-    for candidate in (
-        root / "assets" / name,
-        root.parent / "Resources" / "assets" / name,
-        root.parent / "Frameworks" / "assets" / name,
-    ):
-        if candidate.exists():
-            return candidate
-    return app_root() / "assets" / name
-
-
-def ui_path(name: str) -> Path:
-    bundled_root = getattr(sys, "_MEIPASS", None)
-    if bundled_root:
-        bundled = Path(bundled_root) / "ui" / name
-        if bundled.exists():
-            return bundled
-    root = app_root()
-    for candidate in (
-        root / "src" / "ui" / name,
-        root / "ui" / name,
-        root.parent / "Resources" / "ui" / name,
-    ):
-        if candidate.exists():
-            return candidate
-    return app_root() / "src" / "ui" / name
+def require_webview_runtime_and_ui() -> tuple[object, Path]:
+    shell = ui_path("index.html")
+    if not shell.exists():
+        raise RuntimeError(
+            f"胖虎AI客户端正式界面缺失：{shell}。客户包必须包含 WebView UI，不能回退到旧 Tkinter 业务界面。"
+        )
+    if webview is None:
+        raise RuntimeError(
+            "胖虎AI客户端正式界面依赖 pywebview，但当前运行包未加载该依赖。"
+            "请修复打包依赖后重新发布，不能回退到旧 Tkinter 业务界面。"
+        )
+    return webview, shell
 
 
 def save_theme_preference(theme: str) -> None:
@@ -771,6 +277,294 @@ def load_theme_preference() -> str:
     except Exception:
         pass
     return "light"
+
+
+def _normalize_login_username(username: str) -> str:
+    return str(username or "").strip().lower()
+
+
+def _xor_local_secret(data: bytes) -> bytes:
+    seed = f"{APP_NAME}:{device_fingerprint()}".encode("utf-8", errors="ignore")
+    key = hashlib.sha256(seed).digest()
+    return bytes(value ^ key[index % len(key)] for index, value in enumerate(data))
+
+
+def _dpapi_protect(data: bytes) -> bytes:
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    input_buffer = ctypes.create_string_buffer(data)
+    input_blob = DATA_BLOB(len(data), ctypes.cast(input_buffer, ctypes.POINTER(ctypes.c_char)))
+    output_blob = DATA_BLOB()
+    if not ctypes.windll.crypt32.CryptProtectData(
+        ctypes.byref(input_blob),
+        None,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(output_blob),
+    ):
+        raise OSError("CryptProtectData failed")
+    try:
+        return ctypes.string_at(output_blob.pbData, output_blob.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(output_blob.pbData)
+
+
+def _dpapi_unprotect(data: bytes) -> bytes:
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    input_buffer = ctypes.create_string_buffer(data)
+    input_blob = DATA_BLOB(len(data), ctypes.cast(input_buffer, ctypes.POINTER(ctypes.c_char)))
+    output_blob = DATA_BLOB()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(input_blob),
+        None,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(output_blob),
+    ):
+        raise OSError("CryptUnprotectData failed")
+    try:
+        return ctypes.string_at(output_blob.pbData, output_blob.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(output_blob.pbData)
+
+
+def protect_local_secret(value: str) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    raw = text.encode("utf-8")
+    if platform.system() == "Windows":
+        try:
+            return "dpapi:" + base64.b64encode(_dpapi_protect(raw)).decode("ascii")
+        except Exception:
+            pass
+    return "local-v1:" + base64.b64encode(_xor_local_secret(raw)).decode("ascii")
+
+
+def unprotect_local_secret(value: str) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    try:
+        if text.startswith("dpapi:") and platform.system() == "Windows":
+            data = base64.b64decode(text[6:].encode("ascii"))
+            return _dpapi_unprotect(data).decode("utf-8")
+        if text.startswith("local-v1:"):
+            data = base64.b64decode(text[9:].encode("ascii"))
+            return _xor_local_secret(data).decode("utf-8")
+        if text.startswith("fallback:"):
+            data = base64.b64decode(text[9:].encode("ascii"))
+            return data[::-1].decode("utf-8")
+    except Exception:
+        return ""
+    return ""
+
+
+def _write_login_account_store(state: dict) -> None:
+    accounts = []
+    for item in state.get("accounts") or []:
+        if not isinstance(item, dict):
+            continue
+        username = _normalize_login_username(item.get("username") or "")
+        if not username:
+            continue
+        protected_password = str(item.get("protected_password") or "")
+        remember_password = bool(item.get("remember_password") and protected_password)
+        auto_login = bool(item.get("auto_login") and remember_password)
+        stored = {
+            "username": username,
+            "user_id": str(item.get("user_id") or ""),
+            "remember_password": remember_password,
+            "auto_login": auto_login,
+            "protected_password": protected_password if remember_password else "",
+        }
+        accounts.append(stored)
+    last_username = _normalize_login_username(state.get("last_username") or "")
+    if last_username and all(item["username"] != last_username for item in accounts):
+        last_username = accounts[0]["username"] if accounts else ""
+    payload = {"base_url": DEFAULT_BASE_URL, "last_username": last_username, "accounts": accounts}
+    write_text(login_account_store_path(), json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    try:
+        os.chmod(login_account_store_path(), 0o600)
+    except Exception:
+        pass
+
+
+def load_login_account_state() -> dict:
+    path = login_account_store_path()
+    if not path.exists():
+        return {"last_username": "", "accounts": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"last_username": "", "accounts": []}
+    if not isinstance(payload, dict):
+        return {"last_username": "", "accounts": []}
+    accounts = []
+    seen: set[str] = set()
+    for raw in payload.get("accounts") or []:
+        if not isinstance(raw, dict):
+            continue
+        username = _normalize_login_username(raw.get("username") or "")
+        if not username or username in seen:
+            continue
+        seen.add(username)
+        protected_password = str(raw.get("protected_password") or "")
+        password = unprotect_local_secret(protected_password) if protected_password else ""
+        if not password:
+            legacy_protected_password = str(raw.get("password") or "")
+            legacy_password = unprotect_local_secret(legacy_protected_password) if legacy_protected_password else ""
+            if legacy_password:
+                protected_password = legacy_protected_password
+                password = legacy_password
+        remember_password = bool(raw.get("remember_password") and protected_password and password)
+        accounts.append(
+            {
+                "username": username,
+                "user_id": str(raw.get("user_id") or ""),
+                "remember_password": remember_password,
+                "auto_login": bool(raw.get("auto_login") and remember_password and password),
+                "password": password if remember_password else "",
+                "protected_password": protected_password if remember_password else "",
+            }
+        )
+    last_username = _normalize_login_username(payload.get("last_username") or "")
+    if last_username and last_username not in seen:
+        last_username = accounts[0]["username"] if accounts else ""
+    return {"last_username": last_username, "accounts": accounts}
+
+
+def load_login_account_public_state() -> dict:
+    state = load_login_account_state()
+    public_accounts = []
+    for account in state.get("accounts", []):
+        public_accounts.append(
+            {
+                "username": account.get("username", ""),
+                "user_id": account.get("user_id", ""),
+                "remember_password": bool(account.get("remember_password")),
+                "auto_login": bool(account.get("auto_login")),
+                "has_password": bool(account.get("password")),
+            }
+        )
+    return {"last_username": state.get("last_username", ""), "accounts": public_accounts}
+
+
+def login_account_public_entry(username: str) -> dict:
+    normalized = _normalize_login_username(username)
+    for account in load_login_account_public_state().get("accounts", []):
+        if _normalize_login_username(account.get("username") or "") == normalized:
+            return account
+    return {
+        "username": normalized,
+        "user_id": "",
+        "remember_password": False,
+        "auto_login": False,
+        "has_password": False,
+    }
+
+
+def login_account_private_entry(username: str) -> dict:
+    normalized = _normalize_login_username(username)
+    for account in load_login_account_state().get("accounts", []):
+        if _normalize_login_username(account.get("username") or "") == normalized:
+            return account
+    return {}
+
+
+def save_login_account_state(
+    username: str,
+    password: str = "",
+    remember_password: bool = False,
+    auto_login: bool = False,
+    user_id: str = "",
+) -> None:
+    normalized = _normalize_login_username(username)
+    if not normalized:
+        return
+    state = load_login_account_state()
+    existing = next(
+        (account for account in state["accounts"] if _normalize_login_username(account.get("username") or "") == normalized),
+        {},
+    )
+    protected_password = ""
+    if remember_password:
+        protected_password = protect_local_secret(password) if password else str(existing.get("protected_password") or "")
+    account = {
+        "username": normalized,
+        "user_id": str(user_id or existing.get("user_id") or ""),
+        "remember_password": bool(remember_password and protected_password),
+        "auto_login": bool(auto_login and remember_password and protected_password),
+        "protected_password": protected_password if remember_password else "",
+    }
+    accounts = [
+        item
+        for item in state["accounts"]
+        if _normalize_login_username(item.get("username") or "") != normalized
+    ]
+    accounts.insert(0, account)
+    _write_login_account_store({"last_username": normalized, "accounts": accounts})
+
+
+def disable_login_account_auto_login(username: str) -> dict:
+    normalized = _normalize_login_username(username)
+    if not normalized:
+        return load_login_account_public_state()
+    state = load_login_account_state()
+    changed = False
+    for account in state.get("accounts", []):
+        if _normalize_login_username(account.get("username") or "") == normalized:
+            account["auto_login"] = False
+            changed = True
+            break
+    if changed:
+        _write_login_account_store(state)
+    return load_login_account_public_state()
+
+
+def remove_login_account_state(username: str) -> dict:
+    normalized = _normalize_login_username(username)
+    state = load_login_account_state()
+    removed = next(
+        (item for item in state["accounts"] if _normalize_login_username(item.get("username") or "") == normalized),
+        {},
+    )
+    accounts = [
+        item
+        for item in state["accounts"]
+        if _normalize_login_username(item.get("username") or "") != normalized
+    ]
+    last_username = str(state.get("last_username") or "")
+    if _normalize_login_username(last_username) == normalized:
+        last_username = accounts[0]["username"] if accounts else ""
+    _write_login_account_store({"last_username": last_username, "accounts": accounts})
+    user_id = str(removed.get("user_id") or "")
+    if user_id:
+        seed = f"buyer:{user_id}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+        path = web_profile_root() / f"buyer-{digest}"
+        if path.exists() and path.is_dir():
+            try:
+                shutil.rmtree(path)
+            except Exception:
+                pass
+    current_session = load_buyer_session_user()
+    if _normalize_login_username(current_session.get("username") or "") == normalized:
+        clear_buyer_session_state()
+    return load_login_account_public_state()
 
 
 def color_to_char(color: str) -> str:
@@ -932,6 +726,54 @@ def risk_plugin_report_lines(findings: list[RiskPluginFinding]) -> list[str]:
     return lines
 
 
+def build_local_communication_software_link_acceptance_evidence(
+    session_id: str,
+    order_id: str,
+    agent_id: str,
+    channel: str,
+    platform_chat_id: str,
+    test_prompt: str,
+    agent_response: str,
+) -> dict[str, str]:
+    clean_session_id = str(session_id or "").strip()
+    clean_order_id = str(order_id or "").strip()
+    clean_agent_id = str(agent_id or "").strip()
+    clean_channel = str(channel or "").strip() or "manual_bridge"
+    clean_chat_id = str(platform_chat_id or "").strip()
+    clean_prompt = str(test_prompt or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT).strip()
+    clean_response = str(agent_response or "").strip()
+    if not clean_session_id:
+        raise ValueError("连接通讯软件本地验收缺少配置会话 ID。")
+    if not clean_order_id:
+        raise ValueError("连接通讯软件本地验收缺少订单 ID。")
+    if not clean_agent_id:
+        raise ValueError("连接通讯软件本地验收缺少 Agent。")
+    if not clean_response:
+        raise ValueError("连接通讯软件本地验收缺少 Agent 响应内容。")
+    seed_payload = {
+        "session_id": clean_session_id,
+        "order_id": clean_order_id,
+        "agent_id": clean_agent_id,
+        "channel": clean_channel,
+        "platform_chat_id": clean_chat_id,
+        "test_prompt": clean_prompt,
+        "agent_response": clean_response,
+    }
+    digest = hashlib.sha256(json.dumps(seed_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    short_digest = digest[:16]
+    return {
+        "order_id": clean_order_id,
+        "session_id": clean_session_id,
+        "status": "local_runtime_verified",
+        "source_event_id": f"csl-local-{short_digest}",
+        "inbound_platform_message_id": f"local-{clean_channel}-in-{short_digest}",
+        "outbound_platform_message_id": f"local-{clean_channel}-out-{short_digest}",
+        "test_prompt": clean_prompt,
+        "agent_response_digest": f"sha256:{digest}",
+        "evidence_url": f"{COMMUNICATION_SOFTWARE_LINK_LOCAL_EVIDENCE_BASE_URL}/{quote(clean_session_id)}/{short_digest}",
+    }
+
+
 def format_risk_plugin_block_message(findings: list[RiskPluginFinding]) -> str:
     lines = [
         "检测到会改写 Agent 配置的第三方插件，已停止安装。",
@@ -1010,17 +852,54 @@ def create_codex_shortcuts(log) -> None:
         log(f"Codex 快捷方式创建失败：{output}")
 
 
+def _detect_desktop_app(candidates: list[Path], app_name: str) -> tuple[bool, str]:
+    for path in candidates:
+        if not str(path):
+            continue
+        try:
+            if path.exists():
+                return True, f"{app_name}：{path}"
+            matches = sorted(path.parent.glob(path.name)) if any(ch in path.name for ch in "*?[") else []
+            if matches:
+                return True, f"{app_name}：{matches[-1]}"
+        except OSError:
+            continue
+    return False, f"{app_name} 未在常见安装位置检测到。"
+
+
+def claude_desktop_client_status() -> tuple[bool, str]:
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        Path(local_app_data) / "AnthropicClaude" / "claude.exe" if local_app_data else Path(""),
+        Path(local_app_data) / "AnthropicClaude" / "app-*" / "claude.exe" if local_app_data else Path(""),
+        Path(local_app_data) / "Programs" / "Claude" / "Claude.exe" if local_app_data else Path(""),
+        Path("/Applications/Claude.app"),
+        Path.home() / "Applications" / "Claude.app",
+    ]
+    return _detect_desktop_app(candidates, "Claude Desktop 官方客户端")
+
+
+def antigravity_client_status() -> tuple[bool, str]:
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        Path(local_app_data) / "Programs" / "Antigravity" / "Antigravity.exe" if local_app_data else Path(""),
+        Path(local_app_data) / "Antigravity" / "Antigravity.exe" if local_app_data else Path(""),
+        Path("/Applications/Antigravity.app"),
+        Path.home() / "Applications" / "Antigravity.app",
+        Path.home() / ".antigravity",
+    ]
+    return _detect_desktop_app(candidates, "Google Antigravity 官方客户端")
+
+
 def agent_client_status(agent: AgentSpec) -> tuple[bool, str]:
     if agent.id == "codex":
         return codex_app_package_exists()
     if agent.id == "claude_code":
-        return False, "ClaudeCode 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
-    if agent.id == "openclaw":
-        return False, "OpenClaw 当前按官方 CLI/Hub 入口检测，未发现可稳定识别的独立客户端包。"
-    if agent.id == "hermes":
-        return False, "Hermes 当前按官方 CLI/文档入口检测，未发现可稳定识别的独立客户端包。"
+        return claude_desktop_client_status()
     if agent.id == "gemini_agy":
-        return False, "Gemini / agy 当前按 Google Antigravity 官方入口检测，未发现可稳定识别的独立客户端包。"
+        return antigravity_client_status()
+    if agent.id in CLI_ONLY_DELIVERY_AGENTS:
+        return False, f"{agent.name} 官方未提供客户端安装，本产品只销售 CLI 交付。"
     return False, "未配置客户端检测规则。"
 
 
@@ -1039,8 +918,19 @@ def agent_install_status_lines() -> list[str]:
 
 
 def write_text(path: Path, text: str) -> None:
+    """原子写：先写临时文件再 os.replace，避免进程中断留下半写坏文件（如坏 JSON 让 Agent 起不来）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    tmp_path = path.with_name(path.name + ".panghu-tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def ensure_env_safe_value(name: str, value: str) -> str:
+    """dotenv 值安全校验：拒绝空白/换行/控制字符（可注入任意 env 行或截断解析）。"""
+    cleaned = str(value or "").strip()
+    if not cleaned or any(ord(ch) < 33 or ord(ch) > 126 for ch in cleaned):
+        raise ValueError(f"{name} 含空白/控制字符等非法字符，已拒绝写入配置。")
+    return cleaned
 
 
 def load_saved_profile() -> dict:
@@ -1079,12 +969,10 @@ def load_buyer_cookie_jar() -> http.cookiejar.MozillaCookieJar:
 def save_buyer_cookie_jar(cookie_jar: http.cookiejar.CookieJar) -> None:
     path = buyer_session_cookie_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(cookie_jar, http.cookiejar.FileCookieJar):
-        cookie_jar.filename = str(path)
-        jar_to_save = cookie_jar
-    else:
-        jar_to_save = http.cookiejar.MozillaCookieJar(str(path))
-        for cookie in cookie_jar:
+    jar_to_save = http.cookiejar.MozillaCookieJar(str(path))
+    for cookie in cookie_jar:
+        domain = str(getattr(cookie, "domain", "") or "").lstrip(".").lower()
+        if domain == "aitokenapi.cc" or domain.endswith(".aitokenapi.cc"):
             jar_to_save.set_cookie(cookie)
     jar_to_save.save(ignore_discard=True, ignore_expires=True)
     try:
@@ -1255,8 +1143,8 @@ CODEX_MANAGED_TOP_LEVEL_KEYS = {
 
 CODEX_OFFICIAL_TOP_LEVEL_CONFIG = [
     'model_provider = "openai"',
-    'model = "gpt-5.4"',
-    'review_model = "gpt-5.4"',
+    'model = "gpt-5.5"',
+    'review_model = "gpt-5.5"',
     'model_reasoning_effort = "xhigh"',
     "disable_response_storage = true",
     'network_access = "enabled"',
@@ -1397,8 +1285,8 @@ def load_codex_mode_snapshot(mode: CodexConfigMode) -> dict[str, str] | None:
 
 def build_config(api_key: str, base_url: str, model: str) -> str:
     return '''model_provider = "panghuAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
@@ -1679,6 +1567,34 @@ def execute_commercial_api_with_trusted_certs(request, timeout: int = 20) -> tup
     return execute_commercial_api_request(request, trusted_urlopen, timeout=timeout)
 
 
+# 服务端（new-api）错误 message 为英文原文，客户可见处统一映射为中文；
+# 未收录的原文原样透传，不做猜测性翻译。
+SERVER_MESSAGE_ZH_MAP = {
+    "username or password is incorrect, or user has been banned": "账号或密码错误，或该账号已被封禁。",
+    "username or password is incorrect": "账号或密码错误。",
+    "user has been banned": "该账号已被封禁，请联系客服。",
+    "invalid credentials": "账号或密码错误。",
+    "too many requests": "请求过于频繁，请稍后再试。",
+    "email address verification failed": "邮箱验证失败。",
+    "captcha verification failed": "人机验证失败，请稍后再试。",
+    "turnstile verification failed": "人机验证失败，请稍后再试。",
+}
+
+
+def localize_server_message(message) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return text
+    key = text.rstrip("。.!？?").strip().lower()
+    mapped = SERVER_MESSAGE_ZH_MAP.get(key)
+    if mapped:
+        return mapped
+    for english, chinese in SERVER_MESSAGE_ZH_MAP.items():
+        if english in key:
+            return chinese
+    return text
+
+
 def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.CookieJar) -> tuple[bool, str, dict]:
     if not username.strip() or not password:
         return False, "请输入胖虎AI账号和密码。", {}
@@ -1703,7 +1619,7 @@ def login_panghuai(username: str, password: str, cookie_jar: http.cookiejar.Cook
         return False, f"登录失败：{exc}", {}
 
     if not payload.get("success"):
-        return False, str(payload.get("message") or "账号或密码错误。"), {}
+        return False, localize_server_message(payload.get("message")) or "账号或密码错误。", {}
     data = payload.get("data") or {}
     return True, "登录成功。", data
 
@@ -1733,7 +1649,7 @@ def activate_deployer(user: dict, cookie_jar: http.cookiejar.CookieJar) -> tuple
     except Exception as exc:
         return False, f"部署授权失败：{exc}", {}
     if not payload.get("success"):
-        return False, str(payload.get("message") or "部署授权被拒绝。"), {}
+        return False, localize_server_message(payload.get("message")) or "部署授权被拒绝。", {}
     data = payload.get("data") or {}
     token = str(data.get("token") or "")
     if not token:
@@ -1782,6 +1698,10 @@ def manifest_commercial_capabilities(manifest: dict):
 
 def manifest_commercial_products(manifest: dict):
     return build_commercial_product_catalog(manifest)
+
+
+def manifest_value_added_services(manifest: dict):
+    return build_value_added_service_catalog(manifest)
 
 
 def parse_manifest_delivery_scope(value: object) -> DeliveryScope:
@@ -1837,7 +1757,10 @@ def manifest_commercial_entitlements(manifest: dict) -> list[EntitlementContract
 
 
 def manifest_has_commercial_controls(manifest: dict) -> bool:
-    return any(key in manifest for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center"))
+    return any(
+        key in manifest
+        for key in ("products", "entitlements", "commercial", "commercial_enabled", "agent_center", "value_added_services")
+    )
 
 
 def ensure_commercial_manifest_trusted(manifest: dict, public_key_pem: str = COMMERCIAL_MANIFEST_PUBLIC_KEY_PEM) -> None:
@@ -1871,6 +1794,10 @@ def deployment_commercial_contexts(user: dict) -> "CommercialSessionContexts":
 
 def agent_center_summary_text(manifest: dict | None) -> str:
     return "\n".join(build_agent_center_summary_lines(manifest or {}))
+
+
+def value_added_services_summary_text(manifest: dict | None) -> str:
+    return "\n".join(build_value_added_service_summary_lines(manifest_value_added_services(manifest or {})))
 
 
 def build_commercial_config_session_reserve_preview(
@@ -1940,12 +1867,212 @@ def commercial_api_request_with_auth(
             CommercialApiContract(DEFAULT_BASE_URL),
             order_id=str(kwargs["order_id"]),
             buyer_user_id=contexts.target_buyer.user_id,
+            operator_user_id=contexts.operator.user_id,
         )
     elif action == "entitlement_query":
         request = build_entitlement_query_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             buyer_user_id=contexts.target_buyer.user_id,
             operator_user_id=contexts.operator.user_id,
+        )
+    elif action == "agent_center":
+        request = build_agent_center_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "agent_downstreams":
+        request = build_agent_downstreams_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            cursor=str(kwargs.get("cursor") or ""),
+            limit=int(kwargs.get("limit") or 50),
+        )
+    elif action == "agent_commissions":
+        request = build_agent_commissions_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            status=str(kwargs.get("status") or ""),
+            event_type=str(kwargs.get("event_type") or ""),
+            cursor=str(kwargs.get("cursor") or ""),
+            limit=int(kwargs.get("limit") or 50),
+        )
+    elif action == "agent_public_offering":
+        request = build_agent_public_offering_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "agent_apply":
+        product_id = str(kwargs["product_id"])
+        request = build_agent_apply_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            product_id=product_id,
+            idempotency_key=stable_agent_business_idempotency_key(
+                "agent_apply",
+                contexts.operator.user_id,
+                product_id,
+            ),
+        )
+    elif action == "referral_bind":
+        invite_code = normalize_referral_invite_code(str(kwargs["invite_code"]))
+        request = build_referral_bind_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            invite_code=invite_code,
+            idempotency_key=stable_agent_business_idempotency_key(
+                "referral_bind",
+                contexts.target_buyer.user_id,
+                invite_code,
+            ),
+        )
+    elif action == "agent_settlement":
+        requested_cents = int(kwargs["requested_cents"])
+        request = build_agent_settlement_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            requested_cents=requested_cents,
+            idempotency_key=stable_agent_business_idempotency_key(
+                "agent_settlement",
+                contexts.operator.user_id,
+                str(requested_cents),
+            ),
+        )
+    elif action == "communication_software_link_offering":
+        request = build_communication_software_link_offering_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "communication_software_link_order_create":
+        service_product_id = str(kwargs["service_product_id"])
+        agent_id = str(kwargs["agent_id"])
+        channel = str(kwargs["channel"])
+        agent_source = str(kwargs["agent_source"])
+        request = build_communication_software_link_order_create_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            service_product_id=service_product_id,
+            buyer_user_id=contexts.target_buyer.user_id,
+            agent_id=agent_id,
+            channel=channel,
+            agent_source=agent_source,
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "order",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                service_product_id,
+                agent_id,
+                channel,
+                agent_source,
+            ),
+        )
+    elif action == "communication_software_link_order_get":
+        request = build_communication_software_link_order_get_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            order_id=str(kwargs["order_id"]),
+        )
+    elif action == "communication_software_link_session_create":
+        order_id = str(kwargs["order_id"])
+        agent_id = str(kwargs["agent_id"])
+        channel = str(kwargs["channel"])
+        platform_account_id = str(kwargs["platform_account_id"])
+        platform_chat_id = str(kwargs["platform_chat_id"])
+        gateway_mode = str(kwargs["gateway_mode"])
+        agent_source = str(kwargs["agent_source"])
+        request = build_communication_software_link_session_create_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            platform_account_id=platform_account_id,
+            platform_chat_id=platform_chat_id,
+            gateway_mode=gateway_mode,
+            agent_source=agent_source,
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "session",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                order_id,
+                agent_id,
+                channel,
+                platform_account_id,
+                platform_chat_id,
+                gateway_mode,
+                agent_source,
+            ),
+        )
+    elif action == "communication_software_link_session_get":
+        request = build_communication_software_link_session_get_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            session_id=str(kwargs["session_id"]),
+        )
+    elif action == "communication_software_link_session_test":
+        session_id = str(kwargs["session_id"])
+        test_prompt = str(kwargs["test_prompt"])
+        request = build_communication_software_link_session_test_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            session_id=session_id,
+            test_prompt=test_prompt,
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "test",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                session_id,
+                test_prompt,
+            ),
+        )
+    elif action == "communication_software_link_session_acceptance":
+        session_id = str(kwargs["session_id"])
+        source_event_id = str(kwargs["source_event_id"])
+        inbound_platform_message_id = str(kwargs["inbound_platform_message_id"])
+        outbound_platform_message_id = str(kwargs["outbound_platform_message_id"])
+        test_prompt = str(kwargs["test_prompt"])
+        agent_response_digest = str(kwargs["agent_response_digest"])
+        evidence_url = str(kwargs["evidence_url"])
+        request = build_communication_software_link_session_acceptance_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            session_id=session_id,
+            source_event_id=source_event_id,
+            inbound_platform_message_id=inbound_platform_message_id,
+            outbound_platform_message_id=outbound_platform_message_id,
+            test_prompt=test_prompt,
+            agent_response_digest=agent_response_digest,
+            evidence_url=evidence_url,
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "acceptance",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                session_id,
+                source_event_id,
+                inbound_platform_message_id,
+                outbound_platform_message_id,
+            ),
+        )
+    elif action == "communication_software_link_session_disable":
+        session_id = str(kwargs["session_id"])
+        request = build_communication_software_link_session_disable_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            session_id=session_id,
+            reason=str(kwargs.get("reason") or "buyer_disabled_from_client"),
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "disable",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                session_id,
+            ),
+        )
+    elif action == "communication_software_link_platform_auth_create":
+        order_id = str(kwargs["order_id"])
+        agent_id = str(kwargs["agent_id"])
+        channel = str(kwargs["channel"])
+        gateway_mode = str(kwargs["gateway_mode"])
+        platform_chat_hint = str(kwargs.get("platform_chat_hint") or "")
+        request = build_communication_software_link_platform_auth_create_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            gateway_mode=gateway_mode,
+            platform_chat_hint=platform_chat_hint,
+            idempotency_key=stable_communication_software_link_idempotency_key(
+                "platform_auth",
+                contexts.target_buyer.user_id,
+                contexts.operator.user_id,
+                order_id,
+                agent_id,
+                channel,
+                gateway_mode,
+                platform_chat_hint,
+            ),
+        )
+    elif action == "communication_software_link_platform_auth_get":
+        request = build_communication_software_link_platform_auth_get_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            auth_session_id=str(kwargs["auth_session_id"]),
         )
     elif action == "reserve":
         request = build_commercial_config_session_reserve_preview(
@@ -1976,9 +2103,103 @@ def commercial_api_request_with_auth(
             failure_reason=str(kwargs["failure_reason"]),
             idempotency_key=stable_config_session_idempotency_key("fail", config_session_id, diagnostic_code),
         )
+    elif action == "subscription_products":
+        request = build_subscription_products_request(CommercialApiContract(DEFAULT_BASE_URL))
+    elif action == "subscription_order_create":
+        product_id = str(kwargs["product_id"])
+        quantity = int(kwargs.get("quantity") or 1)
+        # 每次下单带一次性 nonce：AI订阅是真金付款，买家复购同商品同数量必须生成新订单。
+        # 旧幂等键纯确定性(order:sub:{pid}:x{qty}:{buyer}:{operator})→ 同商品同数量二次购买
+        # 永远撞回旧订单：已付旧单会把已核销卡密当"新交付"弹出，撤销旧单则永久无法再买。
+        # 防重复提交由前端下单按钮的 in-flight 护栏负责；这里保证复购是新订单。
+        purchase_nonce = str(kwargs.get("purchase_nonce") or "")
+        request = build_subscription_order_create_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            product_id=product_id,
+            quantity=quantity,
+            idempotency_key=stable_order_idempotency_key(
+                product_id=f"sub:{product_id}:x{quantity}:{purchase_nonce}",
+                buyer_user_id=contexts.target_buyer.user_id,
+                operator_user_id=contexts.operator.user_id,
+            ),
+        )
+    elif action == "subscription_order_status":
+        request = build_subscription_order_status_request(
+            CommercialApiContract(DEFAULT_BASE_URL),
+            order_id=str(kwargs["order_id"]),
+        )
     else:
         raise ValueError(f"Unknown commercial api action: {action}")
     return with_operator_auth(request, token)
+
+
+def _subscription_delivery_fields(order: dict) -> dict:
+    """从已解析 AI订阅订单里抽交付字段（卡密批/工具链接/客服微信），付款后才有值。
+
+    delivery_mode 始终一并返回：前端 showSubscriptionDelivery 靠它区分 self_service_plus(自助卡密)
+    与人工发货。历史上"即时履约(0元/已 paid)"分支漏带 delivery_mode，导致 GPT Plus 卡密被误当成
+    人工发货、买家看不到卡密。统一从这里返回，杜绝 create/instant/query 三处口径漂移。
+    """
+    out: dict = {"delivery_mode": order.get("delivery_mode", "")}
+    if order.get("delivery_mode") == "self_service_plus":
+        out["card_codes"] = list(order.get("card_codes") or [])
+        out["cards_shortfall"] = int(order.get("cards_shortfall") or 0)
+        out["plus_tool_url"] = order.get("plus_tool_url", "")
+    if order.get("customer_service"):
+        out["customer_service"] = order["customer_service"]
+    return out
+
+
+def _normalize_agent_detail_items(data: object, keys: tuple[str, ...], limit: int = 50) -> list[dict]:
+    """把代理中心明细(下游客户/返佣)服务端响应规整成可安全渲染的浅层字典列表。
+
+    服务端明细响应的列表键不固定(items/downstreams/customers 或 items/commissions/ledger)，
+    每条只保留标量字段(str/num/bool)，丢弃嵌套结构；前端渲染时仍需 escapeHtml。空数据返回 []，
+    这样代理中心明细页在无数据时显示"暂无明细"而不是把抓到的数据丢弃。
+    """
+    if not isinstance(data, dict):
+        return []
+    items = None
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, list):
+            items = value
+            break
+    if items is None:
+        return []
+    out: list[dict] = []
+    for item in items[:limit]:
+        if isinstance(item, dict):
+            row = {str(k): v for k, v in item.items() if isinstance(v, (str, int, float, bool)) or v is None}
+            out.append(row)
+        elif isinstance(item, (str, int, float, bool)):
+            out.append({"value": item})
+    return out
+
+
+def build_payment_qr_data_url(payment_url: str, box_size: int = 8, border: int = 2) -> str:
+    """把支付链接离线编码成二维码 PNG 的 base64 data URL。
+
+    服务端（Codex 约定）对工具订单返回支付宝手机网站支付(WAP)链接 payment_url，
+    不返回 qr_code；由桌面客户端自己把 payment_url 生成二维码，买家用手机支付宝扫码付款。
+    离线本地生成，不依赖外网，不把链接写进日志。
+    """
+    url = str(payment_url or "").strip()
+    if not url:
+        raise ValueError("缺少支付链接，无法生成支付二维码。")
+    import qrcode
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=box_size,
+        border=border,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def build_customer_payment_instruction(data: dict) -> str:
@@ -1993,6 +2214,9 @@ def build_customer_payment_instruction(data: dict) -> str:
     if expires_at:
         lines.append(f"有效期：{expires_at}")
     if not payment_url and not payment_qr_url:
+        payment_status = str(data.get("payment_status") or "").strip().lower()
+        if payment_status == "paid":
+            return "订单无需付款（0 元或已支付），权益已直接发放，可直接进入下一步。"
         lines.append("服务端没有返回付款链接或二维码。请联系后台确认订单支付入口。")
     return "\n".join(lines)
 
@@ -2540,13 +2764,52 @@ def open_path(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
+def normalize_referral_invite_code(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.query:
+        query = parse_qs(parsed.query, keep_blank_values=False)
+        for key in INVITE_QUERY_KEYS:
+            values = query.get(key)
+            if values and str(values[0]).strip():
+                return str(values[0]).strip()
+    if parsed.scheme and parsed.netloc:
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[-2].lower() in {"invite", "referral"}:
+            return parts[-1].strip()
+        return ""
+    if "=" in raw:
+        key, _, candidate = raw.partition("=")
+        if key.strip().lower() in INVITE_QUERY_KEYS:
+            return candidate.strip()
+    return raw
+
+
+def build_register_url(invite_code_or_url: str = "") -> str:
+    invite_code = normalize_referral_invite_code(invite_code_or_url)
+    if not invite_code:
+        return REGISTER_URL
+    return f"{REGISTER_URL}?invite={quote(invite_code, safe='')}"
+
+
 def open_url(
     url: str,
     cookie_jar: http.cookiejar.CookieJar | None = None,
     log=None,
     storage_path: Path | str | None = None,
 ) -> CustomerPageOpenResult:
-    return open_customer_page(url, cookie_jar=cookie_jar, log=log, storage_path=storage_path)
+    res = open_customer_page(url, cookie_jar=cookie_jar, log=log, storage_path=storage_path)
+    import sys
+    if res.method == "external_browser" and res.title != "外部页面" and not ("pytest" in sys.modules or "unittest" in sys.modules):
+        # webview 模式无 Tk mainloop，messagebox 不可用；走调用方提供的 log 回调提示。
+        if log:
+            try:
+                log("该链接不属于胖虎AI客户内置网站白名单，正在使用系统默认浏览器打开。")
+            except Exception:
+                pass
+    return res
 
 
 def build_webview_cookie_bridge_script(cookie_jar: http.cookiejar.CookieJar | None) -> str:
@@ -2563,10 +2826,59 @@ def build_webview_cookie_bridge_script(cookie_jar: http.cookiejar.CookieJar | No
         if any(str(key).lower() == "httponly" for key in rest):
             continue
         parts = [f"{cookie.name}={cookie.value}", "path=/", "SameSite=Lax"]
+        # 广播到 aitokenapi.cc 家族，让接码站 sim.、Plus 工具 plus. 等子域也带上买家登录态。
+        # 旧实现不写 Domain → cookie 只对当前主域 host-only 生效，桥接到子域时登录态丢失，
+        # 却仍在日志里谎称"已桥接成功"。仅对生产家族加 Domain；本地联调 IP 主机加 Domain 会被
+        # 浏览器拒绝，保持 host-only。
+        if domain.endswith("aitokenapi.cc"):
+            parts.append("Domain=.aitokenapi.cc")
         if cookie.secure:
             parts.append("Secure")
         statements.append(f"document.cookie = {json.dumps('; '.join(parts))};")
     return "\n".join(statements)
+
+
+def is_trusted_embedded_url(url: str) -> bool:
+    """只有以下链接才允许进"胖虎AI"内置可信 WebView（会携带买家登录态 cookie）：
+
+    - https 且主机属于 aitokenapi.cc 家族（生产）；
+    - 与 DEFAULT_BASE_URL 完全同源（本地联调覆盖，可能是 http://127.0.0.1:port）。
+
+    服务端可控的 entry_url / plus_tool_url 若指向外部站点，一律判为不可信，交外部浏览器打开，
+    杜绝把任意站点嵌进可信窗口造成的开放重定向/登录态泄漏。
+    """
+    try:
+        parts = urlsplit(str(url or "").strip())
+    except Exception:
+        return False
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    if parts.scheme == "https" and (host == "aitokenapi.cc" or host.endswith(".aitokenapi.cc")):
+        return True
+    try:
+        base = urlsplit(DEFAULT_BASE_URL)
+        if parts.scheme == base.scheme and host == (base.hostname or "").lower():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def append_url_query_param(url: str, key: str, value: str) -> str:
+    """把 key=value 安全地追加到 URL 的 query 段，保留已有 query 和 fragment。
+
+    充值工具可能用 SPA 井号路由（如 https://plus.aitokenapi.cc/#/activate）。
+    旧实现 f"{base}{'&' if '?' in base else '?'}code=..." 会把 ?code= 落进 # 之后的 fragment，
+    导致工具端 location.search 读不到卡密。这里用 urlsplit/urlunsplit 精确写进 query。
+    """
+    value = str(value or "").strip()
+    if not value:
+        return url
+    parts = urlsplit(str(url or ""))
+    sep = "&" if parts.query else ""
+    new_query = f"{parts.query}{sep}{quote(str(key), safe='')}={quote(value, safe='')}"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
 
 
 def open_customer_page(
@@ -2602,16 +2914,25 @@ def open_customer_page(
             True,
             f"已在软件内 WebView 窗口打开：{title}{bridge_note}。",
         )
+    if title:
+        if webview is None:
+            reason = "当前运行环境未加载 pywebview，未打开系统浏览器；胖虎AI网站内置浏览器闭环未完成。"
+        else:
+            reason = "内置 WebView 未能启动，未打开系统浏览器；胖虎AI网站内置浏览器闭环未完成。"
+        if log:
+            log(reason)
+        return CustomerPageOpenResult(
+            page_url,
+            title,
+            "embedded_webview_blocked",
+            False,
+            reason,
+        )
     browser_ok = bool(webbrowser.open(page_url))
-    if title and webview is None:
-        reason = "当前运行环境未加载 pywebview，已回退到系统浏览器；不能算完成内嵌网页闭环。"
-    elif title:
-        reason = "内置 WebView 未能启动，已回退到系统浏览器；不能算完成内嵌网页闭环。"
-    else:
-        reason = "该链接不属于客户内置网站白名单，已使用系统浏览器打开。"
+    reason = "该链接不属于客户内置网站白名单，已使用系统浏览器打开。"
     return CustomerPageOpenResult(
         page_url,
-        title or "外部页面",
+        "外部页面",
         "external_browser",
         browser_ok,
         reason,
@@ -2626,8 +2947,14 @@ def embedded_customer_page_title(url: str) -> str:
     safe = str(url or "").strip().lower()
     if not safe:
         return ""
+    # 先做主机/协议可信闸门：非 aitokenapi.cc 家族(或联调同源)的链接一律不进内置可信窗口。
+    # 原实现只按 "payment"/"/buy" 等子串给标题，https://evil.com/payment 会被误判可信内嵌。
+    if not is_trusted_embedded_url(url):
+        return ""
     if safe.rstrip("/") in {DEFAULT_BASE_URL, CONSOLE_URL.lower()}:
         return "胖虎AI 控制台"
+    if safe.rstrip("/") == SIM_CONTROL_URL.lower():
+        return "手机号接码控制中心"
     if "/agent" in safe:
         return "胖虎AI 代理中心"
     if "/services" in safe:
@@ -2639,6 +2966,20 @@ def embedded_customer_page_title(url: str) -> str:
     if "/affiliate" in safe or "/register" in safe or "invite" in safe:
         return "胖虎AI 推广返佣"
     return ""
+
+
+def embedded_webview_loop_active() -> bool:
+    """主 GUI 事件循环是否已经在跑（main() 里已 create_window + start()）。
+
+    只有此时才能用 create_window 直接开第二个窗口——pywebview 会立即建窗。
+    循环未启动时若再调 webview.start() 会抛 'pywebview must be run on a main thread'。
+    """
+    if webview is None:
+        return False
+    try:
+        return webview.active_window() is not None
+    except Exception:
+        return False
 
 
 def try_open_embedded_webview(
@@ -2653,30 +2994,45 @@ def try_open_embedded_webview(
     page_url = str(url or "").strip()
     if not page_url:
         return False
+    # 打包后的客户端 main() 已在主线程跑了唯一的 webview.start()。旧实现在 daemon 线程里
+    # 二次调用 webview.start() → 必然抛 'must be run on a main thread' 并静默崩溃，
+    # 而函数早已 return True，调用方以为"已打开"、兜底外部浏览器也不触发 →
+    # 接码"独立窗口打开"、Plus"打开充值工具"点了都没反应。
+    # 正解：GUI 循环运行时开新窗只调 create_window（pywebview 立即建窗），绝不二次 start()。
+    if not embedded_webview_loop_active():
+        return False
     window_title = title or "胖虎AI"
     bridge_script = build_webview_cookie_bridge_script(cookie_jar)
-    persistent_storage_path = Path(storage_path) if storage_path else web_profile_root() / "buyer-site"
-    persistent_storage_path.mkdir(parents=True, exist_ok=True)
+    start_url = PANGHU_HOME_URL if bridge_script else page_url
+    try:
+        window = webview.create_window(
+            window_title, start_url, width=1180, height=860, resizable=True
+        )
+    except Exception as exc:
+        if log:
+            try:
+                log(f"内置窗口打开失败，改用系统浏览器：{exc}")
+            except Exception:
+                pass
+        return False
+    if window is None:
+        return False
+    if bridge_script:
+        state = {"bridged": False}
 
-    def launch() -> None:
-        start_url = PANGHU_HOME_URL if bridge_script else page_url
-        window = webview.create_window(window_title, start_url, width=1180, height=860, resizable=True)
-        if bridge_script:
-            state = {"bridged": False}
-
-            def on_loaded() -> None:
-                if state["bridged"]:
-                    return
-                state["bridged"] = True
+        def on_loaded() -> None:
+            if state["bridged"]:
+                return
+            state["bridged"] = True
+            try:
                 window.evaluate_js(bridge_script)
                 window.load_url(page_url)
                 if log:
-                    log(f"已向内置 WebView 桥接本次胖虎AI登录态：{window_title}")
+                    log(f"已向内置 WebView 注入本次胖虎AI登录 cookie：{window_title}")
+            except Exception:
+                pass
 
-            window.events.loaded += on_loaded
-        webview.start(private_mode=False, storage_path=str(persistent_storage_path))
-
-    threading.Thread(target=launch, daemon=True).start()
+        window.events.loaded += on_loaded
     return True
 
 
@@ -2777,7 +3133,7 @@ def find_available_update() -> tuple[UpdateInfo | None, str, str | None]:
         return None, f"检查更新失败：{exc}", None
 
     latest_tag = str(payload.get("tag_name") or "").strip()
-    release_url = str(payload.get("html_url") or "https://github.com/dashuaiisme/panghu-codex-installer/releases")
+    release_url = str(payload.get("html_url") or "https://github.com/dashuaiisme/panghu-ai-client/releases")
     if not latest_tag:
         return None, "检查更新失败：GitHub Release 没有版本号。", release_url
     if normalize_version(latest_tag) <= normalize_version(APP_VERSION):
@@ -2819,7 +3175,7 @@ def check_and_download_update(log) -> tuple[bool, str, Path | None, str | None]:
 
 
 def update_script_path() -> Path:
-    root = Path(tempfile.gettempdir()) / "PanghuAI-Agent-Deployer-Updater"
+    root = Path(tempfile.gettempdir()) / "PanghuAI-Client-Updater"
     root.mkdir(parents=True, exist_ok=True)
     return root / ("apply-update.ps1" if platform.system() == "Windows" else "apply-update.sh")
 
@@ -2860,7 +3216,7 @@ $zipPath = {powershell_single_quoted(zip_path)}
 $appDir = {powershell_single_quoted(app_dir)}
 $launchTarget = {powershell_single_quoted(launch_target)}
 $pidToWait = {pid}
-$staging = Join-Path $env:TEMP ("PanghuAI-Agent-Deployer-Update-" + [guid]::NewGuid().ToString("N"))
+$staging = Join-Path $env:TEMP ("PanghuAI-Client-Update-" + [guid]::NewGuid().ToString("N"))
 try {{
     Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
@@ -3118,13 +3474,31 @@ def install_codex_cli(log) -> bool:
 
 
 def install_claude_code_cli(log) -> bool:
-    if not shutil.which("npm"):
-        log("未检测到 npm，已打开 ClaudeCode 官方安装文档。")
-        open_url(CLAUDE_CODE_DOCS_URL)
-        return False
-    ok, output = run_command(["npm", "install", "-g", "@anthropic-ai/claude-code"], timeout=900)
+    if platform.system() == "Windows":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "irm https://claude.ai/install.ps1 | iex",
+        ]
+    else:
+        command = ["/bin/bash", "-lc", "curl -fsSL https://claude.ai/install.sh | bash"]
+    log("按 Claude Code 官方 Quickstart 原生安装入口安装 CLI。")
+    ok, output = run_command(command, timeout=900)
     log(output)
-    return ok
+    if ok:
+        return True
+    if shutil.which("npm"):
+        log("Claude Code 原生安装未确认，改用官方 npm 包替代入口：npm install -g @anthropic-ai/claude-code")
+        ok, output = run_command(["npm", "install", "-g", "@anthropic-ai/claude-code"], timeout=900)
+        log(output)
+        if ok:
+            return True
+    log("Claude Code 自动安装未确认，已打开官方 Quickstart。")
+    open_url(CLAUDE_CODE_DOCS_URL)
+    return False
 
 
 def install_openclaw_cli(log) -> bool:
@@ -3159,7 +3533,7 @@ def install_hermes_cli(log) -> bool:
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
+            "iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)",
         ]
     else:
         command = [
@@ -3187,10 +3561,10 @@ def install_gemini_agy_cli(log) -> bool:
     ok, output = run_command(command, timeout=900)
     log(output)
     if ok:
-        log("Gemini / agy CLI 安装入口已执行；首次使用请按 Google 官方流程登录账号。")
+        log("Google 反重力（agy）CLI 安装入口已执行；首次使用请按 Google 官方流程登录账号。")
     else:
         open_url(GEMINI_AGY_DOCS_URL)
-        log("Gemini / agy CLI 自动安装未确认，已打开 Google Antigravity 官方入口。")
+        log("Google 反重力（agy）CLI 自动安装未确认，已打开 Google Antigravity 官方入口。")
     return ok
 
 
@@ -3292,10 +3666,16 @@ def install_codex_config(
         new_config = merge_config(base_config, api_key, base_url, model)
         new_auth = build_direct_api_auth_json(base_auth, api_key)
 
-    write_text(config_path, new_config)
-    write_text(auth_path, new_auth)
-    write_text(global_agents, merge_agents_rules(new_global_agents))
-    write_text(workspace_agents, merge_agents_rules(new_workspace_agents))
+    try:
+        write_text(config_path, new_config)
+        write_text(auth_path, new_auth)
+        write_text(global_agents, merge_agents_rules(new_global_agents))
+        write_text(workspace_agents, merge_agents_rules(new_workspace_agents))
+    except Exception:
+        for target, backup in backups.items():
+            restore_backup(target, backup, existed_before[target])
+        log("配置写入中途失败，已自动恢复本次写入前的备份。")
+        raise
     log(f"已写入 Codex 配置：{config_path}")
     log(f"已写入 Codex 登录授权文件：{auth_path}")
     log(f"模型：{model}")
@@ -3457,7 +3837,10 @@ def install_openclaw_config(api_key: str, model: str, log) -> bool:
 
 
 def build_hermes_config(model: str) -> str:
-    escaped_model = model.strip().replace('"', '\\"')
+    cleaned = model.strip()
+    if any(ord(ch) < 32 for ch in cleaned):
+        raise ValueError("模型名含非法控制字符，已拒绝写入配置。")
+    escaped_model = cleaned.replace("\\", "\\\\").replace('"', '\\"')
     return "\n".join(
         [
             "# PanghuAI generated Hermes configuration",
@@ -3497,7 +3880,7 @@ def install_hermes_config(api_key: str, model: str, log) -> bool:
 
     try:
         write_text(config_path, build_hermes_config(model.strip()))
-        write_text(env_path, f"PANGHUAI_API_KEY={api_key.strip()}\n")
+        write_text(env_path, f"PANGHUAI_API_KEY={ensure_env_safe_value('API Key', api_key)}\n")
         if shutil.which("hermes"):
             ok, output = run_command_with_env(
                 ["hermes", "config", "check"],
@@ -3521,6 +3904,431 @@ def install_hermes_config(api_key: str, model: str, log) -> bool:
     return True
 
 
+def gemini_agy_home_path() -> Path:
+    return Path.home() / ".gemini"
+
+
+def gemini_agy_env_path() -> Path:
+    return gemini_agy_home_path() / ".env"
+
+
+def build_gemini_agy_env(existing_text: str, api_key: str, model: str) -> str:
+    managed = {
+        "GOOGLE_GEMINI_BASE_URL": DEFAULT_BASE_URL,
+        "GEMINI_API_KEY": api_key.strip(),
+        "GEMINI_MODEL": model.strip(),
+    }
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw_line in (existing_text or "").splitlines():
+        stripped = raw_line.strip()
+        key = ""
+        if "=" in stripped and not stripped.startswith("#"):
+            key = stripped.split("=", 1)[0].strip()
+        if key in managed:
+            if key not in seen:
+                lines.append(f"{key}={managed[key]}")
+                seen.add(key)
+            continue
+        lines.append(raw_line)
+    for key, value in managed.items():
+        if key not in seen:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines).strip() + "\n"
+
+
+def install_gemini_agy_config(api_key: str, model: str, log) -> bool:
+    if not api_key.strip():
+        raise ValueError("请先输入胖虎AI API Key。")
+    if not model.strip():
+        raise ValueError("模型不能为空。")
+    api_key = ensure_env_safe_value("API Key", api_key)
+    model = ensure_env_safe_value("模型名", model)
+
+    env_path = gemini_agy_env_path()
+    existed_before = env_path.exists()
+    backup = backup_file(env_path)
+    if backup:
+        log(f"已备份 Google 反重力（agy）环境配置：{backup}")
+    else:
+        log(f"将创建 Google 反重力（agy）环境配置：{env_path}")
+
+    try:
+        existing_text = env_path.read_text(encoding="utf-8") if existed_before else ""
+        write_text(env_path, build_gemini_agy_env(existing_text, api_key, model))
+    except Exception:
+        restore_backup(env_path, backup, existed_before)
+        raise
+
+    log(f"已写入 Google 反重力（agy）环境配置：{env_path}")
+    log(f"Google 反重力（agy）网关（Gemini 格式）：{DEFAULT_BASE_URL}")
+    log(f"Google 反重力（agy）模型：{model.strip()}")
+    log(f"Google 反重力（agy）Key：{mask_key(api_key.strip())}")
+    log("Google 反重力（agy）提示：请完全退出 agy 后重新打开，再执行最小中文对话验收。")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 统一配置快照层（对标 cc-switch Profile 机制 / Codex++ 官方切回，2026-07-03 方案 P0）
+# - 每个 Agent 独立快照目录；写配置前自动快照；保留最近 SNAPSHOT_KEEP_COUNT 份。
+# - "original" 初始快照在首次接管前留存，永不清理，用于一键恢复官方初始配置。
+# - 回滚前先做 pre-restore 快照，保证"回滚的回滚"可行。
+# ---------------------------------------------------------------------------
+
+SNAPSHOT_KEEP_COUNT = 10  # 快照保留份数（用户决策）
+ORIGINAL_SNAPSHOT_NAME = "original"
+
+
+def panghu_snapshot_root() -> Path:
+    override = os.environ.get("PANGHU_SNAPSHOT_ROOT")
+    if override:
+        return Path(override)
+    return Path.home() / ".panghu_config_snapshots"
+
+
+def agent_config_target_paths(agent_id: str) -> list[Path]:
+    if agent_id == "codex":
+        return [codex_home() / "config.toml", codex_auth_path()]
+    if agent_id == "claude_code":
+        return [claude_code_settings_path()]
+    if agent_id == "openclaw":
+        return [openclaw_config_path()]
+    if agent_id == "hermes":
+        return [hermes_config_path(), hermes_env_path()]
+    if agent_id == "gemini_agy":
+        return [gemini_agy_env_path()]
+    raise ValueError(f"未知 Agent：{agent_id}")
+
+
+def _agent_snapshot_dir(agent_id: str) -> Path:
+    return panghu_snapshot_root() / agent_id
+
+
+def _prune_config_snapshots(agent_id: str) -> None:
+    base = _agent_snapshot_dir(agent_id)
+    if not base.exists():
+        return
+    snapshots = sorted(
+        [item for item in base.iterdir() if item.is_dir() and item.name != ORIGINAL_SNAPSHOT_NAME],
+        key=lambda item: item.name,
+        reverse=True,
+    )
+    for stale in snapshots[SNAPSHOT_KEEP_COUNT:]:
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+def create_config_snapshot(agent_id: str, reason: str, log=None, name: str | None = None) -> Path:
+    targets = agent_config_target_paths(agent_id)
+    snapshot_name = name or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    snapshot_dir = _agent_snapshot_dir(agent_id) / snapshot_name
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    saved: dict[str, str] = {}
+    absent: list[str] = []
+    for target in targets:
+        if target.exists():
+            shutil.copy2(target, snapshot_dir / target.name)
+            saved[target.name] = str(target)
+        else:
+            absent.append(str(target))
+    meta = {
+        "agent_id": agent_id,
+        "reason": reason,
+        "created_at": datetime.now().isoformat(),
+        "files": saved,
+        "absent": absent,
+    }
+    (snapshot_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    if name != ORIGINAL_SNAPSHOT_NAME:
+        _prune_config_snapshots(agent_id)
+    if log:
+        log(f"已创建 {agent_id} 配置快照：{snapshot_name}（{reason}）")
+    return snapshot_dir
+
+
+def ensure_original_config_snapshot(agent_id: str, log=None) -> Path:
+    snapshot_dir = _agent_snapshot_dir(agent_id) / ORIGINAL_SNAPSHOT_NAME
+    if (snapshot_dir / "meta.json").exists():
+        return snapshot_dir
+    return create_config_snapshot(agent_id, "接管前原始配置", log=log, name=ORIGINAL_SNAPSHOT_NAME)
+
+
+def list_config_snapshots(agent_id: str) -> list[dict]:
+    base = _agent_snapshot_dir(agent_id)
+    if not base.exists():
+        return []
+    snapshots: list[dict] = []
+    for item in sorted(base.iterdir(), key=lambda entry: entry.name, reverse=True):
+        meta_path = item / "meta.json"
+        if not item.is_dir() or not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        snapshots.append(
+            {
+                "name": item.name,
+                "reason": str(meta.get("reason") or ""),
+                "created_at": str(meta.get("created_at") or ""),
+                "file_count": len(meta.get("files") or {}),
+                "is_original": item.name == ORIGINAL_SNAPSHOT_NAME,
+            }
+        )
+    return snapshots
+
+
+def restore_config_snapshot(agent_id: str, snapshot_name: str, log) -> bool:
+    snapshot_dir = _agent_snapshot_dir(agent_id) / snapshot_name
+    meta_path = snapshot_dir / "meta.json"
+    if not meta_path.exists():
+        raise ValueError(f"快照不存在：{agent_id}/{snapshot_name}")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    create_config_snapshot(agent_id, f"回滚到 {snapshot_name} 前自动快照", log=log)
+    for file_name, original_path in (meta.get("files") or {}).items():
+        source = snapshot_dir / file_name
+        target = Path(original_path)
+        if not source.exists():
+            raise ValueError(f"快照文件缺失：{source}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        log(f"已恢复 {agent_id} 配置文件：{target}")
+    for absent_path in meta.get("absent") or []:
+        target = Path(absent_path)
+        if target.exists():
+            target.unlink()
+            log(f"已移除快照时不存在的文件：{target}")
+    log(f"{agent_id} 已回滚到快照 {snapshot_name}；请完全退出并重新打开对应 Agent 后生效。")
+    return True
+
+
+def restore_original_config(agent_id: str, log) -> bool:
+    """一键恢复官方初始配置：回到本工具首次接管前的状态（交付回收/客户自修复场景）。"""
+    return restore_config_snapshot(agent_id, ORIGINAL_SNAPSHOT_NAME, log)
+
+
+# ---------------------------------------------------------------------------
+# 配置漂移巡检（对标 cc-switch 漂移检测，2026-07-03 方案 P0）
+# 比对各 Agent 当前配置与"胖虎最后一次写入的期望值"，分级：
+#   red  = 网关地址被改（影响计费/把买家切走），需一键修复
+#   yellow = 模型被改（影响体验/额度），提示
+#   grey = 无关字段变化，忽略
+# key 只比指纹（mask），不落明文。
+# ---------------------------------------------------------------------------
+
+DRIFT_RED = "red"
+DRIFT_YELLOW = "yellow"
+DRIFT_OK = "ok"
+
+
+def _read_text_safe(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+    except OSError:
+        return ""
+
+
+def _load_json_safe(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def agent_expected_gateway(agent_id: str) -> str:
+    if agent_id == "claude_code":
+        return CLAUDE_CODE_BASE_URL
+    if agent_id in {"codex", "openclaw", "hermes"}:
+        return CODEX_BASE_URL
+    if agent_id == "gemini_agy":
+        return DEFAULT_BASE_URL
+    raise ValueError(f"未知 Agent：{agent_id}")
+
+
+def inspect_agent_config_drift(agent_id: str, expected_model: str = "") -> dict:
+    """检查单个 Agent 的配置漂移。返回 {agent_id, level, findings[], repairable}。
+
+    findings 每项 {field, severity, detail}。不返回任何明文 Key。
+    """
+    findings: list[dict] = []
+    expected_gateway = agent_expected_gateway(agent_id)
+    configured = False
+
+    def add(field: str, severity: str, detail: str) -> None:
+        findings.append({"field": field, "severity": severity, "detail": detail})
+
+    if agent_id == "codex":
+        config_text = _read_text_safe(codex_home() / "config.toml")
+        auth = _load_json_safe(codex_auth_path())
+        configured = bool(config_text) or bool(auth)
+        if configured:
+            if CODEX_BASE_URL not in config_text and "aitokenapi.cc" not in config_text:
+                add("base_url", DRIFT_RED, "Codex config.toml 未指向胖虎AI网关")
+            if expected_model and expected_model not in config_text:
+                add("model", DRIFT_YELLOW, f"Codex 未使用推荐模型 {expected_model}")
+            if not str(auth.get("OPENAI_API_KEY") or "").strip():
+                add("api_key", DRIFT_RED, "Codex auth.json 缺少 API Key")
+    elif agent_id == "claude_code":
+        settings = _load_json_safe(claude_code_settings_path())
+        env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+        configured = bool(env)
+        if configured:
+            if str(env.get("ANTHROPIC_BASE_URL") or "") != CLAUDE_CODE_BASE_URL:
+                add("base_url", DRIFT_RED, "ClaudeCode ANTHROPIC_BASE_URL 未指向胖虎AI网关")
+            if not str(env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY") or "").strip():
+                add("api_key", DRIFT_RED, "ClaudeCode 缺少 API Key")
+            if expected_model and str(env.get("ANTHROPIC_MODEL") or "") != expected_model:
+                add("model", DRIFT_YELLOW, f"ClaudeCode 未使用推荐模型 {expected_model}")
+    elif agent_id == "openclaw":
+        config = _load_json_safe(openclaw_config_path())
+        providers = ((config.get("models") or {}).get("providers") or {})
+        panghu = providers.get("panghuai") if isinstance(providers, dict) else None
+        configured = bool(config)
+        if configured:
+            if not isinstance(panghu, dict) or str(panghu.get("baseUrl") or "") != CODEX_BASE_URL:
+                add("base_url", DRIFT_RED, "OpenClaw panghuai 提供商未指向胖虎AI网关")
+            elif not str(panghu.get("apiKey") or "").strip():
+                add("api_key", DRIFT_RED, "OpenClaw panghuai 提供商缺少 API Key")
+    elif agent_id == "hermes":
+        config_text = _read_text_safe(hermes_config_path())
+        env_text = _read_text_safe(hermes_env_path())
+        configured = bool(config_text) or bool(env_text)
+        if configured:
+            if CODEX_BASE_URL not in config_text:
+                add("base_url", DRIFT_RED, "Hermes custom_providers 未指向胖虎AI网关")
+            if "PANGHUAI_API_KEY=" not in env_text:
+                add("api_key", DRIFT_RED, "Hermes .env 缺少 PANGHUAI_API_KEY")
+    elif agent_id == "gemini_agy":
+        env_text = _read_text_safe(gemini_agy_env_path())
+        configured = bool(env_text)
+        if configured:
+            if f"GOOGLE_GEMINI_BASE_URL={DEFAULT_BASE_URL}" not in env_text:
+                add("base_url", DRIFT_RED, "Google 反重力（agy）GOOGLE_GEMINI_BASE_URL 未指向胖虎AI网关")
+            if "GEMINI_API_KEY=" not in env_text:
+                add("api_key", DRIFT_RED, "Google 反重力（agy）缺少 GEMINI_API_KEY")
+            if expected_model and f"GEMINI_MODEL={expected_model}" not in env_text:
+                add("model", DRIFT_YELLOW, f"Google 反重力（agy）未使用推荐模型 {expected_model}")
+    else:
+        raise ValueError(f"未知 Agent：{agent_id}")
+
+    if not configured:
+        level = DRIFT_OK
+    elif any(f["severity"] == DRIFT_RED for f in findings):
+        level = DRIFT_RED
+    elif any(f["severity"] == DRIFT_YELLOW for f in findings):
+        level = DRIFT_YELLOW
+    else:
+        level = DRIFT_OK
+    return {
+        "agent_id": agent_id,
+        "configured": configured,
+        "level": level,
+        "findings": findings,
+        "repairable": level == DRIFT_RED,
+        "expected_gateway": expected_gateway,
+    }
+
+
+def inspect_all_config_drift(agent_ids: list[str] | None = None, expected_models: dict[str, str] | None = None) -> dict:
+    ids = agent_ids or [agent.id for agent in AGENTS]
+    if isinstance(expected_models, str):
+        _m = expected_models
+        expected_models = {aid: (_m if key_format_for_agent(aid) == "openai" else "") for aid in ids}
+    em = expected_models or {}
+    reports = [inspect_agent_config_drift(agent_id, em.get(agent_id, "")) for agent_id in ids]
+    risk_findings = detect_risk_plugins()
+    worst = DRIFT_OK
+    for report in reports:
+        if report["level"] == DRIFT_RED:
+            worst = DRIFT_RED
+            break
+        if report["level"] == DRIFT_YELLOW:
+            worst = DRIFT_YELLOW
+    if risk_findings and worst != DRIFT_RED:
+        worst = DRIFT_RED  # 风险插件在场直接升红
+    return {
+        "overall_level": worst,
+        "agents": reports,
+        "risk_plugins": [
+            {"name": finding.name, "source": finding.source, "detail": finding.detail}
+            for finding in risk_findings
+        ],
+    }
+
+
+def repair_agent_config_drift(agent_id: str, api_key: str, model: str, log) -> bool:
+    """一键修复：用当前买家 Key/模型重新写入胖虎网关配置（内部走 apply_agent_config，含快照保护）。"""
+    if not api_key.strip():
+        raise ValueError("一键修复需要当前买家的胖虎AI API Key。")
+    agent = next((item for item in AGENTS if item.id == agent_id), None)
+    if agent is None:
+        raise ValueError(f"未知 Agent：{agent_id}")
+    log(f"开始一键修复 {agent.name} 配置漂移……")
+    # 兜底模型必须按 Agent 的接口格式取：gemini_agy 走 Gemini 格式，默认 GEMINI_DEFAULT_MODEL，
+    # 不能统一兜底成 openai 的 DEFAULT_MODEL(gpt-5.5)。
+    fallback_default_model = GEMINI_DEFAULT_MODEL if key_format_for_agent(agent_id) == "gemini" else DEFAULT_MODEL
+    ok = apply_agent_config(agent, "cli", api_key, model or fallback_default_model, log)
+    if ok:
+        after = inspect_agent_config_drift(agent_id, model)
+        if after["level"] == DRIFT_RED:
+            log(f"警告：{agent.name} 修复后仍检测到红色漂移，请人工检查是否有第三方工具持续改写配置。")
+            return False
+        log(f"{agent.name} 配置漂移已修复；请完全退出并重新打开对应 Agent。")
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# 网关线路测速（对标 cc-switch 延迟测速，2026-07-03 方案 P1）
+# 对胖虎网关候选线路做轻量探测，返回延迟，为多线路自动选优打基础。
+# 线路清单默认只有主域名；服务端下发备用线路后可扩展 GATEWAY_ENDPOINT_CANDIDATES。
+# ---------------------------------------------------------------------------
+
+GATEWAY_ENDPOINT_CANDIDATES = (
+    {"id": "primary", "label": "胖虎AI主线路", "url": DEFAULT_BASE_URL},
+)
+
+
+def _measure_endpoint_latency(url: str, timeout: int = 8) -> dict:
+    import time as _time
+
+    probe_url = url.rstrip("/") + "/"
+    started = _time.monotonic()
+    try:
+        req = Request(probe_url, headers={"User-Agent": HTTP_USER_AGENT}, method="HEAD")
+        with trusted_urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+        elapsed_ms = int((_time.monotonic() - started) * 1000)
+        return {"reachable": True, "latency_ms": elapsed_ms, "status": status, "error": ""}
+    except Exception as exc:  # HEAD 不被支持时退回 GET
+        try:
+            req = Request(probe_url, headers={"User-Agent": HTTP_USER_AGENT}, method="GET")
+            with trusted_urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+            elapsed_ms = int((_time.monotonic() - started) * 1000)
+            return {"reachable": True, "latency_ms": elapsed_ms, "status": status, "error": ""}
+        except Exception as exc2:
+            return {"reachable": False, "latency_ms": None, "status": None, "error": str(exc2 or exc)}
+
+
+def measure_gateway_latency(candidates=None, timeout: int = 8) -> dict:
+    """测各候选线路延迟，返回排序结果和推荐线路（延迟最低的可达线路）。"""
+    endpoints = candidates if candidates is not None else GATEWAY_ENDPOINT_CANDIDATES
+    results = []
+    for endpoint in endpoints:
+        measured = _measure_endpoint_latency(endpoint["url"], timeout=timeout)
+        results.append({**endpoint, **measured})
+    reachable = [item for item in results if item["reachable"]]
+    reachable.sort(key=lambda item: item["latency_ms"])
+    results.sort(key=lambda item: (not item["reachable"], item["latency_ms"] if item["latency_ms"] is not None else 10**9))
+    return {
+        "endpoints": results,
+        "recommended_id": reachable[0]["id"] if reachable else None,
+        "recommended_url": reachable[0]["url"] if reachable else None,
+    }
+
+
 def agent_dialogue_probe_command(agent_id: str, model: str) -> list[str]:
     prompt = AGENT_DIALOGUE_PROBE_PROMPT
     if agent_id == "claude_code":
@@ -3534,6 +4342,9 @@ def agent_dialogue_probe_command(agent_id: str, model: str) -> list[str]:
         return ["openclaw", "infer", "model", "run", "--model", f"panghuai/{model}", "--prompt", prompt, "--json"]
     if agent_id == "hermes":
         return ["hermes", "--provider", "custom:panghuai", "--model", model, "-z", prompt]
+    if agent_id == "gemini_agy":
+        # agy CLI 只有 --model 长参（无 -m 短参，传 -m 会报 flags provided but not defined）
+        return ["agy", "--model", model, "-p", prompt]
     raise ValueError(f"未知或不支持命令验收的 Agent：{agent_id}")
 
 
@@ -3578,8 +4389,6 @@ def recent_hermes_error_summary(home: Path | None = None) -> str:
 
 
 def run_agent_dialogue_probe(agent: AgentSpec, mode_id: str, model: str) -> tuple[bool, str]:
-    if agent.id == "gemini_agy":
-        return False, "配置待开发，暂不支持自动复验命令"
     if agent.id == "codex":
         return False, "Codex 使用胖虎AI网关真实任务验证，不走外部 CLI 对话命令。"
     try:
@@ -3599,9 +4408,45 @@ def run_agent_dialogue_probe(agent: AgentSpec, mode_id: str, model: str) -> tupl
     return True, output[:1000]
 
 
+def agent_mode_uses_cli_probe(mode_id: str) -> bool:
+    return mode_id == "cli"
+
+
+def agent_mode_requires_client_scope(mode_id: str) -> bool:
+    return mode_id in {"client", "both"}
+
+
+# 用户决策（2026-07-03 修正版）：官方提供客户端安装的 Agent（Codex、ClaudeCode/Claude Desktop、
+# Gemini/agy/Antigravity）做真实客户端交付：检测/安装官方客户端并按验收矩阵单独验收；
+# 官方没有客户端的（OpenClaw、Hermes）只销售 CLI 交付，不提供 client scope。
+AGENTS_WITH_OFFICIAL_CLIENT = frozenset({"codex", "claude_code", "gemini_agy"})
+CLI_ONLY_DELIVERY_AGENTS = frozenset({"openclaw", "hermes"})
+
+
+def agent_offers_client_scope(agent_id: str) -> bool:
+    return agent_id in AGENTS_WITH_OFFICIAL_CLIENT
+
+
+def verify_agent_client_scope(agent: AgentSpec, mode_id: str) -> tuple[bool, str]:
+    if agent.id in CLI_ONLY_DELIVERY_AGENTS:
+        return (
+            False,
+            f"{agent.name} 官方未提供客户端安装，本产品对该 Agent 只销售 CLI 交付；client scope 不适用。",
+        )
+    client_ok, client_detail = agent_client_status(agent)
+    if not client_ok:
+        return (
+            False,
+            f"{agent.name}/{mode_id} client scope 需要官方客户端；当前未检测到：{client_detail}",
+        )
+    return (
+        True,
+        f"{agent.name}/{mode_id} 官方客户端已检测到（{client_detail}）；"
+        "最终交付仍以客户端内最小中文任务和功能验收矩阵记录为准。",
+    )
+
+
 def agent_dialogue_probe_command_text(agent: AgentSpec, model: str) -> str:
-    if agent.id == "gemini_agy":
-        return "配置待开发，请用 Google 账号自行登录进行中文对话"
     if agent.id == "codex":
         return "胖虎AI /v1/chat/completions 最小中文真实任务验证"
     try:
@@ -3612,7 +4457,10 @@ def agent_dialogue_probe_command_text(agent: AgentSpec, model: str) -> str:
 
 def _agent_mode_label(agent: AgentSpec, mode_id: str) -> str:
     mode_labels = {mode.id: mode.label for mode in agent.modes}
-    return mode_labels.get(mode_id, mode_id)
+    # CLI-only Agent 已移除 client 模式，但矩阵仍可能渲染 client scope 行；
+    # 客户可见文案回退到中文标签，不出现原始英文 mode id。
+    fallback_labels = {"cli": "CLI", "client": "客户端"}
+    return mode_labels.get(mode_id, fallback_labels.get(mode_id, mode_id))
 
 
 def _customer_status_label(status: NodeStatus) -> str:
@@ -3678,7 +4526,28 @@ def write_customer_agent_acceptance_matrix(
     return report_path
 
 
+AGENT_KEY_FORMAT = {
+    "codex": "openai",
+    "openclaw": "openai",
+    "hermes": "openai",
+    "claude_code": "anthropic",
+    "gemini_agy": "gemini",
+}
+KEY_FORMAT_IDS = ("openai", "anthropic", "gemini")
+KEY_FORMAT_LABELS = {"openai": "OpenAI 兼容格式", "anthropic": "Anthropic 格式", "gemini": "Gemini 格式"}
+
+
+def key_format_for_agent(agent_id: str) -> str:
+    return AGENT_KEY_FORMAT.get(agent_id, "openai")
+
+
 def apply_agent_config(agent: AgentSpec, mode_id: str, api_key: str, model: str, log) -> bool:
+    # 统一快照层：首次接管前留存 original 初始快照；每次写配置前自动快照（保留最近 10 份）
+    try:
+        ensure_original_config_snapshot(agent.id, log)
+        create_config_snapshot(agent.id, f"写入 {mode_id} 配置前自动快照", log=log)
+    except Exception as exc:  # 快照失败不阻断配置，但必须让用户知道
+        log(f"警告：{agent.name} 配置快照创建失败（{exc}）；本次写入仍有单文件备份保护。")
     if agent.id == "codex":
         log("Codex 配置由 Codex 主配置链路写入。")
         return True
@@ -3689,8 +4558,7 @@ def apply_agent_config(agent: AgentSpec, mode_id: str, api_key: str, model: str,
     if agent.id == "hermes":
         return install_hermes_config(api_key, model, log)
     if agent.id == "gemini_agy":
-        log("Gemini / agy 配置待开发：本版不写入胖虎AI API Key、网关或模型，客户通过 Google 账号自行登录。")
-        return False
+        return install_gemini_agy_config(api_key, model, log)
     raise ValueError(f"未知 Agent：{agent.id}/{mode_id}")
 
 
@@ -3717,7 +4585,7 @@ def build_agent_setup_guide_content(selected: list[tuple[AgentSpec, str]], api_k
 4. 只有点击“双态配置”时，才需要用户重新打开 Codex 后自行登录自己的 ChatGPT 账号。
 5. 双态模式下，Codex 会保持用户自己的账号登录态，同时模型调用消耗胖虎AI API Key。本工具不代替登录、不保存 ChatGPT 账号密码。
 6. ClaudeCode/CC、OpenClaw、Hermes 都按官方 CLI 与客户端入口做安装和配置；IDE 插件形态不处理。
-7. Gemini / agy 本版只保留官方安装入口；配置待开发，默认通过 Google 账号自行登录，不计为完整交付。
+7. Google 反重力（agy，Google Antigravity）按官方 CLI 与客户端入口安装，写入胖虎AI网关 Gemini 格式配置；未通过最小中文对话验收前不计完整交付。
 8. OpenClaw、Hermes 等复杂第三方通道默认跳过，只走能让买家直接对话的最短可用链路。
 9. 已接入配置链路的 Agent 必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付。
 10. 本工具不会把 API Key 明文写入日志。
@@ -3779,13 +4647,14 @@ def environment_help_text() -> str:
 def agent_choice_help_text() -> str:
     return "\n".join(
         [
-            "本工具固定覆盖五个 Agent：Codex、Claude Code/CC、Hermes、OpenClaw、Gemini / agy。",
+            "本工具固定覆盖五个 Agent：Codex、Claude Code/CC、Hermes、OpenClaw、Google 反重力（agy）。",
             "",
             "Agent 差异：",
             "- Codex：写入胖虎AI API Key、接口、模型和中文规则。",
             "- Claude Code/CC：覆盖官方 CLI 和客户端入口，写入胖虎AI网关配置。",
             "- OpenClaw：覆盖官方 CLI 和 Hub/客户端入口，第三方通道默认跳过，只保留直接对话链路。",
             "- Hermes：覆盖官方 CLI 和客户端入口，第三方通道默认跳过，只保留直接对话链路。",
+            "- Google 反重力（agy）：覆盖 Google Antigravity 官方 CLI 和客户端入口，写入胖虎AI网关 Gemini 格式配置。",
             "",
             "CLI 和客户端都要做进去；VS Code / IDE 插件形态不作为本轮交付对象。",
         ]
@@ -3854,7 +4723,7 @@ def install_agent(agent: AgentSpec, mode_id: str, log) -> bool:
         ok = install_gemini_agy_cli(log)
     elif agent.id == "gemini_agy" and mode_id == "client":
         open_url(GEMINI_AGY_DOCS_URL)
-        log("已打开 Google Antigravity 官方入口；Gemini / agy 配置功能待开发。")
+        log("已打开 Google Antigravity 官方入口；请按官方流程完成安装，随后本工具会写入胖虎AI网关配置（~/.gemini/.env）。")
         ok = True
     else:
         log("未知 Agent 或安装方式。")
@@ -3887,15 +4756,6 @@ def detect_environment() -> list[str]:
     for command in ("powershell", "winget", "npm", "node"):
         exists, path = command_exists(command)
         lines.append(f"{command}: {'已找到 ' + path if exists else '未找到'}")
-    system = current_system_id()
-    lines = [
-        f"系统：{platform.system()} {platform.release()}",
-        f"架构：{platform.machine()}",
-        f"识别结果：{'Windows' if system == 'windows' else 'Mac' if system == 'mac' else '其他系统'}",
-    ]
-    for command in ("powershell", "winget", "npm", "node"):
-        exists, path = command_exists(command)
-        lines.append(f"{command}: {'已找到 ' + path if exists else '未找到'}")
     lines.extend(agent_install_status_lines())
     lines.extend(risk_plugin_report_lines(detect_risk_plugins()))
     return lines
@@ -3918,10 +4778,22 @@ def enable_windows_dpi_awareness() -> None:
 class WebviewApi:
     def __init__(self, app: "InstallerApp") -> None:
         self.app = app
+        # 登录并发护栏：login() 每次都无条件起后台 worker 线程，双击/连点会起多个
+        # _login_bridge_worker 并发写会话/账号文件。用锁+标志拒绝并发登录，
+        # 前端按钮禁用只是即时反馈、不可依赖（pending 立刻返回后就复位了）。
+        self._login_lock = threading.Lock()
+        self._login_in_flight = False
+
+    @staticmethod
+    def _accepted(message: str) -> dict:
+        return {"success": True, "accepted": True, "message": message}
 
     def get_initial_state(self) -> dict:
+        # 前端加载完成后的首次全量拉取；此后才允许 Python 侧 evaluate_js 推送。
+        self.app.webview_ready = True
         is_logged = self.app.logged_in_user is not None and self.app.deployer_auth is not None
         metrics = self.app._commercial_metric_values()
+        agent_center_state = self.app.current_agent_center_web_state()
 
         agent_enabled = {}
         for k, v in self.app.agent_enabled.items():
@@ -3933,7 +4805,7 @@ class WebviewApi:
 
         agent_matrix_state = {}
         selected_ids = {agent.id for agent, _mode in self.app.selected_agents()}
-        executable = self.app.can_access_step(5)
+        executable = self.app.can_access_step(4)
         for agent in AGENTS:
             selected = agent.id in selected_ids
             if self.app.worker_running and selected and executable:
@@ -3954,7 +4826,7 @@ class WebviewApi:
                 }
             elif selected:
                 states = {
-                    "install": SUCCESS,
+                    "install": NEUTRAL_DOT,
                     "launch": NEUTRAL_DOT,
                     "dialogue": NEUTRAL_DOT,
                     "acceptance": NEUTRAL_DOT,
@@ -3973,12 +4845,23 @@ class WebviewApi:
             }
 
         if not hasattr(self.app, "webview_logs"):
-            self.app.webview_logs = {i: [] for i in range(1, 10)}
+            self.app.webview_logs = empty_flow_logs()
+
+        login_state = load_login_account_public_state()
+        login_username = self.app.login_username.get().strip() or str(login_state.get("last_username") or "")
+        login_account = login_account_public_entry(login_username)
 
         return {
             "isLogged": is_logged,
-            "loginUsername": self.app.login_username.get(),
-            "apiKeyValue": self.app.api_key.get(),
+            "loginUsername": login_username,
+            "loginPassword": "",
+            "loginPasswordSaved": bool(login_account.get("has_password")),
+            "rememberPassword": bool(login_account.get("remember_password")),
+            "autoLogin": bool(login_account.get("auto_login")),
+            "restoringSession": False,
+            "apiKeyValue": "",
+            "apiKeyPresent": bool(self.app.api_key.get().strip()),
+            "apiKeyMasked": mask_key(self.app.api_key.get().strip()) if self.app.api_key.get().strip() else "",
             "skipTest": self.app.skip_test.get(),
             "savedKeyOk": self.app.saved_key_ok,
             "environmentChecked": self.app.environment_checked,
@@ -3994,23 +4877,48 @@ class WebviewApi:
             "currentStep": self.app.step.get(),
             "activeSubnav": self.app.active_subnav.get(),
             "activeModule": self.app.active_module.get(),
+            "loginAccounts": login_state.get("accounts") or [],
+            "accounts": login_state.get("accounts") or [],
+            "buyerPurchase": self.app.current_buyer_purchase_state(),
+            "agentCenter": agent_center_state,
+            "valueAddedServices": self.app.current_value_added_services_state(),
+            "communicationSoftwareLink": self.app.current_communication_software_link_web_state(),
         }
 
-    def login(self, username, password):
-        self.app.login_username.set(username)
-        self.app.login_password.set(password)
+    def login(self, username, password, remember_password=False, auto_login=False):
+        # 登录含网络请求（最长 20s）。必须放后台线程：
+        # 1) 网络请求不能堵 GUI 线程；
+        # 2) 关键——绝不能在 js_api 回调里同步调 evaluate_js（pywebview 会重入死锁）。
+        # 因此本方法只启线程后立刻返回，任何 log/evaluate_js 都由线程里做。
+        with self._login_lock:
+            if self._login_in_flight:
+                return {"success": False, "message": "登录进行中，请稍候……", "pending": False}
+            self._login_in_flight = True
+        threading.Thread(
+            target=self._login_bridge_worker,
+            args=(username, password, bool(remember_password), bool(auto_login)),
+            daemon=True,
+        ).start()
+        return {"success": True, "message": "登录请求已提交", "pending": True}
+
+    def _login_bridge_worker(self, username, password, remember_password, auto_login):
         try:
+            self.app.login_username.set(username)
+            self.app.login_password.set(password)
+            self.app.push_webview_toast("正在登录胖虎AI，请稍候……", "running")
             ok, msg, data = login_panghuai(username, password, self.app.cookie_jar)
             self.app.log(msg)
             if not ok:
                 self.app.status.set("状态：登录失败")
-                return {"success": False, "message": msg}
+                self.app.push_webview_toast(f"登录失败：{msg}", "error")
+                return
 
             auth_ok, auth_msg, auth_data = activate_deployer(data, self.app.cookie_jar)
             self.app.log(auth_msg)
             if not auth_ok:
                 self.app.status.set("状态：部署授权失败")
-                return {"success": False, "message": auth_msg}
+                self.app.push_webview_toast(f"部署授权失败：{auth_msg}", "error")
+                return
 
             self.app.logged_in_user = data
             self.app.deployer_auth = auth_data
@@ -4021,66 +4929,145 @@ class WebviewApi:
             save_buyer_session_state(data, self.app.cookie_jar)
             save_profile_data({"username": display_name}, self.app.commercial_contexts)
 
-            self.app.step.set(2)
+            save_login_account_state(
+                username=display_name,
+                password=password,
+                remember_password=bool(remember_password or auto_login),
+                auto_login=bool(auto_login and (remember_password or auto_login)),
+                user_id=str(data.get("id") or ""),
+            )
+            self.app.login_username.set(display_name)
+            self.app.login_password.set("")
+
+            self.app.step.set(1)
             self.app.status.set("状态：已登录，请按步骤部署")
             self.app.run_later(1200, self.app.start_auto_update_check)
             self.app.run_later(1600, self.app.start_refresh_commercial_manifest)
             self.app.sync_webview_state()
-            return {"success": True, "message": "登录成功"}
         except Exception as e:
             self.app.status.set("状态：登录错误")
+            self.app.log(f"登录错误：{e}")
+            self.app.push_webview_toast(f"登录错误：{e}", "error")
+        finally:
+            with self._login_lock:
+                self._login_in_flight = False
+
+    def login_saved_account(self, username):
+        target = login_account_private_entry(username)
+        if not target:
+            return {"success": False, "message": "未找到该账号的保存记录。"}
+        password = target.get("password", "")
+        if not password:
+            return {"success": False, "message": "该账号没有可用的本机保存密码，请手动输入密码。"}
+        remember_password = target.get("remember_password", False)
+        auto_login = target.get("auto_login", False)
+        return self.login(target.get("username", username), password, remember_password, auto_login)
+
+    def select_login_account(self, username):
+        account = login_account_public_entry(username)
+        self.app.login_username.set(account.get("username", ""))
+        self.app.login_password.set("")
+        self.app.sync_webview_state()
+        return {"success": True, "account": account}
+
+    def remove_login_account(self, username):
+        try:
+            state = remove_login_account_state(username)
+            if _normalize_login_username(self.app.login_username.get()) == _normalize_login_username(username):
+                self.app.login_password.set("")
+                clear_buyer_session_state(self.app.cookie_jar)
+                self.app.cookie_jar = load_buyer_cookie_jar()
+                self.app.logged_in_user = None
+                self.app.deployer_auth = None
+                self.app.commercial_contexts = None
+                self.app.step.set(1)
+                self.app.status.set("客服提示：请先登录胖虎AI账号")
+            self.app.sync_webview_state()
+            return {"success": True, "state": state}
+        except Exception as e:
             return {"success": False, "message": str(e)}
 
     def logout(self):
+        last_user = self.app.login_username.get().strip()
+        if last_user:
+            disable_login_account_auto_login(last_user)
         clear_buyer_session_state(self.app.cookie_jar)
         self.app.cookie_jar = load_buyer_cookie_jar()
         self.app.logged_in_user = None
         self.app.deployer_auth = None
         self.app.commercial_contexts = None
+        self.app.login_password.set("")
         self.app.step.set(1)
         self.app.status.set("客服提示：请先登录胖虎AI账号")
         self.app.sync_webview_state()
         return True
 
-    def save_key(self, api_key: str, skip_test: bool):
-        self.app.api_key.set(api_key)
-        self.app.skip_test.set(skip_test)
+    def build_register_url(self, invite_code_or_url=""):
+        return build_register_url(str(invite_code_or_url or ""))
+
+    def save_key(self, payload, skip_test: bool = False):
+        if isinstance(payload, dict):
+            keys_in = payload.get("keys") or {}
+            models_in = payload.get("models") or {}
+            skip = bool(payload.get("skip_test"))
+        else:
+            keys_in = {"openai": str(payload or "")}
+            models_in = {}
+            skip = bool(skip_test)
+        if not isinstance(getattr(self.app, "deploy_keys", None), dict):
+            self.app.deploy_keys = {f: {"key": "", "model": ""} for f in KEY_FORMAT_IDS}
+        for fmt in KEY_FORMAT_IDS:
+            self.app.deploy_keys[fmt] = {
+                "key": (keys_in.get(fmt) or "").strip(),
+                "model": (models_in.get(fmt) or "").strip(),
+            }
+        self.app.api_key.set(self.app.deploy_keys["openai"]["key"])
+        if self.app.deploy_keys["openai"]["model"]:
+            self.app.model.set(self.app.deploy_keys["openai"]["model"])
+        self.app.skip_test.set(skip)
         try:
             if not self.app.logged_in_user:
                 return {"success": False, "message": "请先登录胖虎AI账号。"}
             if not self.app.deployer_auth:
-                return {"success": False, "message": "请重新登录胖虎AI账号获取部署授权。"}
-            if not api_key.strip():
-                return {"success": False, "message": "请先填写胖虎AI API Key。"}
+                return {"success": False, "message": "请重新登录胖虎AI账号以重新获取部署授权。"}
+            provided = [fmt for fmt in KEY_FORMAT_IDS if self.app.deploy_keys[fmt]["key"]]
+            if not provided:
+                return {"success": False, "message": "请至少填写一种格式的 API Key。"}
 
-            self.app.status.set("状态：正在测试 API Key...")
+            self.app.status.set("状态：正在校验 API Key...")
             contexts = deployment_commercial_contexts(self.app.logged_in_user or {})
-            verify_msg = execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.app.deployer_auth)
-            self.app.log(verify_msg)
+            for fmt in provided:
+                verify_msg = execute_api_key_owner_verify(
+                    self.app.deploy_keys[fmt]["key"], contexts, opener=trusted_urlopen, deployer_auth=self.app.deployer_auth
+                )
+                self.app.log(f"[{KEY_FORMAT_LABELS.get(fmt, fmt)}] {verify_msg}")
 
-            if skip_test:
-                ok, msg = True, "已保存 Key，接口测试被跳过。"
+            if "openai" in provided and not skip:
+                ok, msg = test_api(DEFAULT_BASE_URL, self.app.deploy_keys["openai"]["key"])
+                self.app.log(f"[OpenAI 兼容格式] {msg}")
             else:
-                ok, msg = test_api(DEFAULT_BASE_URL, api_key)
-            self.app.log(msg)
+                ok, msg = True, "已保存 Key；Anthropic / Gemini 格式的连通性将在部署时按各自端点验证。"
+                self.app.log(msg)
 
             self.app.saved_key_ok = ok
             if ok:
-                self.app.saved_key_signature = (api_key.strip(), DEFAULT_BASE_URL, self.app.model.get().strip(), skip_test)
+                self.app.saved_key_signature = self.app.current_key_signature()
                 save_profile_data(
                     {
-                        "api_key": api_key.strip(),
+                        "api_key": self.app.deploy_keys["openai"]["key"],
                         "base_url": DEFAULT_BASE_URL,
                         "model": self.app.model.get().strip(),
-                        "skip_test": skip_test,
+                        "deploy_keys": self.app.deploy_keys,
+                        "skip_test": skip,
                         "open_app": self.app.open_app.get(),
                     },
                     contexts,
                 )
                 self.app.status.set("状态：Key 已保存")
-                self.app.step.set(3)
+                self.app.step.set(2)
                 self.app.sync_webview_state()
-                return {"success": True, "message": "Key 已保存"}
+                fmt_names = "、".join(KEY_FORMAT_LABELS.get(f, f) for f in provided)
+                return {"success": True, "message": f"已保存 {len(provided)} 种格式的 Key（{fmt_names}）"}
             else:
                 self.app.status.set("状态：Key 测试失败")
                 return {"success": False, "message": msg}
@@ -4095,31 +5082,38 @@ class WebviewApi:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
+    def start_install(self):
+        try:
+            self.app.start_install()
+            return self._accepted("安装请求已受理，最终结果以状态和诊断日志为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
     def start_deploy(self):
         try:
             self.app.start_deploy()
-            return {"success": True}
+            return self._accepted("写入配置与交付请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def start_dual_state_config(self):
         try:
             self.app.start_dual_state_config()
-            return {"success": True}
+            return self._accepted("双态配置请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def start_official_chatgpt_config(self):
         try:
             self.app.start_official_chatgpt_config()
-            return {"success": True}
+            return self._accepted("官方直登配置请求已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def start_config_only(self):
         try:
             self.app.start_config_only()
-            return {"success": True}
+            return self._accepted("配置任务已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -4127,6 +5121,71 @@ class WebviewApi:
         try:
             self.app.restore_backups()
             return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    # --- 配置健康：快照 / 一键恢复 / 漂移巡检 / 一键修复 ---
+
+    def list_config_snapshots(self, agentId):
+        try:
+            return {"success": True, "snapshots": list_config_snapshots(str(agentId))}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def restore_config_snapshot(self, agentId, snapshotName):
+        try:
+            restore_config_snapshot(str(agentId), str(snapshotName), self.app.log)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def restore_original_config(self, agentId):
+        try:
+            restore_original_config(str(agentId), self.app.log)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def inspect_config_drift(self):
+        try:
+            expected_models = {agent.id: self.app.key_model_for_agent(agent.id)[1] for agent in AGENTS}
+            return {"success": True, "report": inspect_all_config_drift(expected_models=expected_models)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def repair_config_drift(self, agentId):
+        try:
+            api_key, model = self.app.key_model_for_agent(str(agentId))
+            ok = repair_agent_config_drift(str(agentId), api_key, model, self.app.log)
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def measure_gateway_latency(self):
+        try:
+            return {"success": True, "result": measure_gateway_latency()}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def get_codex_mode_status(self):
+        """一键检测当前 Codex 模式，免手动翻配置文件。"""
+        try:
+            config_text = _read_text_safe(codex_home() / "config.toml")
+            auth_text = _read_text_safe(codex_auth_path())
+            mode = detect_codex_config_mode(config_text, auth_text)
+            mode_labels = {
+                CodexConfigMode.DIRECT_API: "普通模式（走胖虎额度）",
+                CodexConfigMode.DUAL_STATE: "双态模式（保留 ChatGPT 登录态，走胖虎额度）",
+                CodexConfigMode.OFFICIAL_CHATGPT: "官方直登（走你自己的 ChatGPT 账号额度）",
+            }
+            return {
+                "success": True,
+                "configured": bool(config_text or auth_text),
+                "current_mode": mode.value if mode else None,
+                "current_mode_label": mode_labels.get(mode, "未检测到胖虎配置" if not mode else mode.value),
+                "has_chatgpt_login": has_chatgpt_auth_state(auth_text),
+                "gateway_ok": ("aitokenapi.cc" in config_text) if mode in (CodexConfigMode.DIRECT_API, CodexConfigMode.DUAL_STATE) else None,
+            }
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -4154,28 +5213,205 @@ class WebviewApi:
     def start_update_check(self):
         try:
             self.app.start_update_check()
-            return {"success": True}
+            return self._accepted("更新检查已受理，最终结果以状态和诊断日志为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def buyer_create_order(self):
         try:
             self.app.start_buyer_create_order()
-            return {"success": True}
+            return self._accepted("订单创建请求已受理，支付状态以服务端回填为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def buyer_poll_payment(self):
         try:
             self.app.start_buyer_poll_payment()
-            return {"success": True}
+            return self._accepted("支付查询已受理，是否可交付以服务端权益回填为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
     def buyer_refresh_entitlements(self):
         try:
             self.app.start_buyer_refresh_entitlements()
-            return {"success": True}
+            return self._accepted("权益刷新已受理，最终权益以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def buyer_create_payment_order(self):
+        try:
+            return self.app.create_buyer_payment_order()
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def buyer_query_payment_status(self, order_id=None):
+        try:
+            return self.app.query_buyer_payment_status(str(order_id or ""))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_list_products(self):
+        try:
+            return self.app.subscription_list_products()
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_create_order(self, product_id=None, quantity=1):
+        try:
+            return self.app.subscription_create_order(str(product_id or ""), int(quantity or 1))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_query_order(self, order_id=None):
+        try:
+            return self.app.subscription_query_order(str(order_id or ""))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def subscription_open_plus_tool(self, plus_tool_url=None, code=None):
+        try:
+            return self.app.subscription_open_plus_tool(str(plus_tool_url or ""), str(code or ""))
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def refresh_agent_center(self):
+        try:
+            self.app.start_refresh_agent_center()
+            return self._accepted("代理中心刷新已受理，最终快照以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def refresh_agent_center_detail(self):
+        try:
+            self.app.start_refresh_agent_center_detail()
+            return self._accepted("代理中心明细刷新已受理，最终明细以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def _apply_communication_software_link_payload(self, payload=None):
+        if not isinstance(payload, dict):
+            return
+        state_payload = payload.get("state")
+        flattened = dict(payload)
+        if isinstance(state_payload, dict):
+            flattened.update(state_payload)
+        aliases = {
+            "serviceProductId": "service_product_id",
+            "orderId": "order_id",
+            "sessionId": "session_id",
+            "agentId": "agent_id",
+            "agentSource": "agent_source",
+            "platformAccountId": "platform_account_id",
+            "platformChatId": "platform_chat_id",
+            "gatewayMode": "gateway_mode",
+            "testPrompt": "test_prompt",
+            "sourceEventId": "source_event_id",
+            "inboundPlatformMessageId": "inbound_platform_message_id",
+            "outboundPlatformMessageId": "outbound_platform_message_id",
+            "agentResponseDigest": "agent_response_digest",
+            "evidenceUrl": "evidence_url",
+        }
+        for camel_key, snake_key in aliases.items():
+            if camel_key in flattened and snake_key not in flattened:
+                flattened[snake_key] = flattened[camel_key]
+        mapping = {
+            "service_product_id": self.app.communication_software_link_service_product_id,
+            "order_id": self.app.communication_software_link_order_id,
+            "session_id": self.app.communication_software_link_session_id,
+            "agent_id": self.app.communication_software_link_agent_id,
+            "channel": self.app.communication_software_link_channel,
+            "agent_source": self.app.communication_software_link_agent_source,
+            "platform_account_id": self.app.communication_software_link_platform_account_id,
+            "platform_chat_id": self.app.communication_software_link_platform_chat_id,
+            "gateway_mode": self.app.communication_software_link_gateway_mode,
+            "test_prompt": self.app.communication_software_link_test_prompt,
+            "source_event_id": self.app.communication_software_link_source_event_id,
+            "inbound_platform_message_id": self.app.communication_software_link_inbound_message_id,
+            "outbound_platform_message_id": self.app.communication_software_link_outbound_message_id,
+            "agent_response_digest": self.app.communication_software_link_response_digest,
+            "evidence_url": self.app.communication_software_link_evidence_url,
+        }
+        for key, var in mapping.items():
+            if key in flattened:
+                var.set(str(flattened.get(key) or ""))
+
+    def communication_software_link_refresh_offering(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_refresh_offering()
+            return self._accepted("连接通讯软件服务商品刷新已受理，价格和上架状态以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_create_order(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_create_order()
+            return self._accepted("连接通讯软件订单创建已受理，支付/人工确认状态以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_get_order(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_get_order()
+            return self._accepted("连接通讯软件订单查询已受理，终态以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_create_session(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_create_session()
+            return self._accepted("连接通讯软件配置会话创建已受理，最终会话状态以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_get_session(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_get_session()
+            return self._accepted("连接通讯软件会话查询已受理，终态以服务端返回为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_test(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_test()
+            return self._accepted("连接通讯软件测试请求已受理，测试结果以服务端回填为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_run_local_runtime_test(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_local_runtime_test()
+            return self._accepted("连接通讯软件本地 Runtime 测试已受理，完成后只生成本地预检字段，不能替代通讯软件平台回调。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_one_click_connect(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_one_click_connect()
+            return self._accepted("连接通讯软件一键连接已受理：将完成订单、配置会话、测试和本地预检；不会自动提交真实验收。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_acceptance(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_acceptance()
+            return self._accepted("连接通讯软件验收证据提交请求已受理，最终交付以服务端真实验收记录为准。")
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def communication_software_link_disable(self, payload=None):
+        try:
+            self._apply_communication_software_link_payload(payload)
+            self.app.start_communication_software_link_disable()
+            return self._accepted("连接通讯软件停用请求已受理，停用终态以服务端返回为准。")
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -4188,6 +5424,22 @@ class WebviewApi:
                 storage_path=self.app.current_buyer_web_profile_path(),
             )
             return {"success": True}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def open_sms_console(self):
+        """接码控制台：在内置 WebView 打开 sim.aitokenapi.cc（桥接买家登录态）；不可用时兜底外部浏览器。"""
+        try:
+            url = SIM_CONTROL_URL
+            opened = try_open_embedded_webview(
+                url, title="接码控制台",
+                cookie_jar=self.app.cookie_jar, log=self.app.log,
+                storage_path=self.app.current_buyer_web_profile_path(),
+            )
+            if not opened:
+                open_url(url, cookie_jar=self.app.cookie_jar, log=self.app.log,
+                         storage_path=self.app.current_buyer_web_profile_path())
+            return {"success": True, "message": "已打开接码控制台。"}
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -4208,6 +5460,18 @@ class WebviewApi:
 
     def switch_subnav(self, itemId):
         try:
+            # agent 模块的子导航就是 11 步流程；跳步必须过 can_access_step 门禁，
+            # 否则买家没做完前置步骤(Key/环境/选 Agent)也能直接跳到"写入配置/功能验收"。
+            # 统一走 go_to_step：越权时自动回退到 first_missing_step 并提示。
+            if self.app.active_module.get() == MODULE_AGENT:
+                try:
+                    idx = int(itemId)
+                except (TypeError, ValueError):
+                    idx = None
+                if idx is not None:
+                    self.app.go_to_step(idx)
+                    self.app.sync_webview_state()
+                    return {"success": True}
             self.app.active_subnav.set(str(itemId))
             self.app.sync_webview_state()
             return {"success": True}
@@ -4250,13 +5514,86 @@ class WebviewApi:
             return {"success": False, "message": str(e)}
 
 
+class WebviewVar:
+    """webview 模式下替代 tk.StringVar/BooleanVar/IntVar 的线程安全变量。
+
+    真机根因（2026-07-04 登录"无反应"）：webview 模式主线程阻塞在
+    webview.start()，Tk mainloop 永远不运行；此时任何 pywebview bridge
+    线程或后台线程访问 Tk 变量都会抛 RuntimeError: main thread is not
+    in main loop，导致 js_api 调用与登录后台线程集体无声失败。
+    业务界面只允许 WebView，这些变量只承担纯数据存取与 trace 回调，
+    因此改用普通线程安全对象，任何线程可读写。
+    """
+
+    def __init__(self, value=None):
+        self._lock = threading.Lock()
+        self._value = value
+        self._traces: list = []
+
+    def get(self):
+        with self._lock:
+            return self._value
+
+    def set(self, value) -> None:
+        with self._lock:
+            self._value = value
+            traces = list(self._traces)
+        for callback in traces:
+            try:
+                callback("", "", "write")
+            except Exception:
+                pass
+
+    def trace_add(self, mode: str, callback) -> str:
+        with self._lock:
+            self._traces.append(callback)
+            return f"webviewtrace{len(self._traces)}"
+
+
+class WebviewStringVar(WebviewVar):
+    def __init__(self, value: str = ""):
+        super().__init__("" if value is None else str(value))
+
+    def get(self) -> str:
+        value = super().get()
+        return "" if value is None else str(value)
+
+
+class WebviewBooleanVar(WebviewVar):
+    def __init__(self, value: bool = False):
+        super().__init__(bool(value))
+
+    def set(self, value) -> None:
+        super().set(bool(value))
+
+
+class WebviewIntVar(WebviewVar):
+    def __init__(self, value: int = 0):
+        super().__init__(int(value))
+
+    def set(self, value) -> None:
+        super().set(int(value))
+
+
 class InstallerApp:
     def __init__(self, root: tk.Tk, webview_mode: bool = False) -> None:
+        if not webview_mode:
+            raise RuntimeError("胖虎AI客户端正式业务界面只允许 WebView UI；旧 Tkinter 业务界面已禁止启动。")
         self.webview_mode = webview_mode
         self.root = root
         self.theme_name = load_theme_preference()
-        self.webview_logs = {i: [] for i in range(1, 10)}
+        self.webview_logs = empty_flow_logs()
         self.webview_window = None
+        # 前端就绪门闩：页面加载完成并首次拉取 get_initial_state 前，禁止任何
+        # evaluate_js 推送。evaluate_js 无超时；若与页面加载竞态（如启动时的
+        # 会话恢复线程），会永久锁死 bridge 导致窗口"未响应"。就绪前的状态与
+        # 日志都会在首次拉取时整体带给前端，不会丢失。
+        self.webview_ready = False
+        # 异步 JS 推送队列：所有 evaluate_js 一律经专用线程执行。
+        # 直接在 pywebview js_api 回调里同步 evaluate_js 会重入死锁（save_key/
+        # run_env_check 等同步 bridge 曾整窗卡死）；队列化后调用方立即返回。
+        self._js_push_queue: queue.Queue = queue.Queue()
+        threading.Thread(target=self._js_push_worker, daemon=True).start()
 
         if not getattr(self, 'webview_mode', False):
             root.title(APP_NAME)
@@ -4274,7 +5611,13 @@ class InstallerApp:
         self.commercial_contexts = None
         self.commercial_capabilities = {}
         self.commercial_products = []
+        self.value_added_services = []
         self.commercial_entitlements: list[EntitlementContract] = []
+        self.agent_center_live_data: dict = {}
+        self.agent_downstreams_live_data: dict = {}
+        self.agent_commissions_live_data: dict[str, dict] = {}
+        self.communication_software_link_offering_data: dict = {}
+        self.communication_software_link_order_statuses: dict[str, dict] = {}
         self.commercial_api = CommercialApiContract(DEFAULT_BASE_URL)
         self.last_diagnostic_code = ""
         self.saved_key_ok = False
@@ -4288,23 +5631,42 @@ class InstallerApp:
         if not getattr(self, 'webview_mode', False):
             self.root.protocol("WM_DELETE_WINDOW", self.close_app)
 
-        self.login_username = tk.StringVar()
-        self.login_password = tk.StringVar()
-        self.buyer_product_id = tk.StringVar()
-        self.buyer_order_id = tk.StringVar()
-        self.login_entry_mode = tk.StringVar(value="buyer")
+        self.login_username = WebviewStringVar()
+        self.login_password = WebviewStringVar()
+        self.registration_invite_code = WebviewStringVar()
+        self.remember_password = WebviewBooleanVar(value=True)
+        self.auto_login = WebviewBooleanVar(value=False)
+        self.buyer_product_id = WebviewStringVar()
+        self.buyer_order_id = WebviewStringVar()
+        self.communication_software_link_service_product_id = WebviewStringVar()
+        self.communication_software_link_order_id = WebviewStringVar()
+        self.communication_software_link_session_id = WebviewStringVar()
+        self.communication_software_link_agent_id = WebviewStringVar(value="codex")
+        self.communication_software_link_channel = WebviewStringVar(value="feishu")
+        self.communication_software_link_agent_source = WebviewStringVar(value="existing_local_agent")
+        self.communication_software_link_platform_account_id = WebviewStringVar()
+        self.communication_software_link_platform_chat_id = WebviewStringVar()
+        self.communication_software_link_gateway_mode = WebviewStringVar(value="official_bot")
+        self.communication_software_link_test_prompt = WebviewStringVar(value=COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT)
+        self.communication_software_link_source_event_id = WebviewStringVar()
+        self.communication_software_link_inbound_message_id = WebviewStringVar()
+        self.communication_software_link_outbound_message_id = WebviewStringVar()
+        self.communication_software_link_response_digest = WebviewStringVar()
+        self.communication_software_link_evidence_url = WebviewStringVar()
+        self.login_entry_mode = WebviewStringVar(value="buyer")
         self.buyer_purchase_statuses: dict[BuyerSelfServiceNode, NodeStatus] = {}
-        self.api_key = tk.StringVar()
-        self.base_url = tk.StringVar(value=DEFAULT_BASE_URL)
-        self.model = tk.StringVar(value=DEFAULT_MODEL)
-        self.show_key = tk.BooleanVar(value=False)
-        self.skip_test = tk.BooleanVar(value=False)
-        self.open_app = tk.BooleanVar(value=True)
-        self.selected_system = tk.StringVar(value=current_system_id())
-        self.status = tk.StringVar(value="客服提示：请先登录胖虎AI账号")
-        self.step = tk.IntVar(value=1)
-        self.active_module = tk.StringVar(value=MODULE_AGENT)
-        self.active_subnav = tk.StringVar(value="2")
+        self.api_key = WebviewStringVar()
+        self.base_url = WebviewStringVar(value=DEFAULT_BASE_URL)
+        self.model = WebviewStringVar(value=DEFAULT_MODEL)
+        self.deploy_keys = {fmt: {"key": "", "model": ""} for fmt in KEY_FORMAT_IDS}
+        self.show_key = WebviewBooleanVar(value=False)
+        self.skip_test = WebviewBooleanVar(value=False)
+        self.open_app = WebviewBooleanVar(value=True)
+        self.selected_system = WebviewStringVar(value=current_system_id())
+        self.status = WebviewStringVar(value="客服提示：请先登录胖虎AI账号")
+        self.step = WebviewIntVar(value=1)
+        self.active_module = WebviewStringVar(value=MODULE_AGENT)
+        self.active_subnav = WebviewStringVar(value="2")
         self.agent_enabled: dict[str, tk.BooleanVar] = {}
         self.agent_mode: dict[str, tk.StringVar] = {}
         self.agent_rows: dict[str, tk.Frame] = {}
@@ -4317,8 +5679,8 @@ class InstallerApp:
 
         if getattr(self, 'webview_mode', False):
             for agent in AGENTS:
-                enabled = tk.BooleanVar(value=agent.id == "codex")
-                mode = tk.StringVar(value="cli")
+                enabled = WebviewBooleanVar(value=agent.id == "codex")
+                mode = WebviewStringVar(value="cli")
                 enabled.trace_add("write", self.mark_agent_selection_changed)
                 mode.trace_add("write", self.mark_agent_selection_changed)
                 self.agent_enabled[agent.id] = enabled
@@ -4343,40 +5705,6 @@ class InstallerApp:
             self.start_restore_saved_session()
         self.log("系统提示：请先登录胖虎AI账号。登录后再填写 Key、检测环境并安装 Agent。", replace=True)
 
-    def set_window_icon(self) -> None:
-        ico = asset_path("panghu-avatar.ico")
-        png = asset_path("panghu-avatar-64.png")
-        try:
-            if ico.exists() and platform.system() == "Windows":
-                self.root.iconbitmap(str(ico))
-            if png.exists():
-                self.window_icon = tk.PhotoImage(file=str(png))
-                self.root.iconphoto(True, self.window_icon)
-        except Exception:
-            self.window_icon = None
-
-    def load_ui_image(self, name: str) -> tk.PhotoImage | None:
-        path = asset_path(name)
-        if not path.exists():
-            return None
-        try:
-            image = tk.PhotoImage(file=str(path))
-            self.ui_images.append(image)
-            return image
-        except Exception:
-            return None
-
-    def load_scaled_ui_image(self, name: str, subsample: int = 1) -> tk.PhotoImage | None:
-        image = self.load_ui_image(name)
-        if image is None or subsample <= 1:
-            return image
-        try:
-            scaled = image.subsample(subsample, subsample)
-            self.ui_images.append(scaled)
-            return scaled
-        except Exception:
-            return image
-
     def load_profile_into_ui(self) -> None:
         profile = load_saved_profile()
         if not profile:
@@ -4384,6 +5712,15 @@ class InstallerApp:
         self.api_key.set(str(profile.get("api_key") or ""))
         self.base_url.set(DEFAULT_BASE_URL)
         self.model.set(str(profile.get("model") or DEFAULT_MODEL))
+        if not isinstance(getattr(self, "deploy_keys", None), dict):
+            self.deploy_keys = {fmt: {"key": "", "model": ""} for fmt in KEY_FORMAT_IDS}
+        _dk = profile.get("deploy_keys")
+        if isinstance(_dk, dict):
+            for fmt in KEY_FORMAT_IDS:
+                _e = _dk.get(fmt) or {}
+                self.deploy_keys[fmt] = {"key": str(_e.get("key") or ""), "model": str(_e.get("model") or "")}
+        else:
+            self.deploy_keys["openai"] = {"key": str(profile.get("api_key") or ""), "model": str(profile.get("model") or "")}
         self.skip_test.set(bool(profile.get("skip_test")))
         self.open_app.set(bool(profile.get("open_app", True)))
         # Hide stale proxy/agent identities from older polluted profiles.
@@ -4398,11 +5735,16 @@ class InstallerApp:
         self.login_username.set(str(profile.get("username") or ""))
 
     def sync_webview_state(self) -> None:
-        if not getattr(self, 'webview_mode', False) or not getattr(self, "webview_window", None):
+        if (
+            not getattr(self, 'webview_mode', False)
+            or not getattr(self, "webview_window", None)
+            or not getattr(self, "webview_ready", False)
+        ):
             return
 
         is_logged = self.logged_in_user is not None and self.deployer_auth is not None
         metrics = self._commercial_metric_values()
+        agent_center_state = self.current_agent_center_web_state()
 
         agent_enabled = {}
         for k, v in self.agent_enabled.items():
@@ -4414,7 +5756,7 @@ class InstallerApp:
 
         agent_matrix_state = {}
         selected_ids = {agent.id for agent, _mode in self.selected_agents()}
-        executable = self.can_access_step(5)
+        executable = self.can_access_step(4)
         for agent in AGENTS:
             selected = agent.id in selected_ids
             if self.worker_running and selected and executable:
@@ -4435,7 +5777,7 @@ class InstallerApp:
                 }
             elif selected:
                 states = {
-                    "install": SUCCESS,
+                    "install": NEUTRAL_DOT,
                     "launch": NEUTRAL_DOT,
                     "dialogue": NEUTRAL_DOT,
                     "acceptance": NEUTRAL_DOT,
@@ -4454,12 +5796,19 @@ class InstallerApp:
             }
 
         if not hasattr(self, "webview_logs"):
-            self.webview_logs = {i: [] for i in range(1, 10)}
+            self.webview_logs = empty_flow_logs()
 
         state_dict = {
             "isLogged": is_logged,
             "loginUsername": self.login_username.get(),
-            "apiKeyValue": self.api_key.get(),
+            "loginPassword": "",
+            "loginPasswordSaved": bool(login_account_public_entry(self.login_username.get()).get("has_password")),
+            "rememberPassword": bool(login_account_public_entry(self.login_username.get()).get("remember_password")),
+            "autoLogin": bool(login_account_public_entry(self.login_username.get()).get("auto_login")),
+            "restoringSession": False,
+            "apiKeyValue": "",
+            "apiKeyPresent": bool(self.api_key.get().strip()),
+            "apiKeyMasked": mask_key(self.api_key.get().strip()) if self.api_key.get().strip() else "",
             "skipTest": self.skip_test.get(),
             "savedKeyOk": self.saved_key_ok,
             "environmentChecked": self.environment_checked,
@@ -4475,35 +5824,58 @@ class InstallerApp:
             "currentStep": self.step.get(),
             "activeSubnav": self.active_subnav.get(),
             "activeModule": self.active_module.get(),
+            "loginAccounts": load_login_account_public_state().get("accounts") or [],
+            "accounts": load_login_account_public_state().get("accounts") or [],
+            "buyerPurchase": self.current_buyer_purchase_state(),
+            "agentCenter": agent_center_state,
+            "valueAddedServices": self.current_value_added_services_state(),
+            "communicationSoftwareLink": self.current_communication_software_link_web_state(),
         }
 
-        try:
-            self.webview_window.evaluate_js(f"updatePythonState({json.dumps(state_dict)})")
-        except Exception:
-            pass
-
-    def apply_restored_login_state(self) -> None:
-        username = self.login_username.get().strip()
-        if username:
-            display_username = username if len(username) <= 20 else f"{username[:17]}..."
-            self.user_label.configure(text=f"上次账号：{display_username}")
-            self.status.set("状态：已恢复上次账号提示，正在尝试恢复胖虎AI登录态")
-        else:
-            self.user_label.configure(text="账号：未登录")
+        self._push_js(f"updatePythonState({json.dumps(state_dict)})")
 
     def start_restore_saved_session(self) -> None:
         if self.logged_in_user or self.deployer_auth:
             return
-        user = load_buyer_session_user()
-        if not user:
+
+        saved_user = load_buyer_session_user()
+        if saved_user:
+            username = str(saved_user.get("username") or saved_user.get("display_name") or "").strip()
+            if username:
+                self.login_username.set(username)
+            self.log("正在恢复保存的胖虎AI登录态，并向服务端重新申请本次部署授权")
+            self.set_busy(True)
+            self.status.set("状态：正在恢复保存的胖虎AI登录态...")
+            threading.Thread(target=self._restore_saved_session_worker, args=(saved_user,), daemon=True).start()
             return
-        username = str(user.get("username") or user.get("display_name") or "").strip()
-        if username and not self.login_username.get().strip():
+        
+        state = load_login_account_state()
+        last_username = state.get("last_username", "")
+        auto_account = None
+        for acc in state.get("accounts", []):
+            if acc["username"] == last_username and acc.get("auto_login") and acc.get("remember_password") and acc.get("password"):
+                auto_account = acc
+                break
+                
+        if auto_account:
+            username = auto_account["username"]
+            password = auto_account["password"]
             self.login_username.set(username)
-        self.status.set("状态：正在恢复上次胖虎AI登录态...")
-        threading.Thread(target=self._restore_saved_session_worker, args=(user,), daemon=True).start()
+            self.login_password.set(password)
+            self.remember_password.set(True)
+            self.auto_login.set(True)
+            self.log("已启用自动登录，正在通过本机加密密码记录登录胖虎AI账号")
+            self.set_busy(True)
+            self.status.set("状态：正在自动登录胖虎AI...")
+            threading.Thread(target=self._login_worker, args=(username, password), daemon=True).start()
+        else:
+            clear_buyer_session_state(self.cookie_jar)
+            self.cookie_jar = load_buyer_cookie_jar()
 
     def _restore_saved_session_worker(self, user: dict) -> None:
+        # 注意：本 worker 必须在 finally 里 set_busy(False)。
+        # 历史 bug：恢复成功后 worker_running 永远为 True，导致检查更新/保存 Key/
+        # 部署等所有带 `if self.worker_running: return` 守卫的动作静默失效。
         try:
             auth_ok, auth_msg, auth_data = activate_deployer(user, self.cookie_jar)
             self.log_from_worker(f"恢复胖虎AI登录态：{auth_msg}")
@@ -4528,7 +5900,7 @@ class InstallerApp:
             def finish_restore() -> None:
                 if hasattr(self, "user_label"):
                     self.user_label.configure(text=f"已登录：{display_username}")
-                self.step.set(max(2, int(self.step.get() or 2)))
+                self.step.set(max(1, int(self.step.get() or 1)))
                 self.status.set("状态：已恢复上次胖虎AI登录态，可继续使用")
                 self.show_wizard()
 
@@ -4537,6 +5909,8 @@ class InstallerApp:
             self.run_later(1600, self.start_refresh_commercial_manifest)
         except Exception as exc:
             self.set_status_from_worker(f"状态：恢复登录态失败：{exc}")
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
 
     def current_buyer_web_profile_path(self) -> Path:
         if self.commercial_contexts is not None:
@@ -4550,150 +5924,6 @@ class InstallerApp:
         display_name = str(user.get("username") or user.get("display_name") or user_id or "买家")
         buyer = UserContext(user_id=user_id, display_name=display_name, role="buyer")
         return create_buyer_contexts(buyer)
-
-    def _build_ui(self) -> None:
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        self.root.option_add("*Font", ("Microsoft YaHei UI", 10))
-        style.configure(
-            "TEntry",
-            fieldbackground=INPUT_BG,
-            foreground=INK,
-            bordercolor=BORDER,
-            lightcolor=BORDER,
-            darkcolor=BORDER,
-            insertcolor=INK,
-        )
-        style.configure("TCombobox", fieldbackground=INPUT_BG, foreground=INK, bordercolor=BORDER)
-        style.configure("TCheckbutton", background=CARD_BG, foreground=INK)
-        style.configure("TRadiobutton", background=CARD_BG, foreground=INK)
-
-        self.container = tk.Frame(self.root, bg=APP_BG, padx=20, pady=20)
-        self.container.pack(fill="both", expand=True)
-        self.container.bind("<Configure>", self._sync_surface_layouts, add="+")
-        self.app_frame = tk.Frame(
-            self.container,
-            bg=APP_FRAME_BG,
-            highlightthickness=1,
-            highlightbackground=APP_FRAME_BORDER,
-            bd=0,
-        )
-        self.app_frame.pack(fill="both", expand=True)
-        self.topbar_outer = tk.Frame(self.app_frame, bg=APP_FRAME_BG)
-        self.topbar_outer.pack(fill="x")
-        self._build_topbar()
-        self.gate_shell = tk.Frame(self.app_frame, bg=APP_FRAME_BG)
-        self.gate_shell.pack(fill="both", expand=True, pady=(0, 0))
-        self.gate_shell.grid_columnconfigure(0, weight=1)
-        self.gate_shell.grid_rowconfigure(0, weight=1)
-        self.login_gate_host = tk.Frame(self.gate_shell, bg=APP_FRAME_BG)
-        self.login_gate_host.grid(row=0, column=0, sticky="nsew")
-        self.gate_shell.bind("<Configure>", self._sync_gate_layout, add="+")
-
-        self.console_outer = tk.Frame(self.app_frame, bg=APP_FRAME_BG)
-        self.console_outer.pack_propagate(False)
-        self.console_shell = tk.Frame(self.console_outer, bg=SURFACE_BG)
-        self.console_shell.grid_columnconfigure(0, minsize=LEFT_PANEL_WIDTH)
-        self.console_shell.grid_columnconfigure(1, weight=1)
-        self.console_shell.grid_columnconfigure(2, minsize=RIGHT_PANEL_WIDTH)
-        self.console_shell.grid_rowconfigure(0, weight=1)
-
-        self._build_sidebar(self.console_shell)
-
-        center_shell = tk.Frame(self.console_shell, bg=SURFACE_BG, padx=24, pady=22)
-        center_shell.grid(row=0, column=1, sticky="nsew")
-        center_shell.grid_rowconfigure(0, weight=1)
-        center_shell.grid_columnconfigure(0, weight=1)
-        self.center_shell = center_shell
-        self.steps_host = tk.Frame(center_shell, bg=SURFACE_BG)
-        self.steps_host.grid(row=0, column=0, sticky="nsew")
-        self.module_content_host = tk.Frame(center_shell, bg=SURFACE_BG)
-        self.module_content_host.grid(row=0, column=0, sticky="nsew")
-        self.module_content_frames: dict[str, tk.Frame] = {}
-        self._build_non_agent_module_frame(MODULE_SITE)
-        self._build_non_agent_module_frame(MODULE_VALUE_ADDED)
-        self._build_non_agent_module_frame(MODULE_COURSES)
-
-        self.step_frames: dict[int, tk.Frame] = {}
-        self.step_canvases: dict[int, tk.Canvas] = {}
-        self.step_hint_labels: dict[int, tk.Label] = {}
-        self.step_next_buttons: dict[int, tk.Button] = {}
-        self._build_step_1()
-        self._build_step_2()
-        self._build_step_3()
-        self._build_step_4()
-        self._build_step_5()
-        self._build_status_step(
-            6,
-            "第六步：写入配置",
-            "检查所选 Agent 是否已写入胖虎AI网关、Key、模型和本机配置文件。",
-            "配置写入由部署按钮触发。未通过功能验收矩阵前，不扣次、不算完整交付。",
-        )
-        self._build_status_step(
-            7,
-            "第七步：启动检测",
-            "确认 CLI 或客户端入口可以启动，并且命令在当前系统 PATH 中可用。",
-            "如果提示需要重开终端或重启客户端，请按提示处理后再复验。",
-        )
-        self._build_status_step(
-            8,
-            "第八步：最小中文对话验收",
-            "对每个 Agent 执行一句中文最小对话，确认能通过胖虎AI网关返回内容。",
-            "OpenClaw、Hermes 的 QQ、微信、TG 等第三方通道默认跳过，只验收直接对话链路。",
-        )
-        self._build_status_step(
-            9,
-            "第九步：功能验收矩阵",
-            "打开客户可见验收矩阵，逐项确认安装、启动、对话、验收、交付状态。",
-            "矩阵未全部通过时，系统必须记录失败，不扣次，不包装成完整交付。",
-            button_text="打开功能验收矩阵",
-            command=self.open_acceptance_matrix,
-        )
-        self._build_status_step(
-            10,
-            "第十步：完成交付",
-            "当选定 Agent 的目标链路全部达标后，才进入客户交付收口；Gemini / agy 本版只算安装入口，不算完整交付。",
-            "正式发客户前还要重新打包并完成三端包、公钥、Release、下载页授权流程。",
-        )
-        for canvas in self.step_canvases.values():
-            host = self.login_gate_host if canvas is self.step_canvases.get(1) else self.steps_host
-            canvas.place(in_=host, x=0, y=0, relwidth=1, relheight=1)
-
-        self._build_right_panel(self.console_shell)
-        self._build_execution_log()
-        self.refresh_steps()
-        self.show_login_gate()
-
-    def _button(self, parent: tk.Widget, text: str, command, kind: str = "secondary") -> tk.Button:
-        if kind == "primary":
-            bg, fg, active = PRIMARY, "#ffffff", PRIMARY_DARK
-            border_thickness = 0
-        elif kind == "success":
-            bg, fg, active = ACCENT, "#ffffff", "#08745b"
-            border_thickness = 0
-        else:
-            bg, fg, active = PANEL_BG, INK, "#e0e6ed"
-            border_thickness = 1
-        return tk.Button(
-            parent,
-            text=text,
-            command=command,
-            bg=bg,
-            fg=fg,
-            activebackground=active,
-            activeforeground=fg,
-            relief="flat",
-            bd=0,
-            padx=12,
-            pady=6,
-            cursor="hand2",
-            font=("Microsoft YaHei UI", 9, "bold"),
-            highlightthickness=border_thickness,
-            highlightbackground=BORDER,
-        )
 
     def _masked_account_label(self) -> str:
         if not self.logged_in_user:
@@ -4710,11 +5940,6 @@ class InstallerApp:
             return f"{raw[:1]}***" if raw else "未登录"
         return f"{raw[:2]}***{raw[-2:]}"
 
-    def _agent_display_name(self, agent: AgentSpec) -> str:
-        if agent.id == "claude_code":
-            return "ClaudeCode（CC）"
-        return agent.name
-
     def _commercial_metric_values(self) -> dict[str, str]:
         active = [item for item in self.commercial_entitlements if item.status == "active"]
         if active:
@@ -4723,7 +5948,9 @@ class InstallerApp:
             expiry_text = active[0].valid_until or "以服务端为准"
             device_count_text = str(max(item.device_limit for item in active))
         else:
-            remaining = "待刷新"
+            # 清单已从服务端刷新但没有活跃权益时，如实显示"无可用权益"；
+            # "待刷新"只用于还没拉到服务端清单的阶段，避免误导买家一直等刷新。
+            remaining = "无可用权益" if getattr(self, "deployer_manifest", None) else "待刷新"
             expiry_text = "以服务端为准"
             device_count_text = "以服务端为准"
         return {
@@ -4735,360 +5962,6 @@ class InstallerApp:
             "domain": DEFAULT_BASE_URL,
         }
 
-    def _build_topbar(self) -> None:
-        self.topbar_outer.pack_propagate(False)
-        self.topbar_outer.configure(height=TOPBAR_HEIGHT)
-        self.topbar = tk.Frame(self.topbar_outer, bg=APP_FRAME_BG, padx=16, pady=0, highlightthickness=0)
-        self.topbar.pack(fill="both", expand=True)
-        self.topbar.grid_columnconfigure(0, minsize=250)
-        self.topbar.grid_columnconfigure(1, weight=1)
-        self.topbar.grid_columnconfigure(2, minsize=340)
-        self.topbar.grid_rowconfigure(0, weight=1)
-        brand = tk.Frame(self.topbar, bg=APP_FRAME_BG)
-        brand.grid(row=0, column=0, sticky="w")
-        avatar_shell = tk.Frame(brand, bg=APP_FRAME_BG, width=28, height=28, highlightthickness=0, bd=0)
-        avatar_shell.pack(side="left", padx=(0, 8), pady=(0, 0))
-        avatar_shell.pack_propagate(False)
-        avatar = self.load_scaled_ui_image("panghu-avatar-64.png", subsample=2)
-        if avatar is not None:
-            tk.Label(avatar_shell, image=avatar, bg=APP_FRAME_BG, bd=0, highlightthickness=0).pack(fill="both", expand=True)
-        else:
-            tk.Label(
-                avatar_shell,
-                text="PH",
-                bg=PRIMARY,
-                fg="#ffffff",
-                font=("Microsoft YaHei UI", 10, "bold"),
-            ).pack(fill="both", expand=True)
-
-        title_block = tk.Frame(brand, bg=APP_FRAME_BG)
-        title_block.pack(side="left")
-        tk.Label(
-            title_block,
-            text="多 Agent 客户交付工具",
-            bg=APP_FRAME_BG,
-            fg=INK,
-            font=("Microsoft YaHei UI", 10, "bold"),
-            anchor="w"
-        ).pack(anchor="w", pady=(0, 1))
-        tk.Label(
-            title_block,
-            text="胖虎AI 商业交付平台",
-            bg=APP_FRAME_BG,
-            fg=MUTED,
-            font=("Microsoft YaHei UI", 7),
-            anchor="w"
-        ).pack(anchor="w", pady=(1, 0))
-
-        self._build_module_nav(self.topbar)
-
-        actions = tk.Frame(self.topbar, bg=APP_FRAME_BG)
-        actions.grid(row=0, column=2, sticky="e")
-        actions.grid_columnconfigure(0, weight=0)
-        actions.grid_columnconfigure(1, weight=0)
-        actions.grid_columnconfigure(2, weight=0)
-        actions.grid_columnconfigure(3, weight=0)
-        self.topbar_domain_label = tk.Label(
-            actions,
-            text="商业交付版",
-            bg=SUCCESS_BG,
-            fg="#116047",
-            padx=9,
-            pady=2,
-            font=("Microsoft YaHei UI", 8, "bold"),
-        )
-        self.topbar_domain_label.grid(row=0, column=0, padx=(0, 12), sticky="w")
-        self.topbar_account_label = tk.Label(actions, text="账号：未登录", bg=APP_FRAME_BG, fg=INK, font=("Microsoft YaHei UI", 8, "bold"))
-        self.topbar_account_label.grid(row=0, column=1, padx=(0, 14), sticky="w")
-        self.topbar_remaining_label = tk.Label(actions, text="剩余次数：待刷新", bg=APP_FRAME_BG, fg=SECONDARY, font=("Microsoft YaHei UI", 8))
-        self.topbar_remaining_label.grid(row=0, column=2, padx=(0, 12), sticky="w")
-        self.update_button = self._button(actions, "检查更新", self.start_update_check, "secondary")
-        self.update_button.grid(row=0, column=3, sticky="w")
-        self.user_label = self.topbar_account_label
-
-    def _build_module_nav(self, parent: tk.Frame) -> None:
-        self.module_nav = tk.Frame(parent, bg=SEGMENTED_BG, padx=4, pady=4, width=560, height=36, highlightthickness=0)
-        self.module_nav.grid(row=0, column=1, sticky="", padx=(16, 16))
-        self.module_nav.grid_propagate(False)
-        self.module_buttons: dict[str, tk.Frame] = {}
-        self.module_button_labels: dict[str, tuple[tk.Label, tk.Label]] = {}
-        for col, (module_id, title, subtitle) in enumerate(TOP_MODULES):
-            self.module_nav.grid_columnconfigure(col, weight=1, uniform="top_modules")
-            item = tk.Frame(
-                self.module_nav,
-                bg=SEGMENTED_BG,
-                padx=10,
-                pady=5,
-                highlightthickness=0,
-                cursor="hand2",
-            )
-            item.grid(row=0, column=col, sticky="ew")
-            title_label = tk.Label(
-                item,
-                text=title,
-                bg=SEGMENTED_BG,
-                fg=SECONDARY,
-                anchor="center",
-                font=("Microsoft YaHei UI", 8, "bold"),
-                cursor="hand2",
-            )
-            title_label.pack(fill="both", expand=True)
-            subtitle_label = tk.Label(
-                item,
-                text=subtitle,
-                bg=SEGMENTED_BG,
-                fg=MUTED,
-                anchor="center",
-                font=("Microsoft YaHei UI", 7),
-                cursor="hand2",
-            )
-            for widget in (item, title_label, subtitle_label):
-                widget.bind("<Button-1>", lambda _event, value=module_id: self.switch_module(value))
-            self.module_buttons[module_id] = item
-            self.module_button_labels[module_id] = (title_label, subtitle_label)
-
-    def _build_sidebar(self, parent: tk.Frame) -> None:
-        sidebar = tk.Frame(parent, bg=SIDEBAR_BG, width=LEFT_PANEL_WIDTH, padx=16, pady=18, highlightthickness=0)
-        sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_propagate(False)
-        self.sidebar = sidebar
-        self.sidebar_title_label = tk.Label(sidebar, text="", bg=SIDEBAR_BG, fg=SECONDARY, font=("Microsoft YaHei UI", 9, "bold"))
-        self.sidebar_title_label.pack(anchor="w")
-        self.sidebar_subtitle_label = tk.Label(
-            sidebar,
-            text="",
-            bg=SIDEBAR_BG,
-            fg=MUTED,
-            wraplength=184,
-            justify="left",
-            font=("Microsoft YaHei UI", 8),
-        )
-        self.sidebar_subtitle_label.pack(anchor="w", pady=(6, 14))
-        self.sidebar_body = tk.Frame(sidebar, bg=SIDEBAR_BG)
-        self.sidebar_body.pack(fill="both", expand=True)
-        self.step_buttons: dict[int, tk.Button] = {}
-        self.step_status_dots: dict[int, tk.Label] = {}
-        self.module_subnav_buttons: dict[str, tk.Button] = {}
-        self._render_sidebar_nav()
-
-    def _render_sidebar_nav(self) -> None:
-        body = getattr(self, "sidebar_body", None)
-        if body is None:
-            return
-        for child in body.winfo_children():
-            child.destroy()
-        module_id = self.active_module.get() if hasattr(self, "active_module") else MODULE_AGENT
-        module_titles = {key: title for key, title, _subtitle in TOP_MODULES}
-        self.sidebar_title_label.configure(text=module_titles.get(module_id, "配置Agent"))
-        self.sidebar_subtitle_label.configure(
-            text="按顺序完成，一次只处理当前一步。" if module_id == MODULE_AGENT else "当前模块内导航，具体规则以服务端为准。"
-        )
-        self.step_buttons = {}
-        self.step_status_dots = {}
-        self.module_subnav_buttons = {}
-        if module_id == MODULE_AGENT:
-            self._render_agent_step_nav(body)
-        else:
-            self._render_module_subnav(body, module_id)
-
-    def _render_agent_step_nav(self, body: tk.Frame) -> None:
-        for idx, title, subtitle in FLOW_STEPS:
-            row = tk.Frame(body, bg=SIDEBAR_BG)
-            row.pack(fill="x", pady=(0, 5))
-            dot = tk.Canvas(
-                row,
-                bg=WAIT_BG if "WAIT_BG" in globals() else LOCKED_BG,
-                width=24,
-                height=24,
-                highlightthickness=0,
-                bd=0,
-            )
-            dot.create_oval(2, 2, 22, 22, fill=WAIT_BG, outline=WAIT_BORDER, tags=("circle",))
-            dot.create_text(12, 12, text=str(idx), fill=MUTED, font=("Microsoft YaHei UI", 8, "bold"), tags=("label",))
-            dot.pack(side="left", padx=(0, 8), pady=(6, 0))
-            btn = self._step_button(row, idx, title, subtitle)
-            btn.pack(side="left", fill="x", expand=True)
-            self.step_buttons[idx] = btn
-            self.step_status_dots[idx] = dot
-        tk.Frame(body, bg=LIGHT_BORDER, height=1).pack(fill="x", pady=(8, 12))
-        self.flow_status_label = tk.Label(
-            body,
-            text="客服提示：请先登录胖虎AI账号。",
-            bg=PRIMARY_LIGHT,
-            fg=PRIMARY,
-            padx=12,
-            pady=10,
-            wraplength=168,
-            justify="left",
-            anchor="nw",
-            font=("Microsoft YaHei UI", 9),
-            highlightthickness=1,
-            highlightbackground="#d8eaff",
-        )
-        self.flow_status_label.pack(fill="x", anchor="w")
-
-    def _render_module_subnav(self, body: tk.Frame, module_id: str) -> None:
-        for item_id, title, subtitle in MODULE_SIDE_NAV_ITEMS.get(module_id, ()):
-            btn = tk.Button(
-                body,
-                text=f"{title}\n{subtitle}",
-                command=lambda value=item_id: self.switch_subnav(value),
-                bg=SIDEBAR_BG,
-                fg=SECONDARY,
-                activebackground=PRIMARY_LIGHT,
-                activeforeground=PRIMARY,
-                relief="flat",
-                bd=0,
-                padx=12,
-                pady=8,
-                justify="left",
-                anchor="w",
-                cursor="hand2",
-                font=("Microsoft YaHei UI", 8, "bold"),
-            )
-            btn.pack(fill="x", pady=(0, 5))
-            self.module_subnav_buttons[item_id] = btn
-        tk.Frame(body, bg=LIGHT_BORDER, height=1).pack(fill="x", pady=(8, 12))
-        self.flow_status_label = tk.Label(
-            body,
-            text="客服提示：该模块内容以胖虎AI网站和服务端为准。",
-            bg=PRIMARY_LIGHT,
-            fg=PRIMARY,
-            padx=12,
-            pady=10,
-            wraplength=168,
-            justify="left",
-            anchor="nw",
-            font=("Microsoft YaHei UI", 9),
-            highlightthickness=1,
-            highlightbackground="#d5e7ff",
-        )
-        self.flow_status_label.pack(fill="x", anchor="w")
-
-    def switch_module(self, module_id: str) -> None:
-        if module_id not in MODULE_SIDE_NAV_ITEMS:
-            return
-        self.active_module.set(module_id)
-        if module_id == MODULE_AGENT:
-            self.active_subnav.set(str(self.step.get()))
-        else:
-            self.active_subnav.set(MODULE_SIDE_NAV_ITEMS[module_id][0][0])
-        self._render_sidebar_nav()
-        self.refresh_steps()
-
-    def switch_subnav(self, item_id: str) -> None:
-        module_id = self.active_module.get()
-        if module_id == MODULE_AGENT:
-            try:
-                self.go_to_step(int(item_id))
-            except ValueError:
-                return
-            return
-        self.active_subnav.set(item_id)
-        self.refresh_steps()
-
-    def _build_non_agent_module_frame(self, module_id: str) -> None:
-        host = self.module_content_host
-        host.grid_rowconfigure(0, weight=1)
-        host.grid_columnconfigure(0, weight=1)
-        frame = tk.Frame(host, bg=SURFACE_BG)
-        frame.grid(row=0, column=0, sticky="nsew")
-        frame.grid_rowconfigure(0, weight=1)
-        frame.grid_columnconfigure(0, weight=1)
-        card = tk.Frame(frame, bg=CARD_BG, padx=30, pady=20, highlightthickness=1, highlightbackground=BORDER)
-        card.grid(row=0, column=0, sticky="nsew")
-        self.module_content_frames[module_id] = frame
-        head = tk.Frame(card, bg=CARD_BG)
-        head.pack(fill="x", pady=(0, 12))
-        head.grid_columnconfigure(0, weight=1)
-        title = tk.Label(head, text="", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 16, "bold"))
-        title.grid(row=0, column=0, sticky="w")
-        badge = tk.Label(head, text="", bg=PRIMARY_LIGHT, fg=PRIMARY, padx=9, pady=4, font=("Microsoft YaHei UI", 9, "bold"))
-        badge.grid(row=0, column=1, sticky="e")
-        note = tk.Label(head, text="", bg=CARD_BG, fg=MUTED, wraplength=720, justify="left", font=("Microsoft YaHei UI", 9))
-        note.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-
-        guide_box = tk.Frame(card, bg=PRIMARY_LIGHT, padx=14, pady=8, highlightthickness=1, highlightbackground="#d5e7ff")
-        guide_box.pack(fill="x", pady=(0, 12))
-        guide_title = tk.Label(guide_box, text="客服指引", bg=PRIMARY_LIGHT, fg=PRIMARY, font=("Microsoft YaHei UI", 10, "bold"))
-        guide_title.pack(anchor="w")
-        guide_lines: list[tk.Label] = []
-        for _ in range(3):
-            line = tk.Label(guide_box, text="", bg=PRIMARY_LIGHT, fg="#2f5e89", wraplength=720, justify="left", anchor="w", font=("Microsoft YaHei UI", 8))
-            line.pack(anchor="w", fill="x", pady=(4 if not guide_lines else 2, 0))
-            guide_lines.append(line)
-
-        service_grid = tk.Frame(card, bg=CARD_BG)
-        service_grid.pack(fill="x", pady=(0, 10))
-        for col in range(2):
-            service_grid.grid_columnconfigure(col, weight=1, uniform=f"module_{module_id}_actions")
-        action_card_labels: list[tuple[tk.Label, tk.Label]] = []
-        for index in range(4):
-            item = tk.Frame(service_grid, bg=CARD_BG, padx=12, pady=8, highlightthickness=1, highlightbackground=BORDER)
-            item.grid(row=index // 2, column=index % 2, sticky="nsew", padx=(0 if index % 2 == 0 else 14, 0), pady=(0, 10))
-            item.grid_columnconfigure(0, weight=1)
-            item_title = tk.Label(item, text="", bg=CARD_BG, fg=INK, anchor="w", font=("Microsoft YaHei UI", 10, "bold"))
-            item_title.grid(row=0, column=0, sticky="ew")
-            item_note = tk.Label(item, text="", bg=CARD_BG, fg=MUTED, wraplength=280, justify="left", anchor="w", font=("Microsoft YaHei UI", 8))
-            item_note.grid(row=1, column=0, sticky="ew", pady=(3, 0))
-            action_card_labels.append((item_title, item_note))
-
-        browser_box = tk.Frame(card, bg="#f6f7f9", padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER)
-        browser_box.pack(fill="x", pady=(0, 10))
-        browser_header = tk.Frame(browser_box, bg="#f6f7f9")
-        browser_header.pack(fill="x")
-        tk.Label(browser_header, text="内置网站服务区", bg="#f6f7f9", fg=INK, font=("Microsoft YaHei UI", 11, "bold")).pack(side="left")
-        self._button(browser_header, "打开当前网站页面 ->", lambda: self.open_current_module_url(), "primary").pack(side="right", padx=(8, 0))
-        tk.Label(
-            browser_header,
-            text="服务端页面",
-            bg=SUCCESS_BG,
-            fg="#116047",
-            padx=7,
-            pady=2,
-            font=("Microsoft YaHei UI", 8, "bold"),
-        ).pack(side="right")
-        url_label = tk.Label(browser_box, text="", bg="#f6f7f9", fg=PRIMARY, font=("Cascadia Mono", 9, "bold"))
-        url_label.pack(anchor="w", pady=(6, 0))
-        browser_preview = tk.Frame(browser_box, bg="#ffffff", padx=12, pady=8, highlightthickness=1, highlightbackground=LIGHT_BORDER)
-        browser_preview.pack(fill="x", pady=(8, 0))
-        preview_title = tk.Label(browser_preview, text="网站页面入口", bg="#ffffff", fg=INK, font=("Microsoft YaHei UI", 9, "bold"))
-        preview_title.pack(anchor="w")
-        preview_body = tk.Label(
-            browser_preview,
-            text="点击下方按钮后，优先在软件内 WebView 独立窗口打开；不支持时回退到系统浏览器。",
-            bg="#ffffff",
-            fg=MUTED,
-            wraplength=680,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 8),
-        )
-        preview_body.pack(anchor="w", fill="x", pady=(4, 0))
-        action_row = tk.Frame(card, bg=CARD_BG)
-        action_row.pack(fill="x")
-        self._button(action_row, "复制给客服的追踪记录", self.copy_logs, "secondary").pack(side="left", padx=(10, 0))
-        tk.Label(
-            card,
-            text="打开页面时优先使用软件内 WebView 独立窗口；环境不支持时回退到系统浏览器。",
-            bg=WARNING_BG,
-            fg=PRIMARY_DARK,
-            padx=10,
-            pady=5,
-            wraplength=620,
-            justify="left",
-            font=("Microsoft YaHei UI", 8),
-        ).pack(fill="x", pady=(10, 0))
-        frame._module_badge_label = badge  # type: ignore[attr-defined]
-        frame._module_title_label = title  # type: ignore[attr-defined]
-        frame._module_note_label = note  # type: ignore[attr-defined]
-        frame._module_guide_lines = guide_lines  # type: ignore[attr-defined]
-        frame._module_url_label = url_label  # type: ignore[attr-defined]
-        frame._module_preview_title_label = preview_title  # type: ignore[attr-defined]
-        frame._module_preview_body_label = preview_body  # type: ignore[attr-defined]
-        frame._module_action_card_labels = action_card_labels  # type: ignore[attr-defined]
-        self._sync_wraplength(note, 96, 900)
-
     def current_module_page_meta(self) -> tuple[str, str, str]:
         module_id = self.active_module.get()
         item_id = self.active_subnav.get()
@@ -5097,17 +5970,6 @@ class InstallerApp:
             item_id = MODULE_SIDE_NAV_ITEMS[module_id][0][0]
             self.active_subnav.set(item_id)
         return module_meta.get(item_id, ("模块入口", DEFAULT_BASE_URL, "该模块内容以胖虎AI网站和服务端为准。"))
-
-    def open_current_module_url(self) -> None:
-        _title, url, _note = self.current_module_page_meta()
-        result = open_customer_page(
-            url,
-            cookie_jar=self.cookie_jar,
-            log=self.log,
-            storage_path=self.current_buyer_web_profile_path(),
-        )
-        self.status.set(f"状态：{result.message}")
-        self.log(f"网站页面打开结果：{result.message} URL={result.url}")
 
     def _show_active_module_content(self) -> None:
         if getattr(self, 'webview_mode', False):
@@ -5146,8 +6008,17 @@ class InstallerApp:
         for label, text in zip(guide_lines, guide_map.get(module_id, ())):
             label.configure(text=text)
         getattr(frame, "_module_preview_title_label").configure(text=f"{title} 页面入口")
+        refresh_button = getattr(frame, "_module_refresh_button", None)
+        if refresh_button is not None:
+            refresh_button.configure(state="normal" if module_id == MODULE_COURSES and not self.worker_running else "disabled")
+        preview_text = (
+            f"当前主界面对应的网站目标页：{url}\n"
+            "点击“打开当前网站页面”后，优先用软件内 WebView 打开；当前技术若无法内嵌，会阻断并提示内置网页闭环未完成。"
+        )
+        if module_id == MODULE_COURSES:
+            preview_text += "\n\n" + self.agent_center_current_summary_text()
         getattr(frame, "_module_preview_body_label").configure(
-            text=f"当前主界面对应的网站目标页：{url}\n点击“打开当前网站页面”后，优先用软件内 WebView 打开；若环境不支持，再回退到系统浏览器。"
+            text=preview_text
         )
         action_cards = getattr(frame, "_module_action_card_labels", [])
         subnav_id = self.active_subnav.get() if hasattr(self, "active_subnav") else ""
@@ -5182,150 +6053,6 @@ class InstallerApp:
                 activeforeground=PRIMARY,
             )
 
-    def _panel_card(self, parent: tk.Widget, title: str) -> tk.Frame:
-        card = tk.Frame(parent, bg=SIDEBAR_BG, padx=18, pady=13, highlightthickness=0)
-        card.pack(fill="x")
-        tk.Label(card, text=title, bg=SIDEBAR_BG, fg=SECONDARY, font=("Microsoft YaHei UI", 8, "bold")).pack(anchor="w")
-        return card
-
-    def _build_right_panel(self, parent: tk.Frame) -> None:
-        self.right_panel = tk.Frame(parent, bg=SIDEBAR_BG, width=RIGHT_PANEL_WIDTH, highlightthickness=0)
-        self.right_panel.grid(row=0, column=2, sticky="nsew")
-        self.right_panel.grid_propagate(False)
-
-        delivery_card = self._panel_card(self.right_panel, "当前交付结论")
-        self.delivery_readiness_label = tk.Label(
-            delivery_card,
-            text="当前状态：等待登录与权益确认",
-            bg=WARNING_BG,
-            fg=GOLD,
-            padx=10,
-            pady=6,
-            font=("Microsoft YaHei UI", 8, "bold"),
-            anchor="w",
-            justify="left",
-            wraplength=244,
-            highlightthickness=1,
-            highlightbackground="#feebc8",
-        )
-        self.delivery_readiness_label.pack(fill="x", pady=(10, 0))
-        self.delivery_next_label = tk.Label(
-            delivery_card,
-            text="客服动作：先让客户登录，再确认账号权益。",
-            bg=SIDEBAR_BG,
-            fg=SECONDARY,
-            font=("Microsoft YaHei UI", 8),
-            justify="left",
-            anchor="w",
-            wraplength=244,
-        )
-        self.delivery_next_label.pack(fill="x", pady=(8, 0))
-
-        commercial_card = self._panel_card(self.right_panel, "商业确认")
-        self.commercial_info_labels: dict[str, tk.Label] = {}
-        for label, key in (
-            ("当前账号", "account"),
-            ("版本标识", "edition"),
-            ("剩余次数", "remaining"),
-            ("有效期", "valid_until"),
-            ("设备数", "device_limit"),
-            ("当前公共域名", "domain"),
-        ):
-            row = tk.Frame(commercial_card, bg=SIDEBAR_BG)
-            row.pack(fill="x", pady=(7, 0))
-            tk.Label(row, text=label, bg=SIDEBAR_BG, fg=MUTED, font=("Microsoft YaHei UI", 8)).pack(side="left")
-            value = tk.Label(row, text="待刷新", bg=SIDEBAR_BG, fg=INK, font=("Microsoft YaHei UI", 8, "bold"), anchor="e")
-            value.pack(side="right")
-            self.commercial_info_labels[key] = value
-
-        agent_card = self._panel_card(self.right_panel, "四 Agent 五维状态")
-        self.agent_matrix_labels: dict[tuple[str, str], tk.Label] = {}
-        self.agent_summary_labels: dict[str, tk.Label] = {}
-        header = tk.Frame(agent_card, bg=SIDEBAR_BG)
-        header.pack(fill="x", pady=(10, 0))
-        header.grid_columnconfigure(0, minsize=92)
-        for col, label_text in enumerate(("安装", "启动", "对话", "验收", "交付"), start=1):
-            header.grid_columnconfigure(col, weight=1, uniform="agent_status")
-            tk.Label(header, text=label_text, bg=SIDEBAR_BG, fg=MUTED, font=("Microsoft YaHei UI", 7, "bold")).grid(
-                row=0, column=col, sticky="ew"
-            )
-        for row_idx, agent in enumerate(AGENTS, start=1):
-            row = tk.Frame(agent_card, bg=SIDEBAR_BG)
-            row.pack(fill="x", pady=(7, 0))
-            row.grid_columnconfigure(0, minsize=92)
-            tk.Label(row, text=self._agent_display_name(agent), bg=SIDEBAR_BG, fg=INK, font=("Microsoft YaHei UI", 8, "bold")).grid(
-                row=0, column=0, sticky="w"
-            )
-            for col, key in enumerate(("install", "launch", "dialogue", "acceptance", "delivery"), start=1):
-                row.grid_columnconfigure(col, weight=1, uniform="agent_status")
-                value = tk.Label(
-                    row,
-                    text="-",
-                    bg=LOCKED_BG,
-                    fg=MUTED,
-                    font=("Microsoft YaHei UI", 7, "bold"),
-                    anchor="center",
-                    padx=2,
-                    pady=3,
-                    highlightthickness=1,
-                    highlightbackground=WAIT_BORDER,
-                )
-                value.grid(row=0, column=col, sticky="ew", padx=(1, 0))
-                self.agent_matrix_labels[(agent.id, key)] = value
-            summary = tk.Label(row, text="", bg=SIDEBAR_BG)
-            self.agent_summary_labels[agent.id] = summary
-
-        rules_card = self._panel_card(self.right_panel, "安全审计与交付守则")
-        self.rules_card = rules_card
-        audit_rules = [
-            "API Key 不输出到日志",
-            "保留买家会话，不保存密码或部署授权 token",
-            "代理中心只走登录后服务端权益",
-            "所有请求走公共域名 https://aitokenapi.cc",
-            "未通过功能验收矩阵不得包装成完整交付",
-        ]
-        for rule in audit_rules:
-            r_row = tk.Frame(rules_card, bg=SIDEBAR_BG)
-            r_row.pack(fill="x", pady=(6, 0))
-            tk.Label(r_row, text="•", bg=SIDEBAR_BG, fg=SUCCESS, font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
-            tk.Label(
-                r_row,
-                text=rule,
-                bg=SIDEBAR_BG,
-                fg=SECONDARY,
-                font=("Microsoft YaHei UI", 8),
-                anchor="w",
-                justify="left",
-                wraplength=245,
-            ).pack(side="left", padx=(5, 0))
-
-    def _build_execution_log(self) -> None:
-        self.log_shell = tk.Frame(self.app_frame, bg=LOG_BG, padx=16, pady=5, highlightthickness=1, highlightbackground="#2f2f32")
-        top = tk.Frame(self.log_shell, bg=LOG_BG)
-        top.pack(fill="x")
-        tk.Label(top, text=">_  Execution Trace Log", bg=LOG_BG, fg="#ffffff", font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
-        tk.Label(top, text="● ACTIVE TRACE", bg=LOG_BG, fg="#ff4d4d", font=("Microsoft YaHei UI", 7, "bold")).pack(side="left", padx=(10, 0))
-        tk.Label(top, textvariable=self.status, bg=LOG_BG, fg="#b9c0cc", font=("Microsoft YaHei UI", 8)).pack(side="right")
-        self.log_box = tk.Text(
-            self.log_shell,
-            height=1,
-            bg=LOG_BG,
-            fg=LOG_FG,
-            insertbackground=LOG_FG,
-            relief="flat",
-            borderwidth=0,
-            padx=10,
-            pady=3,
-            wrap="word",
-            font=("Cascadia Mono", 8),
-        )
-        self.log_box.pack(fill="x", expand=False, pady=(3, 0))
-        self.log_box.tag_configure("success", foreground="#8fd19e")
-        self.log_box.tag_configure("running", foreground="#f2c66d")
-        self.log_box.tag_configure("failed", foreground="#ff8a80")
-        self.log_box.tag_configure("muted", foreground="#d8dee9")
-        self.log_box.configure(state="disabled")
-
     def refresh_topbar(self) -> None:
         if getattr(self, 'webview_mode', False):
             self.sync_webview_state()
@@ -5335,11 +6062,6 @@ class InstallerApp:
             self.topbar_account_label.configure(text=f"账号：{metrics['account']}")
         if hasattr(self, "topbar_remaining_label"):
             self.topbar_remaining_label.configure(text=f"剩余次数：{metrics['remaining']}")
-
-    def show_login_gate(self) -> None:
-        self._show_login_gate_shell()
-        if hasattr(self, "step"):
-            self.refresh_steps()
 
     def _show_login_gate_shell(self) -> None:
         if hasattr(self, "console_outer"):
@@ -5366,9 +6088,9 @@ class InstallerApp:
     def show_wizard(self) -> None:
         if hasattr(self, "step") and getattr(self, "logged_in_user", None) and getattr(self, "deployer_auth", None):
             try:
-                self.step.set(max(2, int(self.step.get())))
+                self.step.set(max(1, int(self.step.get())))
             except Exception:
-                self.step.set(2)
+                self.step.set(1)
         self._show_wizard_shell()
         if hasattr(self, "step"):
             self.refresh_steps()
@@ -5424,11 +6146,6 @@ class InstallerApp:
         if app_frame is not None and hasattr(app_frame, "pack_configure"):
             app_frame.pack_configure(padx=side_pad)
 
-    def _sync_console_outer_layout(self, _event=None) -> None:
-        if not hasattr(self, "console_outer") or not hasattr(self, "console_shell"):
-            return
-        return
-
     def refresh_commercial_info_panel(self) -> None:
         if getattr(self, 'webview_mode', False):
             self.sync_webview_state()
@@ -5463,7 +6180,7 @@ class InstallerApp:
             self.sync_webview_state()
             return
         selected_ids = {agent.id for agent, _mode in self.selected_agents()}
-        executable = self.can_access_step(5)
+        executable = self.can_access_step(4)
         for agent in AGENTS:
             selected = agent.id in selected_ids
             if self.worker_running and selected and executable:
@@ -5484,7 +6201,7 @@ class InstallerApp:
                 }
             elif selected:
                 states = {
-                    "install": self._matrix_badge("已选择", SUCCESS),
+                    "install": self._matrix_badge("已选择", NEUTRAL_DOT),
                     "launch": self._matrix_badge("未开始", NEUTRAL_DOT),
                     "dialogue": self._matrix_badge("未开始", NEUTRAL_DOT),
                     "acceptance": self._matrix_badge("未开始", NEUTRAL_DOT),
@@ -5537,164 +6254,1079 @@ class InstallerApp:
             return "running"
         return "muted"
 
-    def _show_help(self, title: str, message: str) -> None:
-        messagebox.showinfo(title, message)
+    def agent_center_current_summary_text(self) -> str:
+        current = self.current_agent_center_state()
+        if current:
+            return agent_center_summary_text({"agent_center": current})
+        return agent_center_summary_text(self.deployer_manifest)
 
-    def _grid_button(
-        self,
-        parent: tk.Widget,
-        text: str,
-        command,
-        kind: str,
-        row: int,
-        column: int,
-        columnspan: int = 1,
-    ) -> tk.Button:
-        button = self._button(parent, text, command, kind)
-        button.grid(row=row, column=column, columnspan=columnspan, sticky="ew", padx=(0, 8), pady=(0, 10))
-        return button
+    def current_agent_center_state(self) -> dict:
+        live_data = getattr(self, "agent_center_live_data", {})
+        if isinstance(live_data, dict) and live_data:
+            return parse_agent_center_snapshot_data(live_data)
+        manifest = getattr(self, "deployer_manifest", {})
+        if isinstance(manifest, dict):
+            center = manifest.get("agent_center") or manifest.get("center")
+            if isinstance(center, dict):
+                return parse_agent_center_snapshot_data(center)
+        return {}
 
-    def _text_button(self, parent: tk.Widget, text: str, command) -> tk.Button:
-        return tk.Button(
-            parent,
-            text=text,
-            command=command,
-            bg=CARD_BG,
-            fg=PRIMARY,
-            activebackground=INFO_BG,
-            activeforeground=PRIMARY_DARK,
-            relief="flat",
-            bd=0,
-            padx=8,
-            pady=2,
-            cursor="hand2",
-            font=("Microsoft YaHei UI", 9, "bold"),
+    def current_agent_center_web_state(self) -> dict:
+        """代理中心前端状态：在快照(总览/等级/服务端页面 URL)之外，把明细 worker 抓到的
+        下游客户 / 各类返佣列表一并下发，供前端按子导航 key 渲染明细；否则明细抓取即丢弃、
+        "同步数据/重新拉取快照"成死按钮（B-AGENT-DATA）。"""
+        snapshot = self.current_agent_center_state()
+        out = dict(snapshot) if isinstance(snapshot, dict) else {}
+        out["downstreams"] = _normalize_agent_detail_items(
+            getattr(self, "agent_downstreams_live_data", {}), ("items", "downstreams", "customers")
         )
-
-    def _notice_strip(
-        self,
-        parent: tk.Widget,
-        title: str,
-        body: str,
-        tone: str = "info",
-        button_text: str | None = None,
-        command=None,
-        compact: bool = False,
-    ) -> tk.Frame:
-        palette = {
-            "info": (INFO_BG, PRIMARY_DARK, MUTED, BORDER),
-            "success": (SUCCESS_BG, "#1f6b55", "#34594d", "#c6e8d3"),
-            "warning": (WARNING_BG, "#9a4b18", "#71411c", "#f1c995"),
+        commissions_live = getattr(self, "agent_commissions_live_data", {}) or {}
+        out["commissions"] = {
+            item_id: _normalize_agent_detail_items(data, ("items", "commissions", "ledger"))
+            for item_id, data in commissions_live.items()
+            if isinstance(data, dict)
         }
-        bg, title_fg, body_fg, border = palette.get(tone, palette["info"])
-        box = tk.Frame(parent, bg=bg, padx=10 if compact else 12, pady=6 if compact else 9, highlightthickness=1, highlightbackground=border)
-        box.pack(fill="x")
-        header = tk.Frame(box, bg=bg)
-        header.pack(fill="x")
-        header.grid_columnconfigure(0, weight=1)
-        tk.Label(
-            header,
-            text=title,
-            bg=bg,
-            fg=title_fg,
-            font=("Microsoft YaHei UI", 9 if compact else 10, "bold"),
-        ).grid(row=0, column=0, sticky="w")
-        tk.Label(
-            header,
-            text=body,
-            bg=bg,
-            fg=body_fg,
-            wraplength=420 if compact else 520,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9 if compact else 10),
-        ).grid(row=1 if compact else 0, column=0 if compact else 1, sticky="ew", padx=(0 if compact else 10, 8), pady=(2 if compact else 0, 0))
-        if button_text and command:
-            tk.Button(
-                header,
-                text=button_text,
-                command=command,
-                bg=bg,
-                fg=PRIMARY,
-                activebackground=bg,
-                activeforeground=PRIMARY_DARK,
-                relief="flat",
-                bd=0,
-                padx=6 if compact else 8,
-                pady=0,
-                cursor="hand2",
-                font=("Microsoft YaHei UI", 9, "bold"),
-            ).grid(row=0, column=1 if compact else 2, sticky="ne")
-        return box
+        return out
 
-    def _sync_wraplength(self, label: tk.Label, padding: int = 60, max_width: int = 360) -> None:
-        def update(event) -> None:
-            label.configure(wraplength=min(max_width, max(260, event.width - padding)))
-
-        label.master.bind("<Configure>", update, add="+")
-
-    def _build_commercial_entry_cards(self, parent: tk.Frame) -> None:
-        self.login_mode_summary_label = tk.Label(
-            parent,
-            text="所有客户先统一登录胖虎AI账号。代理身份、邀请码、充值购买和 API Key 创建，登录后在胖虎AI网站模块处理。",
-            bg=CARD_BG,
-            fg=MUTED,
-            font=("Microsoft YaHei UI", 9),
-            justify="left",
-            anchor="w",
-            wraplength=620,
-        )
-        self.login_mode_summary_label.pack(fill="x", pady=(0, 10))
-
-    def refresh_login_entry_mode(self) -> None:
-        if getattr(self, 'webview_mode', False):
-            self.sync_webview_state()
-            return
-        if hasattr(self, "login_entry_mode"):
-            self.login_entry_mode.set("buyer")
-        if hasattr(self, "login_mode_summary_label"):
-            self.login_mode_summary_label.configure(
-                text="所有客户先统一登录胖虎AI账号。代理身份、邀请码、充值购买和 API Key 创建，登录后在胖虎AI网站模块处理。"
+    def current_value_added_services_state(self) -> list[dict]:
+        services = getattr(self, "value_added_services", []) or []
+        result: list[dict] = []
+        for service in services:
+            result.append(
+                {
+                    "service_id": service.service_id,
+                    "title": service.title,
+                    "target_project": service.target_project,
+                    "status": service.status,
+                    "entry_url": service.entry_url,
+                    "purchase_url": service.purchase_url,
+                    "entitlement_status": service.entitlement_status,
+                    "requires_webview_session": service.requires_webview_session,
+                    "summary_url": service.summary_url,
+                    "unverified_reason": service.unverified_reason,
+                    "is_available": service.is_available,
+                }
             )
-        if hasattr(self, "buyer_login_panel"):
-            self.buyer_login_panel.pack(fill="x")
+        return result
 
-    def focus_buyer_login(self) -> None:
-        if hasattr(self, "login_entry_mode"):
-            self.login_entry_mode.set("buyer")
-        self.refresh_login_entry_mode()
-        if hasattr(self, "base_url"):
-            self.base_url.set(DEFAULT_BASE_URL)
-        if hasattr(self, "status"):
-            self.status.set("状态：买家路径已就绪，请先登录胖虎AI账号。")
-        self.login_username_entry.focus_set()
+    def current_buyer_purchase_state(self) -> dict:
+        statuses = getattr(self, "buyer_purchase_statuses", {})
+        entitlements = getattr(self, "commercial_entitlements", [])
+        return {
+            "productId": self._safe_var_value("buyer_product_id"),
+            "orderId": self._safe_var_value("buyer_order_id"),
+            "nodes": {node.value: status.value for node, status in statuses.items()},
+            "entitlementCount": len(entitlements),
+            "activeEntitlementCount": len([item for item in entitlements if item.status == "active"]),
+        }
 
-    def show_agent_center_placeholder(self) -> None:
-        messagebox.showinfo(
-            "代理中心",
-            agent_center_summary_text(self.deployer_manifest),
+    def _safe_var_value(self, attr: str) -> str:
+        value = getattr(self, attr, None)
+        if value is None:
+            return ""
+        getter = getattr(value, "get", None)
+        if callable(getter):
+            return str(getter() or "")
+        return str(value or "")
+
+    def current_communication_software_link_web_state(self) -> dict:
+        return {
+            "offering": getattr(self, "communication_software_link_offering_data", {}) or {},
+            "serviceProductId": self._safe_var_value("communication_software_link_service_product_id"),
+            "orderId": self._safe_var_value("communication_software_link_order_id"),
+            "sessionId": self._safe_var_value("communication_software_link_session_id"),
+            "agentId": self._safe_var_value("communication_software_link_agent_id"),
+            "channel": self._safe_var_value("communication_software_link_channel"),
+            "agentSource": self._safe_var_value("communication_software_link_agent_source"),
+            "platformAccountId": self._safe_var_value("communication_software_link_platform_account_id"),
+            "platformChatId": self._safe_var_value("communication_software_link_platform_chat_id"),
+            "gatewayMode": self._safe_var_value("communication_software_link_gateway_mode"),
+            "testPrompt": self._safe_var_value("communication_software_link_test_prompt"),
+            "state": self.current_communication_software_link_state(),
+        }
+
+    def current_communication_software_link_state(self) -> dict:
+        order_id = self._safe_var_value("communication_software_link_order_id").strip()
+        session_id = self._safe_var_value("communication_software_link_session_id").strip()
+        statuses = getattr(self, "communication_software_link_order_statuses", {})
+        order_status = statuses.get(order_id, {}) if order_id else {}
+        delivery_boundary = (
+            "连接通讯软件最终交付必须以服务端真实验收记录为准；"
+            "本地字段或离线/mock 守卫不能单独证明真实平台回调、Agent Runtime Adapter、支付和账本闭环。"
         )
+        # 付费通讯软件订单：服务端返回支付宝 WAP 付款链接，客户端本地生成二维码给买家扫码。
+        order_payment_url = str(order_status.get("payment_url") or "").strip()
+        payment_qr_data_url = ""
+        if order_payment_url:
+            try:
+                payment_qr_data_url = build_payment_qr_data_url(order_payment_url)
+            except Exception:
+                payment_qr_data_url = ""
+        return {
+            "order": order_status,
+            "requiresPayment": order_status.get("requires_payment") is True,
+            # 服务端权威判定：付款(paid/success/completed)或人工复核(manual_review/manual-review/
+            # presale_review/staff_review)且订单未终止 → 允许建会话。前端横幅直接用这个布尔，
+            # 不再各自枚举字符串（历史上只认 paid/manual_review 两态，漏掉其余 3 态→横幅空白）。
+            "sessionAllowed": order_status.get("session_allowed") is True,
+            "chargeStatus": str(order_status.get("charge_status") or ""),
+            "paymentUrl": order_payment_url,
+            "paymentQrDataUrl": payment_qr_data_url,
+            "sessionId": session_id,
+            "sourceEventId": self._safe_var_value("communication_software_link_source_event_id"),
+            "inboundPlatformMessageId": self._safe_var_value("communication_software_link_inbound_message_id"),
+            "outboundPlatformMessageId": self._safe_var_value("communication_software_link_outbound_message_id"),
+            "agentResponseDigest": self._safe_var_value("communication_software_link_response_digest"),
+            "evidenceUrl": self._safe_var_value("communication_software_link_evidence_url"),
+            "realServiceStatus": str(order_status.get("real_service_status") or "server_required"),
+            "platformCallbackStatus": str(order_status.get("platform_callback_status") or ""),
+            "runtimeAdapterStatus": str(order_status.get("runtime_adapter_status") or ""),
+            "acceptanceStatus": str(order_status.get("acceptance_status") or ""),
+            "charged": order_status.get("charged") is True,
+            "clientMayClaimDeliveryComplete": order_status.get("client_may_claim_delivery_complete") is True,
+            "deliveryBoundary": delivery_boundary,
+        }
+
+    def _ensure_commercial_contexts(self) -> bool:
+        if self.commercial_contexts is None or self.deployer_auth is None:
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号，并获取本次运行的服务端授权。")
+            return False
+        return True
+
+    def start_refresh_agent_center(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        request = commercial_api_request_with_auth(
+            "agent_center",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._agent_center_request_worker, args=("agent_home", request), daemon=True).start()
+
+    def start_refresh_agent_center_detail(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        item_id = self.active_subnav.get()
+        # token 消耗返佣(token_usage_settled)已废弃：业务上从未存在、服务端已下架，代理中心不再展示，
+        # 故 agent_token_comm 不再映射任何佣金事件（见 docs/待办_token消耗返佣废弃_服务端已下架_2026-07-10.md）。
+        commission_types = {
+            "agent_activation_comm": "activation_paid",
+            "agent_install_comm": "agent_install_delivered",
+        }
+        if item_id == "agent_customers":
+            request = commercial_api_request_with_auth(
+                "agent_downstreams",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+            )
+        elif item_id in commission_types:
+            request = commercial_api_request_with_auth(
+                "agent_commissions",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                event_type=commission_types[item_id],
+            )
+        else:
+            request = commercial_api_request_with_auth(
+                "agent_center",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+            )
+        self.set_busy(True)
+        threading.Thread(target=self._agent_center_request_worker, args=(item_id, request), daemon=True).start()
+
+    def _agent_center_request_worker(self, item_id: str, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            if item_id == "agent_customers":
+                self.agent_downstreams_live_data = data
+                count = len(data.get("items") or data.get("downstreams") or data.get("customers") or [])
+                self.set_status_from_worker(f"状态：下游客户数据已刷新，服务端返回 {count} 条")
+            elif item_id in {"agent_activation_comm", "agent_install_comm"}:
+                self.agent_commissions_live_data[item_id] = data
+                count = len(data.get("items") or data.get("commissions") or data.get("ledger") or [])
+                self.set_status_from_worker(f"状态：代理佣金数据已刷新，服务端返回 {count} 条")
+            else:
+                center = data.get("agent_center") or data.get("center") or data
+                self.agent_center_live_data = parse_agent_center_snapshot_data(center) if isinstance(center, dict) else {}
+                self.set_status_from_worker("状态：代理中心服务端数据已刷新")
+            self.run_on_ui(self.refresh_steps)
+        except Exception as exc:
+            self.log_from_worker(f"代理中心服务端刷新失败：{exc}")
+            self.show_error_from_worker("代理中心刷新失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def _find_communication_software_link_service_product_id(self, data: dict) -> str:
+        candidates = []
+        for key in ("products", "items", "offerings"):
+            values = data.get(key)
+            if isinstance(values, list):
+                candidates.extend(values)
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            # 服务端 offering 的商品条目：键为 service_product_id 且不带条目级 service_type
+            #（service_type 在响应顶层标明）。兼容旧形态 product_id/id + 条目级 service_type。
+            service_type = str(item.get("service_type") or item.get("type") or "")
+            status = str(item.get("status") or "").lower()
+            if service_type not in ("", "communication_software_link"):
+                continue
+            if status not in {"listed", "active", "available", ""}:
+                continue
+            found = str(item.get("service_product_id") or item.get("product_id") or item.get("id") or "").strip()
+            if found:
+                return found
+        return str(data.get("service_product_id") or data.get("product_id") or "")
+
+    def start_communication_software_link_refresh_offering(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_offering",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_offering_worker, args=(request,), daemon=True).start()
+
+    def _communication_software_link_offering_worker(self, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            self.communication_software_link_offering_data = data
+            product_id = self._find_communication_software_link_service_product_id(data)
+            if product_id and not self.communication_software_link_service_product_id.get().strip():
+                self.run_on_ui(lambda: self.communication_software_link_service_product_id.set(product_id))
+            self.set_status_from_worker("状态：连接通讯软件服务商品已从服务端刷新")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件服务商品刷新失败：{exc}")
+            self.show_error_from_worker("连接通讯软件刷新失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def current_communication_software_link_offering_text(self) -> str:
+        data = self.communication_software_link_offering_data or {}
+        if not data:
+            return "登录并刷新服务端后，这里会显示连接通讯软件服务商品。价格、通道和上架状态以服务端返回为准。"
+        product_id = self._find_communication_software_link_service_product_id(data)
+        list_count = 0
+        for key in ("products", "items", "offerings"):
+            values = data.get(key)
+            if isinstance(values, list):
+                list_count += len(values)
+        parts = ["服务端已返回连接通讯软件商品信息。"]
+        if product_id:
+            parts.append(f"当前服务商品 ID：{mask_key(product_id)}")
+        if list_count:
+            parts.append(f"候选商品条数：{list_count}")
+        parts.append("具体价格、次数、有效期、上架状态和通道范围不在本地硬编码。")
+        return " ".join(parts)
+
+    def refresh_communication_software_link_panel(self) -> None:
+        label = getattr(self, "communication_software_link_service_summary_label", None)
+        if label:
+            label.configure(text=self.current_communication_software_link_offering_text())
+
+    def _communication_software_link_common_kwargs(self) -> dict[str, str]:
+        return {
+            "agent_id": self.communication_software_link_agent_id.get().strip(),
+            "channel": self.communication_software_link_channel.get().strip(),
+            "agent_source": self.communication_software_link_agent_source.get().strip(),
+        }
+
+    def start_communication_software_link_create_order(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        service_product_id = self.communication_software_link_service_product_id.get().strip()
+        if not service_product_id:
+            self.notify_warning("缺少商品", "请先刷新或填写服务端返回的连接通讯软件服务商品 ID。")
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_order_create",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            service_product_id=service_product_id,
+            **self._communication_software_link_common_kwargs(),
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_create_order_worker, args=(request,), daemon=True).start()
+
+    def _communication_software_link_create_order_worker(self, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            order_id = str(data.get("order_id") or data.get("service_order_id") or data.get("id") or "").strip()
+            if not order_id:
+                raise ValueError("创建连接通讯软件订单返回缺少订单 ID。")
+            order_status = parse_communication_software_link_order_status_data(data)
+            self.communication_software_link_order_statuses[order_id] = order_status
+            self.run_on_ui(lambda: self.communication_software_link_order_id.set(order_id))
+            self.set_status_from_worker("状态：连接通讯软件订单创建请求已受理，支付/人工确认状态以服务端返回为准")
+            self.run_on_ui(self.sync_webview_state)
+            self.show_info_from_worker("连接通讯软件订单创建请求已受理", build_customer_payment_instruction(data))
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件订单创建失败：{exc}")
+            self.show_error_from_worker("连接通讯软件订单创建失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def start_communication_software_link_get_order(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        order_id = self.communication_software_link_order_id.get().strip()
+        if not order_id:
+            self.notify_warning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_order_get",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            order_id=order_id,
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_get_order_worker, args=(request,), daemon=True).start()
+
+    def _communication_software_link_get_order_worker(self, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            order_status = parse_communication_software_link_order_status_data(data)
+            self.communication_software_link_order_statuses[order_status["order_id"]] = order_status
+            self.set_status_from_worker("状态：连接通讯软件订单状态已刷新")
+            self.run_on_ui(self.refresh_steps)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件订单查询失败：{exc}")
+            self.show_error_from_worker("连接通讯软件订单查询失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def start_communication_software_link_create_session(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        order_id = self.communication_software_link_order_id.get().strip()
+        if not order_id:
+            self.notify_warning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            return
+        order_status = self.communication_software_link_order_statuses.get(order_id)
+        if not order_status or not order_status.get("session_allowed"):
+            self.notify_warning(
+                "订单未确认",
+                "请先查询连接通讯软件订单状态；订单必须已支付，或服务端明确进入人工预售/人工复核后，才能创建配置会话。",
+            )
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_session_create",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            order_id=order_id,
+            platform_account_id=self.communication_software_link_platform_account_id.get().strip(),
+            platform_chat_id=self.communication_software_link_platform_chat_id.get().strip(),
+            gateway_mode=self.communication_software_link_gateway_mode.get().strip(),
+            **self._communication_software_link_common_kwargs(),
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_create_session_worker, args=(request,), daemon=True).start()
+
+    def _apply_communication_software_link_state_fields(self, fields: dict[str, str]) -> None:
+        # order_id 回退到客户端已知订单：session get/test 等响应常不回显 order_id，
+        # 若不回退，下面整段 `if order_id:` 会被跳过，本次真实验收/扣费/完成标志(acceptance_status、
+        # charged、client_may_claim_delivery_complete)被静默丢弃，前端永远显示不出“已验收/已扣费”。
+        order_id = str(fields.get("order_id") or "").strip() or self._safe_var_value("communication_software_link_order_id").strip()
+        session_id = str(fields.get("session_id") or "").strip()
+        status = str(fields.get("status") or "").strip()
+        var_updates = {
+            "communication_software_link_order_id": order_id,
+            "communication_software_link_session_id": session_id,
+            "communication_software_link_source_event_id": str(fields.get("source_event_id") or "").strip(),
+            "communication_software_link_inbound_message_id": str(fields.get("inbound_platform_message_id") or "").strip(),
+            "communication_software_link_outbound_message_id": str(fields.get("outbound_platform_message_id") or "").strip(),
+            "communication_software_link_response_digest": str(fields.get("agent_response_digest") or "").strip(),
+            "communication_software_link_evidence_url": str(fields.get("evidence_url") or "").strip(),
+        }
+        for attr, value in var_updates.items():
+            if value:
+                getattr(self, attr).set(value)
+        if order_id:
+            order_status = dict(self.communication_software_link_order_statuses.get(order_id, {}))
+            order_status["order_id"] = order_id
+            if session_id:
+                order_status["session_id"] = session_id
+            if status:
+                order_status["communication_software_link_status"] = status
+            for key in (
+                "real_service_status",
+                "platform_callback_status",
+                "runtime_adapter_status",
+                "acceptance_status",
+            ):
+                value = str(fields.get(key) or "").strip()
+                if value:
+                    order_status[key] = value
+            if "client_may_claim_delivery_complete" in fields:
+                order_status["client_may_claim_delivery_complete"] = fields.get("client_may_claim_delivery_complete") is True
+            # charged 一旦为真保持为真（幂等），避免后续刷新未带该字段时被清回 false。
+            if fields.get("charged") is True:
+                order_status["charged"] = True
+            self.communication_software_link_order_statuses[order_id] = order_status
+
+    def _communication_software_link_create_session_worker(self, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            fields = parse_communication_software_link_state_fields(data)
+            if not fields["session_id"]:
+                raise ValueError("创建连接通讯软件配置会话返回缺少会话 ID。")
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(fields))
+            self.set_status_from_worker("状态：连接通讯软件配置会话创建请求已受理，最终会话状态以服务端返回为准")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件会话创建失败：{exc}")
+            self.show_error_from_worker("连接通讯软件会话创建失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def start_communication_software_link_get_session(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        session_id = self.communication_software_link_session_id.get().strip()
+        if not session_id:
+            self.notify_warning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_session_get",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            session_id=session_id,
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_generic_worker, args=("会话状态已刷新", request), daemon=True).start()
+
+    def start_communication_software_link_test(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        session_id = self.communication_software_link_session_id.get().strip()
+        test_prompt = self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT
+        if not session_id:
+            self.notify_warning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_session_test",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            session_id=session_id,
+            test_prompt=test_prompt,
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_generic_worker, args=("测试请求已提交", request), daemon=True).start()
+
+    def start_communication_software_link_local_runtime_test(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        session_id = self.communication_software_link_session_id.get().strip()
+        order_id = self.communication_software_link_order_id.get().strip()
+        agent_id = self.communication_software_link_agent_id.get().strip()
+        if not session_id:
+            self.notify_warning("缺少会话", "请先创建或填写连接通讯软件配置会话 ID。")
+            return
+        if not order_id:
+            self.notify_warning("缺少订单", "请先创建或填写连接通讯软件订单 ID。")
+            return
+        if not agent_id:
+            self.notify_warning("缺少 Agent", "请选择要接入通讯软件的 Agent。")
+            return
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_local_runtime_worker, daemon=True).start()
+
+    def _run_local_communication_software_link_runtime_probe(self, agent_id: str) -> str:
+        agent = next((item for item in AGENTS if item.id == agent_id), None)
+        if agent is None:
+            raise ValueError(f"未知 Agent：{agent_id}")
+        mode_var = getattr(self, "agent_mode", {}).get(agent_id)
+        mode_id = mode_var.get() if mode_var is not None else "cli"
+        if not agent_mode_uses_cli_probe(mode_id):
+            ok, output = verify_agent_client_scope(agent, mode_id)
+        else:
+            model_var = getattr(self, "model", None)
+            model = model_var.get().strip() if model_var is not None else DEFAULT_MODEL
+            ok, output = run_agent_dialogue_probe(agent, mode_id, model or DEFAULT_MODEL)
+        if not ok:
+            raise RuntimeError(output or f"{agent.name} 本地 Runtime 测试未通过。")
+        return output
+
+    def _communication_software_link_local_runtime_worker(self) -> None:
+        try:
+            agent_id = self.communication_software_link_agent_id.get().strip()
+            output = self._run_local_communication_software_link_runtime_probe(agent_id)
+            evidence = build_local_communication_software_link_acceptance_evidence(
+                session_id=self.communication_software_link_session_id.get().strip(),
+                order_id=self.communication_software_link_order_id.get().strip(),
+                agent_id=agent_id,
+                channel=self.communication_software_link_channel.get().strip(),
+                platform_chat_id=self.communication_software_link_platform_chat_id.get().strip(),
+                test_prompt=self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT,
+                agent_response=output,
+            )
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(evidence))
+            self.log_from_worker("连接通讯软件本地 Runtime 测试通过；已生成入站、Agent 响应摘要、出站和 source_event_id 验收字段。")
+            self.set_status_from_worker("状态：连接通讯软件本地 Runtime 测试通过，等待真实平台回调与服务端验收记录")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件本地 Runtime 测试失败：{exc}")
+            self.show_error_from_worker("连接通讯软件本地 Runtime 测试失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def start_communication_software_link_one_click_connect(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_one_click_connect_worker, daemon=True).start()
+
+    def _communication_software_link_one_click_connect_worker(self) -> None:
+        try:
+            result = self.run_communication_software_link_one_click_connect()
+            self.log_from_worker(
+                "连接通讯软件一键连接已完成本地预检；"
+                f"订单={result.get('order_id') or '-'}，会话={result.get('session_id') or '-'}，"
+                "本地预检不能替代通讯软件平台回调，最终交付仍以服务端真实验收记录为准。"
+            )
+            self.set_status_from_worker("状态：连接通讯软件本地预检通过，等待真实平台消息与服务端验收")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件一键连接失败：{exc}")
+            self.show_error_from_worker("连接通讯软件一键连接失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def run_communication_software_link_one_click_connect(self) -> dict[str, str]:
+        if self.commercial_contexts is None or self.deployer_auth is None:
+            raise RuntimeError("请先登录胖虎AI买家账号，并获取本次运行的服务端授权。")
+        service_product_id = self.communication_software_link_service_product_id.get().strip()
+        order_id = self.communication_software_link_order_id.get().strip()
+        session_id = self.communication_software_link_session_id.get().strip()
+        agent_id = self.communication_software_link_agent_id.get().strip()
+        channel = self.communication_software_link_channel.get().strip()
+        agent_source = self.communication_software_link_agent_source.get().strip()
+        platform_account_id = self.communication_software_link_platform_account_id.get().strip()
+        platform_chat_id = self.communication_software_link_platform_chat_id.get().strip()
+        gateway_mode = self.communication_software_link_gateway_mode.get().strip()
+        test_prompt = self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT
+
+        missing = []
+        if not agent_id:
+            missing.append("Agent")
+        if not channel:
+            missing.append("通讯通道")
+        if not agent_source:
+            missing.append("Agent 来源")
+        if not gateway_mode:
+            missing.append("网关模式")
+        if not order_id and not service_product_id:
+            missing.append("服务商品 ID 或订单 ID")
+        if missing:
+            raise ValueError("连接通讯软件一键连接缺少：" + "、".join(missing))
+
+        if not order_id:
+            order_request = commercial_api_request_with_auth(
+                "communication_software_link_order_create",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                service_product_id=service_product_id,
+                agent_id=agent_id,
+                channel=channel,
+                agent_source=agent_source,
+            )
+            order_data, summary = execute_commercial_api_with_trusted_certs(order_request)
+            self.log_from_worker(summary)
+            order_id = str(order_data.get("order_id") or order_data.get("service_order_id") or order_data.get("id") or "").strip()
+            if not order_id:
+                raise ValueError("创建连接通讯软件订单返回缺少订单 ID。")
+            order_status = parse_communication_software_link_order_status_data(order_data)
+            self.communication_software_link_order_statuses[order_id] = order_status
+            self.run_on_ui(lambda: self.communication_software_link_order_id.set(order_id))
+        else:
+            status = self.communication_software_link_order_statuses.get(order_id)
+            if status is None:
+                order_request = commercial_api_request_with_auth(
+                    "communication_software_link_order_get",
+                    self.commercial_contexts,
+                    deployer_auth=self.deployer_auth,
+                    order_id=order_id,
+                )
+                order_data, summary = execute_commercial_api_with_trusted_certs(order_request)
+                self.log_from_worker(summary)
+                status = parse_communication_software_link_order_status_data(order_data)
+                self.communication_software_link_order_statuses[order_id] = status
+            order_status = status
+
+        if not order_status.get("session_allowed"):
+            raise RuntimeError("连接通讯软件订单尚未支付或未进入服务端人工复核，不能创建配置会话。")
+
+        if not platform_account_id or not platform_chat_id:
+            platform_fields = self.resolve_communication_software_link_platform_authorization(
+                order_id=order_id,
+                agent_id=agent_id,
+                channel=channel,
+                gateway_mode=gateway_mode,
+                platform_chat_hint=platform_chat_id,
+            )
+            platform_account_id = platform_fields["platform_account_id"]
+            platform_chat_id = platform_fields["platform_chat_id"]
+            gateway_mode = platform_fields.get("gateway_mode") or gateway_mode
+
+        if not session_id:
+            session_request = commercial_api_request_with_auth(
+                "communication_software_link_session_create",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                order_id=order_id,
+                agent_id=agent_id,
+                channel=channel,
+                platform_account_id=platform_account_id,
+                platform_chat_id=platform_chat_id,
+                gateway_mode=gateway_mode,
+                agent_source=agent_source,
+            )
+            session_data, summary = execute_commercial_api_with_trusted_certs(session_request)
+            self.log_from_worker(summary)
+            fields = parse_communication_software_link_state_fields(session_data)
+            session_id = fields["session_id"]
+            if not session_id:
+                raise ValueError("创建连接通讯软件配置会话返回缺少会话 ID。")
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(fields))
+        else:
+            self.run_on_ui(lambda: self.communication_software_link_session_id.set(session_id))
+
+        test_request = commercial_api_request_with_auth(
+            "communication_software_link_session_test",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            session_id=session_id,
+            test_prompt=test_prompt,
+        )
+        test_data, summary = execute_commercial_api_with_trusted_certs(test_request)
+        self.log_from_worker(summary)
+        self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(parse_communication_software_link_state_fields(test_data)))
+
+        agent_response = self._run_local_communication_software_link_runtime_probe(agent_id)
+        evidence = build_local_communication_software_link_acceptance_evidence(
+            session_id=session_id,
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            platform_chat_id=platform_chat_id,
+            test_prompt=test_prompt,
+            agent_response=agent_response,
+        )
+        self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(evidence))
+
+        return {
+            "status": "local_runtime_precheck_passed",
+            "order_id": order_id,
+            "session_id": session_id,
+            "source_event_id": evidence["source_event_id"],
+            "evidence_url": evidence["evidence_url"],
+            "client_may_claim_delivery_complete": False,
+        }
+
+    def open_communication_software_link_platform_auth_url(self, url: str) -> None:
+        open_url(
+            url,
+            cookie_jar=getattr(self, "cookie_jar", None),
+            log=getattr(self, "log", None),
+            storage_path=self.current_buyer_web_profile_path() if hasattr(self, "current_buyer_web_profile_path") else None,
+        )
+
+    def resolve_communication_software_link_platform_authorization(
+        self,
+        order_id: str,
+        agent_id: str,
+        channel: str,
+        gateway_mode: str,
+        platform_chat_hint: str = "",
+    ) -> dict[str, str]:
+        create_request = commercial_api_request_with_auth(
+            "communication_software_link_platform_auth_create",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            order_id=order_id,
+            agent_id=agent_id,
+            channel=channel,
+            gateway_mode=gateway_mode,
+            platform_chat_hint=platform_chat_hint,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(create_request)
+        self.log_from_worker(summary)
+        auth_session_id = str(data.get("auth_session_id") or data.get("platform_auth_session_id") or data.get("id") or "").strip()
+        authorization_url = str(data.get("authorization_url") or data.get("qr_code_url") or data.get("url") or "").strip()
+        if not auth_session_id:
+            raise ValueError("连接通讯软件平台授权返回缺少授权会话 ID。")
+        if authorization_url:
+            self.run_on_ui(lambda: self.open_communication_software_link_platform_auth_url(authorization_url))
+            self.log_from_worker("已打开连接通讯软件平台授权页，请买家在手机或通讯软件中完成扫码/确认。")
+        max_polls = max(1, int(COMMUNICATION_SOFTWARE_LINK_PLATFORM_AUTH_MAX_POLLS))
+        poll_seconds = max(0, int(COMMUNICATION_SOFTWARE_LINK_PLATFORM_AUTH_POLL_SECONDS))
+        for attempt in range(max_polls):
+            get_request = commercial_api_request_with_auth(
+                "communication_software_link_platform_auth_get",
+                self.commercial_contexts,
+                deployer_auth=self.deployer_auth,
+                auth_session_id=auth_session_id,
+            )
+            status_data, summary = execute_commercial_api_with_trusted_certs(get_request)
+            self.log_from_worker(summary)
+            status = str(status_data.get("status") or "").strip().lower()
+            platform_account_id = str(status_data.get("platform_account_id") or "").strip()
+            platform_chat_id = str(status_data.get("platform_chat_id") or "").strip()
+            resolved_gateway_mode = str(status_data.get("gateway_mode") or gateway_mode or "").strip()
+            if status in {"authorized", "connected", "completed", "success"} and platform_account_id and platform_chat_id:
+                self.run_on_ui(lambda: self.communication_software_link_platform_account_id.set(platform_account_id))
+                self.run_on_ui(lambda: self.communication_software_link_platform_chat_id.set(platform_chat_id))
+                if resolved_gateway_mode:
+                    self.run_on_ui(lambda: self.communication_software_link_gateway_mode.set(resolved_gateway_mode))
+                return {
+                    "platform_account_id": platform_account_id,
+                    "platform_chat_id": platform_chat_id,
+                    "gateway_mode": resolved_gateway_mode,
+                }
+            if status in {"failed", "cancelled", "canceled", "expired", "rejected"}:
+                raise RuntimeError(f"连接通讯软件平台授权未完成：{status}")
+            if attempt < max_polls - 1 and poll_seconds:
+                self.log_from_worker(f"平台授权等待中（{attempt + 1}/{max_polls}）：请在手机或通讯软件中完成扫码/授权。")
+                time.sleep(poll_seconds)
+        raise RuntimeError("连接通讯软件平台授权超时，请确认手机或通讯软件已完成扫码/授权后重试。")
+
+    def start_communication_software_link_acceptance(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        required = {
+            "配置会话 ID": self.communication_software_link_session_id.get().strip(),
+            "源事件 ID": self.communication_software_link_source_event_id.get().strip(),
+            "入站消息 ID": self.communication_software_link_inbound_message_id.get().strip(),
+            "出站消息 ID": self.communication_software_link_outbound_message_id.get().strip(),
+            "响应摘要": self.communication_software_link_response_digest.get().strip(),
+            "证据 URL": self.communication_software_link_evidence_url.get().strip(),
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            self.notify_warning(
+                "缺少验收证据",
+                "这些字段由服务端在真实平台消息回调后自动回填，通常无需手填。"
+                "请先点“从服务端刷新验收字段”拉取；若仍缺少：" + "、".join(missing),
+            )
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_session_acceptance",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            session_id=required["配置会话 ID"],
+            source_event_id=required["源事件 ID"],
+            inbound_platform_message_id=required["入站消息 ID"],
+            outbound_platform_message_id=required["出站消息 ID"],
+            test_prompt=self.communication_software_link_test_prompt.get().strip() or COMMUNICATION_SOFTWARE_LINK_DEFAULT_PROMPT,
+            agent_response_digest=required["响应摘要"],
+            evidence_url=required["证据 URL"],
+        )
+        self.set_busy(True)
+        threading.Thread(
+            target=self._communication_software_link_generic_worker,
+            args=("验收证据提交请求已受理，等待服务端真实验收", request),
+            daemon=True,
+        ).start()
+
+    def start_communication_software_link_disable(self) -> None:
+        if self.worker_running:
+            return
+        if not self._ensure_commercial_contexts():
+            return
+        session_id = self.communication_software_link_session_id.get().strip()
+        if not session_id:
+            self.notify_warning("缺少会话", "请先填写要停用的连接通讯软件配置会话 ID。")
+            return
+        request = commercial_api_request_with_auth(
+            "communication_software_link_session_disable",
+            self.commercial_contexts,
+            deployer_auth=self.deployer_auth,
+            session_id=session_id,
+        )
+        self.set_busy(True)
+        threading.Thread(target=self._communication_software_link_generic_worker, args=("会话停用请求已提交", request), daemon=True).start()
+
+    def _communication_software_link_generic_worker(self, success_status: str, request) -> None:
+        try:
+            data, summary = execute_commercial_api_with_trusted_certs(request)
+            self.log_from_worker(summary)
+            keys = sorted(str(key) for key in data.keys()) if isinstance(data, dict) else []
+            key_text = "、".join(keys[:8]) if keys else "无结构化字段"
+            self.log_from_worker(f"连接通讯软件服务端返回字段：{key_text}")
+            fields = parse_communication_software_link_state_fields(data)
+            self.run_on_ui(lambda: self._apply_communication_software_link_state_fields(fields))
+            if success_status == "验收证据已提交":
+                success_status = "验收证据提交请求已受理，等待服务端真实验收"
+            self.set_status_from_worker(f"状态：连接通讯软件{success_status}")
+            self.run_on_ui(self.refresh_steps)
+            self.run_on_ui(self.sync_webview_state)
+        except Exception as exc:
+            self.log_from_worker(f"连接通讯软件请求失败：{exc}")
+            self.show_error_from_worker("连接通讯软件请求失败", str(exc))
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
+    def create_buyer_payment_order(self) -> dict:
+        """WebView 同步下单：创建订单并把支付宝支付链接生成二维码返回给前端。
+
+        与线程版 start_buyer_create_order 走同一套服务端约定（order_create），
+        但同步返回 payment_url + 本地生成的二维码 data URL，供前端弹窗扫码付款。
+        """
+        if self.worker_running:
+            return {"success": False, "message": "有任务正在执行，请稍候再试。"}
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号，再在软件内购买权益。"}
+        product_id = self.buyer_product_id.get().strip()
+        if not product_id:
+            return {"success": False, "message": "请先选择或填写服务端返回的商品 ID。"}
+        product_snapshot = next(
+            (p for p in self.commercial_products if p.product_id == product_id),
+            None,
+        )
+        if product_snapshot is None:
+            return {"success": False, "message": "该商品未在服务端商品清单中上架。请刷新授权清单后重试。"}
+        product = find_orderable_product(
+            self.commercial_products,
+            product_id=product_id,
+            agent_id=product_snapshot.agent_id,
+            mode_key=product_snapshot.mode_key,
+            app_version=APP_VERSION,
+            buyer_user_id=self.commercial_contexts.target_buyer.user_id,
+        )
+        if product is None:
+            return {"success": False, "message": "该商品未在服务端商品清单中上架，或不满足当前交付条件（版本/权限/上架状态）。请刷新授权清单后重试。"}
+        request = commercial_api_request_with_auth(
+            "order_create",
+            self.commercial_contexts,
+            product_id=product_id,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        order_id = str(data.get("order_id") or data.get("id") or "").strip()
+        if not order_id:
+            return {"success": False, "message": "创建订单返回缺少订单 ID。"}
+        payment_url = str(data.get("payment_url") or data.get("pay_url") or data.get("checkout_url") or "").strip()
+        payment_status = str(data.get("payment_status") or "").strip().lower()
+        if not payment_url and payment_status == "paid":
+            # 0 元商品 / 已支付订单：服务端已即时发权益，无需扫码付款
+            self.buyer_order_id.set(order_id)
+            self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.PASS
+            self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
+            return {
+                "success": True,
+                "order_id": order_id,
+                "paid": True,
+                "message": "订单无需付款（0 元或已支付），权益已直接发放，可直接进入下一步。",
+            }
+        if not payment_url:
+            return {"success": False, "message": "服务端未返回支付链接，无法生成支付二维码。请联系后台确认订单支付入口。"}
+        try:
+            qr_data_url = build_payment_qr_data_url(payment_url)
+        except Exception as exc:
+            self.log_from_worker(f"支付二维码生成失败：{exc}")
+            qr_data_url = ""
+        self.buyer_order_id.set(order_id)
+        self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.NEEDS_MANUAL
+        self.run_on_ui(self.refresh_buyer_purchase_status)
+        self.run_on_ui(self.sync_webview_state)
+        return {
+            "success": True,
+            "order_id": order_id,
+            "payment_url": payment_url,
+            "qr_data_url": qr_data_url,
+            "message": "订单已创建，请用手机支付宝扫码付款，付款后点“查询支付结果”。",
+        }
+
+    def query_buyer_payment_status(self, order_id: str = "") -> dict:
+        """WebView 同步查询支付状态；可交付判定沿用 parse_payment_status_data。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号。"}
+        order_id = str(order_id or "").strip() or self.buyer_order_id.get().strip()
+        if not order_id:
+            return {"success": False, "message": "缺少订单 ID，请先创建订单。"}
+        request = commercial_api_request_with_auth("payment_poll", self.commercial_contexts, order_id=order_id)
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        payment = parse_payment_status_data(data)
+        ready = bool(payment["ready_for_delivery"])
+        needs_review = bool(payment["requires_manual_review"])
+        if ready:
+            self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.PASS
+            self.buyer_purchase_statuses[BuyerSelfServiceNode.ENTITLEMENT_REFRESH] = NodeStatus.NEEDS_MANUAL
+        self.run_on_ui(self.refresh_buyer_purchase_status)
+        self.run_on_ui(self.sync_webview_state)
+        return {
+            "success": True,
+            "order_id": payment["order_id"],
+            "payment_status": payment["payment_status"],
+            "entitlement_id": payment["entitlement_id"],
+            "entitlement_status": payment["entitlement_status"],
+            "ready_for_delivery": ready,
+            "requires_manual_review": needs_review,
+            "message": (
+                "支付已确认，权益已到账。" if ready
+                else ("支付已确认但权益尚未生效，请稍候再查询。" if needs_review else "支付尚未完成，请扫码付款后再查询。")
+            ),
+        }
+
+    # ---------------- AI订阅服务商城（增值业务） ----------------
+
+    def subscription_list_products(self) -> dict:
+        """WebView 同步：拉取 AI订阅在架商品。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号。"}
+        request = commercial_api_request_with_auth("subscription_products", self.commercial_contexts)
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        return {"success": True, "products": parse_subscription_products_data(data)}
+
+    def subscription_create_order(self, product_id: str, quantity: int = 1) -> dict:
+        """WebView 同步：创建 AI订阅订单（支持批量），返回支付宝二维码或即时结果。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号，再购买增值服务。"}
+        product_id = str(product_id or "").strip()
+        if not product_id:
+            return {"success": False, "message": "请先选择商品。"}
+        try:
+            qty = max(1, int(quantity))
+        except (TypeError, ValueError):
+            qty = 1
+        request = commercial_api_request_with_auth(
+            "subscription_order_create", self.commercial_contexts,
+            product_id=product_id, quantity=qty, purchase_nonce=uuid.uuid4().hex[:12],
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        order = parse_subscription_order_data(data)
+        order_id = order["order_id"]
+        if not order_id:
+            return {"success": False, "message": "创建订单返回缺少订单 ID。"}
+        payment_url = order["payment_url"]
+        # 0 元 / 已即时履约（无支付链接且已 paid）
+        if not payment_url and order["status"] in SUBSCRIPTION_PAID_STATUSES:
+            return {"success": True, "order_id": order_id, "paid": True, "quantity": qty,
+                    "message": "订单无需付款，已直接开通。", **_subscription_delivery_fields(order)}
+        if not payment_url:
+            return {"success": False, "message": "服务端未返回支付链接，请联系客服确认。"}
+        try:
+            qr_data_url = build_payment_qr_data_url(payment_url)
+        except Exception as exc:
+            self.log_from_worker(f"支付二维码生成失败：{exc}")
+            qr_data_url = ""
+        return {
+            "success": True, "order_id": order_id, "quantity": qty,
+            "amount_cents": order["amount_cents"], "payment_url": payment_url, "qr_data_url": qr_data_url,
+            "delivery_mode": order["delivery_mode"],
+            "message": "订单已创建，请用手机支付宝扫码付款，付款后点“我已付款，查询结果”。",
+        }
+
+    def subscription_query_order(self, order_id: str = "") -> dict:
+        """WebView 同步：轮询 AI订阅订单，付款后回带卡密批/工具链接/客服微信。"""
+        if self.commercial_contexts is None:
+            return {"success": False, "message": "请先登录胖虎AI买家账号。"}
+        order_id = str(order_id or "").strip()
+        if not order_id:
+            return {"success": False, "message": "缺少订单 ID。"}
+        request = commercial_api_request_with_auth(
+            "subscription_order_status", self.commercial_contexts, order_id=order_id,
+        )
+        data, summary = execute_commercial_api_with_trusted_certs(request)
+        self.log_from_worker(summary)
+        order = parse_subscription_order_data(data)
+        paid = order["status"] in SUBSCRIPTION_PAID_STATUSES
+        return {
+            "success": True, "order_id": order["order_id"], "status": order["status"],
+            "paid": paid, "delivery_mode": order["delivery_mode"],
+            "message": ("已付款。" if paid else "支付尚未完成，请扫码付款后再查询。"),
+            **_subscription_delivery_fields(order),
+        }
+
+    def subscription_open_plus_tool(self, plus_tool_url: str = "", code: str = "") -> dict:
+        """内置浏览器打开 Plus 充值工具，带 ?code=<卡密> 免手输激活。"""
+        base = str(plus_tool_url or "").strip()
+        if not base:
+            return {"success": False, "message": "缺少充值工具地址（后台未配置该商品的充值工具链接），请联系客服。"}
+        parsed = urlsplit(base)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            # plus_tool_url 由服务端下发，必须校验协议/主机，杜绝 javascript:/file: 等注入。
+            return {"success": False, "message": "充值工具地址无效，请联系客服核对。"}
+        target = append_url_query_param(base, "code", str(code or "").strip())
+        # 仅 aitokenapi.cc 家族(如 plus.)进内置可信窗口；其余 http(s) 站点走外部浏览器，不内嵌。
+        opened = (
+            try_open_embedded_webview(
+                target, title="GPT Plus 自助充值", cookie_jar=None, log=self.log_from_worker,
+            )
+            if is_trusted_embedded_url(base)
+            else False
+        )
+        if not opened:
+            open_url(target, log=self.log_from_worker)
+        return {"success": True, "message": "已打开充值工具，请在其中完成激活。"}
 
     def start_buyer_create_order(self) -> None:
         if self.worker_running:
             return
         if self.commercial_contexts is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号，再在软件内购买权益。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号，再在软件内购买权益。")
             return
         product_id = self.buyer_product_id.get().strip()
         if not product_id:
-            messagebox.showwarning("缺少商品", "请选择或填写服务端返回的商品 ID。")
+            self.notify_warning("缺少商品", "请选择或填写服务端返回的商品 ID。")
+            return
+        product_snapshot = next(
+            (p for p in self.commercial_products if p.product_id == product_id),
+            None,
+        )
+        if product_snapshot is None:
+            self.notify_warning("商品不匹配", "该商品未在服务端商品清单中上架。请刷新授权清单后重试。")
             return
         product = find_orderable_product(
             self.commercial_products,
             product_id=product_id,
-            agent_id="codex",
-            mode_key=CodexConfigMode.DIRECT_API.value,
+            agent_id=product_snapshot.agent_id,
+            mode_key=product_snapshot.mode_key,
             app_version=APP_VERSION,
             buyer_user_id=self.commercial_contexts.target_buyer.user_id,
         )
         if product is None:
-            messagebox.showwarning("商品不匹配", "该商品未在服务端商品清单中上架，或不匹配当前 Codex 普通配置交付。请刷新授权清单后重试。")
+            self.notify_warning("商品不匹配", "该商品未在服务端商品清单中上架，或不满足当前交付条件（版本/权限/上架状态）。请刷新授权清单后重试。")
             return
         request = commercial_api_request_with_auth(
             "order_create",
@@ -5717,6 +7349,7 @@ class InstallerApp:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.NEEDS_MANUAL
             self.set_status_from_worker("状态：订单已创建，请完成支付后查询支付状态")
             self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
             self.show_info_from_worker("订单已创建", build_customer_payment_instruction(data))
         except Exception as exc:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.FAILED
@@ -5730,11 +7363,11 @@ class InstallerApp:
         if self.worker_running:
             return
         if self.commercial_contexts is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号。")
             return
         order_id = self.buyer_order_id.get().strip()
         if not order_id:
-            messagebox.showwarning("缺少订单", "请先创建订单或填写订单 ID。")
+            self.notify_warning("缺少订单", "请先创建订单或填写订单 ID。")
             return
         request = commercial_api_request_with_auth("payment_poll", self.commercial_contexts, order_id=order_id)
         self.set_busy(True)
@@ -5760,6 +7393,7 @@ class InstallerApp:
                 self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.NEEDS_MANUAL
                 self.set_status_from_worker("状态：支付尚未完成或需人工确认")
             self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ORDER_PAYMENT] = NodeStatus.FAILED
             self.run_on_ui(self.refresh_buyer_purchase_status)
@@ -5772,7 +7406,7 @@ class InstallerApp:
         if self.worker_running:
             return
         if self.commercial_contexts is None:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI买家账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI买家账号。")
             return
         request = commercial_api_request_with_auth("entitlement_query", self.commercial_contexts)
         self.buyer_purchase_statuses[BuyerSelfServiceNode.ENTITLEMENT_REFRESH] = NodeStatus.RUNNING
@@ -5790,6 +7424,7 @@ class InstallerApp:
             self.set_status_from_worker("状态：权益已刷新，可以继续创建 Key 或安装配置")
             self.run_on_ui(self.refresh_steps)
             self.run_on_ui(self.refresh_buyer_purchase_status)
+            self.run_on_ui(self.sync_webview_state)
         except Exception as exc:
             self.buyer_purchase_statuses[BuyerSelfServiceNode.ENTITLEMENT_REFRESH] = NodeStatus.FAILED
             self.run_on_ui(self.refresh_buyer_purchase_status)
@@ -5798,27 +7433,15 @@ class InstallerApp:
         finally:
             self.run_on_ui(lambda: self.set_busy(False))
 
-    def refresh_customer_purchase_products(self) -> None:
-        if getattr(self, 'webview_mode', False):
-            self.sync_webview_state()
-            return
-        label = getattr(self, "agent_product_summary_label", None)
-        if not label:
-            return
-        lines = build_customer_purchase_product_lines(self.commercial_products)
-        if not lines:
-            text = "服务端暂未返回可购买商品；不能在本工具内创建订单。"
-        else:
-            text = "可购买商品：\n" + "\n".join(f"- {line}" for line in lines[:5])
-        label.configure(text=text)
-
     def refresh_buyer_purchase_status(self) -> None:
         if getattr(self, 'webview_mode', False):
             self.sync_webview_state()
             return
         product_label = getattr(self, "buyer_product_summary_label", None)
         if product_label:
-            lines = build_customer_purchase_product_lines(self.commercial_products)
+            contexts = getattr(self, "commercial_contexts", None)
+            buyer_user_id = contexts.target_buyer.user_id if contexts else ""
+            lines = build_customer_purchase_product_lines(self.commercial_products, APP_VERSION, buyer_user_id)
             if lines:
                 product_label.configure(text="可购买商品：\n" + "\n".join(f"- {line}" for line in lines[:5]))
             else:
@@ -5840,710 +7463,6 @@ class InstallerApp:
         self.last_diagnostic_code = f"{prefix}-{time.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
         return self.last_diagnostic_code
 
-    def _build_login_frame(self, parent: tk.Frame) -> None:
-        parent.configure(padx=0, pady=0)
-        parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(0, weight=1)
-        login_shell = tk.Frame(parent, bg=APP_BG)
-        login_shell.pack(fill="both", expand=True)
-        login_card = tk.Frame(login_shell, bg=CARD_BG, padx=40, pady=35, highlightthickness=1, highlightbackground=BORDER)
-        login_card.pack(fill="none", expand=True, padx=20, pady=20)
-        self.login_card = login_card
-
-        # Circular Avatar & Brand Row
-        brand_row = tk.Frame(login_card, bg=CARD_BG)
-        brand_row.pack(fill="x", pady=(0, 20))
-        avatar_shell = tk.Frame(brand_row, bg=CARD_BG, width=64, height=64, highlightthickness=0, bd=0)
-        avatar_shell.pack(side="left", padx=(0, 15), pady=(0, 0))
-        avatar_shell.pack_propagate(False)
-        avatar = self.load_ui_image("panghu-avatar-64.png")
-        if avatar is not None:
-            tk.Label(avatar_shell, image=avatar, bg=CARD_BG, bd=0, highlightthickness=0).pack(fill="both", expand=True)
-        else:
-            tk.Label(
-                avatar_shell,
-                text="PH",
-                bg=PRIMARY,
-                fg="#ffffff",
-                font=("Microsoft YaHei UI", 12, "bold"),
-            ).pack(fill="both", expand=True)
-
-        title_block = tk.Frame(brand_row, bg=CARD_BG)
-        title_block.pack(side="left")
-        tk.Label(
-            title_block,
-            text="多 Agent 客户交付工具",
-            bg=CARD_BG,
-            fg=INK,
-            font=("Microsoft YaHei UI", 15, "bold"),
-            anchor="w"
-        ).pack(anchor="w", pady=(0, 1))
-        tk.Label(
-            title_block,
-            text="胖虎AI 商业交付平台",
-            bg=CARD_BG,
-            fg=PRIMARY_DARK,
-            font=("Microsoft YaHei UI", 9, "bold"),
-            anchor="w"
-        ).pack(anchor="w", pady=(1, 0))
-
-        # Divider line
-        tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(0, 20))
-
-        tk.Label(
-            login_card,
-            text="登录胖虎AI账号",
-            font=("Microsoft YaHei UI", 18, "bold"),
-            bg=CARD_BG,
-            fg=INK,
-        ).pack(anchor="w", pady=(0, 8))
-        tk.Label(
-            login_card,
-            text="先完成身份确认和登录。登录成功后，才会解锁完整部署向导和交付状态。",
-            bg=CARD_BG,
-            fg=MUTED,
-            wraplength=480,
-            justify="left",
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", pady=(0, 15))
-
-        info_row = tk.Frame(login_card, bg=CARD_BG)
-        info_row.pack(fill="x", pady=(0, 15))
-        tk.Label(
-            info_row,
-            text="所有客户先用胖虎AI账号登录；代理权益等登录后在网站模块处理。",
-            bg=CARD_BG,
-            fg=MUTED,
-            font=("Microsoft YaHei UI", 9),
-            justify="left",
-            anchor="w",
-        ).pack(side="left")
-        self._text_button(info_row, "查看说明", lambda: self._show_help("账号说明", login_help_text())).pack(side="right")
-
-        self.buyer_login_panel = tk.Frame(login_card, bg=CARD_BG)
-        self.buyer_login_panel.pack(fill="x")
-        account = tk.Frame(self.buyer_login_panel, bg=CARD_BG)
-        account.pack(fill="x")
-        tk.Label(account, text="用户名或邮箱", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        self.login_username_entry = ttk.Entry(account, textvariable=self.login_username, font=("Microsoft YaHei UI", 11), width=45)
-        self.login_username_entry.pack(fill="x", ipady=7, pady=(6, 12))
-
-        password = tk.Frame(self.buyer_login_panel, bg=CARD_BG)
-        password.pack(fill="x")
-        tk.Label(password, text="密码", bg=CARD_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        pwd_entry = ttk.Entry(password, textvariable=self.login_password, show="*", font=("Microsoft YaHei UI", 11), width=45)
-        pwd_entry.pack(fill="x", ipady=7, pady=(6, 16))
-
-        buttons = tk.Frame(self.buyer_login_panel, bg=CARD_BG)
-        buttons.pack(fill="x", pady=(5, 0))
-        self.login_button = self._button(buttons, "登录并激活工具", self.start_login, "primary")
-        self.login_button.pack(side="left")
-        self._text_button(
-            buttons,
-            "没有账号？先去注册",
-            lambda: open_url(REGISTER_URL, storage_path=self.current_buyer_web_profile_path()),
-        ).pack(side="left", padx=(18, 0), pady=(4, 0))
-
-        tk.Frame(login_card, bg=BORDER, height=1).pack(fill="x", pady=(20, 15))
-        tk.Label(
-            login_card,
-            text="安全说明：密码仅用于登录验证；API Key 只写入本机 Agent 配置，日志会自动隐藏明文 Key。",
-            bg=CARD_BG,
-            fg=MUTED,
-            wraplength=480,
-            justify="left",
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w")
-
-    def _build_buyer_purchase_panel(self, parent: tk.Frame) -> None:
-        panel = tk.Frame(parent, bg=INFO_BG, padx=12, pady=9, highlightthickness=1, highlightbackground=BORDER)
-        self.buyer_purchase_panel = panel
-        panel.pack(fill="x", pady=(0, 14))
-        tk.Label(
-            panel,
-            text="买家自助购买与权益刷新",
-            bg=INFO_BG,
-            fg=PRIMARY_DARK,
-            font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="w")
-        tk.Label(
-            panel,
-            text="显示服务端返回的可购买商品。价格、次数、有效期和设备数以服务端为准，支付成功并刷新权益后再继续交付。",
-            bg=INFO_BG,
-            fg=MUTED,
-            wraplength=760,
-            justify="left",
-            font=("Microsoft YaHei UI", 8),
-        ).pack(anchor="w", pady=(4, 7))
-        buyer_product = tk.Frame(panel, bg=INFO_BG)
-        buyer_product.pack(fill="x")
-        buyer_product.grid_columnconfigure(0, weight=1)
-        buyer_product.grid_columnconfigure(1, weight=1)
-        product_left = tk.Frame(buyer_product, bg=INFO_BG)
-        product_left.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        product_right = tk.Frame(buyer_product, bg=INFO_BG)
-        product_right.grid(row=0, column=1, sticky="ew")
-        tk.Label(product_left, text="商品 ID", bg=INFO_BG, fg=INK, font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
-        ttk.Entry(product_left, textvariable=self.buyer_product_id, show="*", font=("Microsoft YaHei UI", 10)).pack(fill="x", ipady=5, pady=(4, 0))
-        tk.Label(product_right, text="订单 ID", bg=INFO_BG, fg=INK, font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
-        ttk.Entry(product_right, textvariable=self.buyer_order_id, show="*", font=("Microsoft YaHei UI", 10)).pack(fill="x", ipady=5, pady=(4, 0))
-        self.buyer_product_summary_label = tk.Label(
-            panel,
-            text="登录并刷新授权后，这里会显示可购买商品。",
-            bg=INFO_BG,
-            fg="#71411c",
-            wraplength=760,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.buyer_product_summary_label.pack(fill="x", pady=(6, 0))
-        actions = tk.Frame(panel, bg=INFO_BG)
-        actions.pack(fill="x", pady=(8, 0))
-        self._button(actions, "创建订单", self.start_buyer_create_order, "primary").pack(side="left")
-        self._button(actions, "查询支付", self.start_buyer_poll_payment, "secondary").pack(side="left", padx=(10, 0))
-        self._button(actions, "刷新权益", self.start_buyer_refresh_entitlements, "secondary").pack(side="left", padx=(10, 0))
-        self._button(
-            actions,
-            "打开 API Key 创建页面",
-            lambda: open_url(
-                KEY_CREATE_URL,
-                cookie_jar=self.cookie_jar,
-                log=self.log,
-                storage_path=self.current_buyer_web_profile_path(),
-            ),
-            "secondary",
-        ).pack(side="left", padx=(10, 0))
-        self._button(actions, "查看创建说明", lambda: self._show_help("API Key 创建说明", key_creation_help_text()), "secondary").pack(side="left", padx=(10, 0))
-        self.buyer_purchase_status_label = tk.Label(
-            panel,
-            text="买家购买：未开始。",
-            bg=INFO_BG,
-            fg="#71411c",
-            wraplength=760,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.buyer_purchase_status_label.pack(fill="x", pady=(6, 0))
-
-    def _build_wizard_frame(self, parent: tk.Frame) -> None:
-        # Legacy hook kept for old call sites. The current UI is built by _build_ui.
-        return
-
-    def _create_step_frame(self, idx: int, parent: tk.Widget | None = None) -> tk.Frame:
-        host = parent or self.steps_host
-        viewport_bg = APP_BG if parent is self.login_gate_host else SURFACE_BG
-        viewport = tk.Frame(host, bg=viewport_bg)
-        canvas = tk.Canvas(viewport, bg=viewport_bg, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
-        content = tk.Frame(canvas, bg=CARD_BG, padx=24, pady=20, highlightthickness=1, highlightbackground=BORDER)
-        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
-        scrollbar_visible = {"value": False}
-
-        def sync_scrollbar_visibility() -> None:
-            viewport_height = max(0, viewport.winfo_height())
-            content_height = max(0, content.winfo_reqheight())
-            should_show = content_height > max(0, viewport_height - 8)
-            if should_show and not scrollbar_visible["value"]:
-                scrollbar.pack(side="right", fill="y")
-                scrollbar_visible["value"] = True
-            elif not should_show and scrollbar_visible["value"]:
-                scrollbar.pack_forget()
-                scrollbar_visible["value"] = False
-
-        def sync_scroll_region(_event=None) -> None:
-            canvas.update_idletasks()
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            sync_scrollbar_visibility()
-
-        def sync_content_width(event) -> None:
-            available_width = max(360, event.width - 24)
-            if event.width >= 2400:
-                max_width = 1280
-            elif event.width >= 1800:
-                max_width = 1120
-            elif event.width >= 1400:
-                max_width = 920
-            elif event.width >= 1100:
-                max_width = 760
-            else:
-                max_width = available_width
-            target_width = max(360, min(max_width, available_width))
-            canvas.itemconfigure(window_id, width=target_width)
-            left_pad = max(0, (event.width - target_width) // 2)
-            canvas.coords(window_id, left_pad, 0)
-            sync_scrollbar_visibility()
-
-        content.bind("<Configure>", sync_scroll_region)
-        canvas.bind("<Configure>", sync_content_width)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        self.step_canvases[idx] = viewport
-        self.step_frames[idx] = content
-        return content
-
-    def _step_button(self, parent: tk.Frame, idx: int, title: str, subtitle: str) -> tk.Button:
-        def activate() -> None:
-            self.go_to_step(idx)
-
-        return tk.Button(
-            parent,
-            text=f"{title}\n未开始",
-            command=activate,
-            anchor="w",
-            justify="left",
-            bg=SIDEBAR_BG,
-            fg=INK,
-            activebackground=PRIMARY_LIGHT,
-            activeforeground=INK,
-            relief="flat",
-            bd=0,
-            padx=8,
-            pady=7,
-            cursor="hand2",
-            font=("Microsoft YaHei UI", 8),
-        )
-
-    def _build_status_step(
-        self,
-        idx: int,
-        title: str,
-        desc: str,
-        hint: str,
-        button_text: str | None = None,
-        command=None,
-    ) -> None:
-        frame = self._create_step_frame(idx)
-        self._step_title(frame, title, desc)
-        self._step_hint(frame, idx)
-        result = tk.Frame(frame, bg=PANEL_BG, padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
-        result.pack(fill="x", pady=(0, 12))
-        tk.Label(result, text="当前要确认什么", bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        tk.Label(
-            result,
-            text=desc,
-            bg=PANEL_BG,
-            fg=MUTED,
-            wraplength=520,
-            justify="left",
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", fill="x", pady=(4, 0))
-        tip = tk.Frame(frame, bg=INFO_BG, padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
-        tip.pack(fill="x")
-        tk.Label(tip, text="完成后看哪里", bg=INFO_BG, fg=PRIMARY_DARK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        tk.Label(
-            tip,
-            text=hint,
-            bg=INFO_BG,
-            fg=INK,
-            wraplength=520,
-            justify="left",
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", fill="x", pady=(4, 0))
-        if button_text and command:
-            self._button(tip, button_text, command, "secondary").pack(anchor="w", pady=(12, 0))
-
-    def _step_title(
-        self,
-        parent: tk.Frame,
-        title: str,
-        desc: str,
-        help_title: str | None = None,
-        help_text: str | None = None,
-    ) -> None:
-        row = tk.Frame(parent, bg=CARD_BG)
-        row.pack(fill="x")
-        tk.Label(row, text=title, font=("Microsoft YaHei UI", 14, "bold"), bg=CARD_BG, fg=INK).pack(side="left", anchor="w")
-        if help_title and help_text:
-            self._text_button(row, "查看详细说明", lambda: self._show_help(help_title, help_text)).pack(side="right")
-        desc_label = tk.Label(parent, text=desc, bg=CARD_BG, fg=MUTED, wraplength=520, justify="left", font=("Microsoft YaHei UI", 8))
-        desc_label.pack(anchor="w", fill="x", pady=(5, 10))
-        self._sync_wraplength(desc_label, 20, 360)
-
-    def _step_hint(self, parent: tk.Frame, idx: int) -> None:
-        label = tk.Label(
-            parent,
-            text="",
-            bg=INFO_BG,
-            fg=PRIMARY_DARK,
-            padx=10,
-            pady=5,
-            wraplength=500,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 8, "bold"),
-            highlightthickness=1,
-            highlightbackground=BORDER,
-        )
-        label.pack(fill="x", pady=(0, 8))
-        self._sync_wraplength(label, 28, 360)
-        self.step_hint_labels[idx] = label
-
-    def _field_label(self, parent: tk.Frame, text: str, bg: str = CARD_BG) -> None:
-        tk.Label(parent, text=text, bg=bg, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-
-    def _build_step_1(self) -> None:
-        frame = self._create_step_frame(1, parent=self.login_gate_host)
-        frame.configure(bg=APP_BG, padx=0, pady=0, highlightthickness=0)
-        self._build_login_frame(frame)
-
-    def _build_step_2(self) -> None:
-        frame = self._create_step_frame(2)
-        self._step_title(
-            frame,
-            "第二步：创建或填写胖虎AI API Key",
-            "把客户自己的胖虎AI API Key 填进来。它是 Agent 调用令牌，不是登录密码，日志里只显示脱敏结果。",
-            "API Key 创建说明",
-            key_creation_help_text(),
-        )
-        self._step_hint(frame, 2)
-
-        self._build_buyer_purchase_panel(frame)
-
-        key_row = tk.Frame(frame, bg=CARD_BG)
-        key_row.pack(fill="x", pady=(18, 0))
-        self._field_label(key_row, "胖虎AI API Key")
-        entry_row = tk.Frame(key_row, bg=CARD_BG)
-        entry_row.pack(fill="x", pady=(6, 0))
-        self.key_entry = ttk.Entry(entry_row, textvariable=self.api_key, show="*", font=("Microsoft YaHei UI", 11))
-        self.key_entry.pack(side="left", fill="x", expand=True, ipady=7)
-        ttk.Checkbutton(entry_row, text="显示", variable=self.show_key, command=self.toggle_key).pack(
-            side="left", padx=(10, 0)
-        )
-
-        form = tk.Frame(frame, bg=CARD_BG)
-        form.pack(fill="x", pady=(14, 0))
-        form.grid_columnconfigure(0, weight=1)
-        form.grid_columnconfigure(1, weight=1)
-        base_frame = tk.Frame(form, bg=CARD_BG)
-        base_frame.grid(row=0, column=0, sticky="ew", padx=(0, 14))
-        self._field_label(base_frame, "接口地址")
-        self.base_url_entry = ttk.Entry(
-            base_frame,
-            textvariable=self.base_url,
-            font=("Microsoft YaHei UI", 11),
-            state="readonly",
-        )
-        self.base_url_entry.pack(fill="x", ipady=7, pady=(6, 0))
-        model_frame = tk.Frame(form, bg=CARD_BG)
-        model_frame.grid(row=0, column=1, sticky="ew")
-        self._field_label(model_frame, "默认模型")
-        ttk.Combobox(model_frame, textvariable=self.model, values=["gpt-5.5", "gpt-5.4", "gpt-4.1"]).pack(
-            fill="x", ipady=5, pady=(6, 0)
-        )
-
-        options = tk.Frame(frame, bg=CARD_BG)
-        options.pack(fill="x", pady=(18, 0))
-        ttk.Checkbutton(options, text="跳过接口测试", variable=self.skip_test).pack(side="right", padx=(0, 12))
-        self._button(options, "保存并测试 Key", self.start_save_key, "primary").pack(side="right", padx=(12, 0))
-        self.step_next_buttons[2] = self._button(options, "下一步：检测系统", lambda: self.go_to_step(3), "secondary")
-        self.step_next_buttons[2].pack(side="right")
-
-    def _build_step_3(self) -> None:
-        frame = self._create_step_frame(3)
-        self._step_title(
-            frame,
-            "第三步：选择系统并检测环境",
-            "先帮客户检查电脑环境。这里会识别系统、基础命令和会改写配置的风险工具。",
-            "环境检测说明",
-            environment_help_text(),
-        )
-        self._step_hint(frame, 3)
-        self._notice_strip(
-            frame,
-            "检测说明",
-            "如果提示存在 ccswitch、codex++、CCR 等工具，请先按提示处理，再继续安装配置。",
-            "info",
-            compact=True,
-        ).pack_configure(pady=(0, 12))
-        choices = tk.Frame(frame, bg=PANEL_BG, padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
-        choices.pack(fill="x")
-        ttk.Radiobutton(choices, text="自动识别", value=current_system_id(), variable=self.selected_system).pack(
-            side="left", padx=(0, 16)
-        )
-        ttk.Radiobutton(choices, text="Windows", value="windows", variable=self.selected_system).pack(
-            side="left", padx=(0, 16)
-        )
-        ttk.Radiobutton(choices, text="Mac", value="mac", variable=self.selected_system).pack(side="left")
-        self._button(choices, "检测环境", self.run_environment_check, "primary").pack(side="right")
-        self.env_text = tk.Text(
-            frame,
-            height=15,
-            bg=LOG_BG,
-            fg=LOG_FG,
-            insertbackground=LOG_FG,
-            relief="flat",
-            borderwidth=0,
-            padx=14,
-            pady=12,
-            wrap="word",
-            font=("Cascadia Mono", 9),
-        )
-        self.env_text.pack(fill="both", expand=True, pady=(14, 0))
-        self.env_text.configure(state="disabled")
-        nav = tk.Frame(frame, bg=CARD_BG)
-        nav.pack(fill="x", pady=(12, 0))
-        self.step_next_buttons[3] = self._button(nav, "下一步：选择 Agent", lambda: self.go_to_step(4), "secondary")
-        self.step_next_buttons[3].pack(side="right")
-
-    def _agent_card_copy(self, agent: AgentSpec) -> tuple[str, str]:
-        copies = {
-            "codex": ("官方 Codex Agent，可应用胖虎AI配置。", "可写入 Key、接口、模型和中文规则。"),
-            "claude_code": ("Claude Code/CC，官方 CLI 与客户端入口。", "写入胖虎AI网关配置，目标是直接对话。"),
-            "openclaw": ("OpenClaw，官方 CLI 与 Hub/客户端入口。", "跳过 QQ/微信/TG 等第三方通道，只保留直接对话链路。"),
-            "hermes": ("Hermes，官方 CLI 与客户端入口。", "跳过 QQ/微信/TG 等第三方通道，只保留直接对话链路。"),
-        }
-        return copies.get(agent.id, (agent.description, agent.config_note))
-
-    def _build_step_4(self) -> None:
-        frame = self._create_step_frame(4)
-        self._step_title(
-            frame,
-            "第四步：选择 Agent 和安装方式",
-            "按客户实际需要选择要交付的 Agent。五个 Agent 都按官方 CLI 与客户端入口覆盖，IDE 插件形态不处理。",
-            "Agent 选择说明",
-            agent_choice_help_text(),
-        )
-        self._step_hint(frame, 4)
-        self._notice_strip(
-            frame,
-            "配置范围",
-            "五个 Agent 都必须按五维状态验收；Gemini / agy 配置待开发，只保留安装入口。",
-            "info",
-            compact=True,
-        ).pack_configure(pady=(0, 10))
-
-        top_nav = tk.Frame(frame, bg=CARD_BG)
-        top_nav.pack(fill="x", pady=(0, 8))
-        self.step_next_buttons[4] = self._button(top_nav, "下一步：执行安装", lambda: self.go_to_step(5), "secondary")
-        self.step_next_buttons[4].pack(side="right")
-
-        list_frame = tk.Frame(frame, bg=CARD_BG)
-        list_frame.pack(fill="both", expand=True)
-        list_frame.grid_columnconfigure(0, weight=1)
-        commercial_manifest_present = bool(self.deployer_manifest and manifest_has_commercial_controls(self.deployer_manifest))
-        for index, agent in enumerate(AGENTS):
-            state = build_agent_customer_state(
-                agent.id,
-                self.commercial_capabilities,
-                commercial_manifest_present=commercial_manifest_present,
-            )
-            row = tk.Frame(list_frame, bg=PANEL_BG, padx=9, pady=4, highlightthickness=1, highlightbackground=BORDER)
-            row.grid(row=index, column=0, sticky="ew", pady=(0, 4))
-            row.grid_columnconfigure(0, minsize=148)
-            row.grid_columnconfigure(1, weight=1)
-            row.grid_columnconfigure(2, minsize=112)
-            enabled = tk.BooleanVar(value=agent.id == "codex")
-            mode = tk.StringVar(value="cli")
-            enabled.trace_add("write", self.mark_agent_selection_changed)
-            mode.trace_add("write", self.mark_agent_selection_changed)
-            self.agent_enabled[agent.id] = enabled
-            self.agent_mode[agent.id] = mode
-            card_description, _card_note = self._agent_card_copy(agent)
-            header = tk.Frame(row, bg=PANEL_BG)
-            header.grid(row=0, column=0, sticky="nw", padx=(0, 12))
-            checkbutton = tk.Checkbutton(
-                header,
-                text=f"选择 {agent.name}",
-                variable=enabled,
-                indicatoron=False,
-                bg=LOCKED_BG,
-                fg=INK,
-                activebackground=INFO_BG,
-                activeforeground=INK,
-                selectcolor=SUCCESS_BG,
-                relief="flat",
-                bd=0,
-                padx=8,
-                pady=2,
-                cursor="hand2",
-                font=("Microsoft YaHei UI", 9, "bold"),
-                state="normal" if state.selectable else "disabled",
-            )
-            checkbutton.pack(anchor="w")
-            badge_label = tk.Label(
-                header,
-                text=state.badge,
-                bg=GOLD_SOFT if state.selectable else LOCKED_BG,
-                fg=PRIMARY_DARK if state.selectable else MUTED,
-                padx=7,
-                pady=2,
-                font=("Microsoft YaHei UI", 8, "bold"),
-            )
-            badge_label.pack(anchor="w", pady=(3, 0))
-            text_area = tk.Frame(row, bg=PANEL_BG)
-            text_area.grid(row=0, column=1, sticky="ew", padx=(0, 12))
-            tk.Label(
-                text_area,
-                text=card_description,
-                bg=PANEL_BG,
-                fg=INK,
-                font=("Microsoft YaHei UI", 8, "bold"),
-                wraplength=260,
-                justify="left",
-            ).pack(anchor="w")
-            note_label = tk.Label(
-                text_area,
-                text=state.note,
-                bg=PANEL_BG,
-                fg=MUTED,
-                wraplength=260,
-                justify="left",
-                font=("Microsoft YaHei UI", 8),
-            )
-            note_label.pack(anchor="w", pady=(2, 0))
-            mode_area = tk.Frame(row, bg=PANEL_BG)
-            mode_area.grid(row=0, column=2, sticky="e")
-            tk.Label(mode_area, text="安装方式", bg=PANEL_BG, fg=MUTED, font=("Microsoft YaHei UI", 7, "bold")).pack(anchor="e")
-            modes_row = tk.Frame(mode_area, bg=PANEL_BG)
-            modes_row.pack(anchor="e", pady=(3, 0))
-            for item in agent.modes:
-                tk.Radiobutton(
-                    modes_row,
-                    text=item.label,
-                    value=item.id,
-                    variable=mode,
-                    indicatoron=False,
-                    bg=CARD_BG,
-                    fg=INK,
-                    activebackground=LOCKED_BG,
-                    activeforeground=INK,
-                    selectcolor=SUCCESS_BG,
-                    relief="flat",
-                    bd=0,
-                    padx=6,
-                    pady=2,
-                    cursor="hand2",
-                    font=("Microsoft YaHei UI", 7, "bold"),
-                ).pack(side="left", padx=(0, 5))
-            self.agent_rows[agent.id] = row
-            self.agent_checkbuttons[agent.id] = checkbutton
-            self.agent_badge_labels[agent.id] = badge_label
-            self.agent_note_labels[agent.id] = note_label
-            if not state.visible:
-                row.grid_remove()
-        nav = tk.Frame(frame, bg=CARD_BG)
-        nav.pack(fill="x", pady=(6, 0))
-        self._button(nav, "下一步：执行安装", lambda: self.go_to_step(5), "secondary").pack(side="right")
-
-    def _build_step_5(self) -> None:
-        frame = self._create_step_frame(5)
-        self._step_title(
-            frame,
-            "第五步：执行安装",
-            "客服确认前 4 步无误后，再开始安装。工具会写入胖虎AI配置，并按最短可用链路验证能直接对话。",
-            "按钮功能说明",
-            codex_action_help_text(),
-        )
-        self._step_hint(frame, 5)
-        commercial_box = tk.Frame(frame, bg=SUCCESS_BG, padx=10, pady=7, highlightthickness=1, highlightbackground=BORDER)
-        commercial_box.pack(fill="x", pady=(0, 10))
-        tk.Label(
-            commercial_box,
-            text="商业权益状态",
-            bg=SUCCESS_BG,
-            fg="#116047",
-            font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="w")
-        self.commercial_summary_label = tk.Label(
-            commercial_box,
-            text=self.current_commercial_summary_text(),
-            bg=SUCCESS_BG,
-            fg="#315c4b",
-            wraplength=760,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.commercial_summary_label.pack(fill="x", pady=(3, 0))
-        confirm_row = tk.Frame(frame, bg=CARD_BG)
-        confirm_row.pack(fill="x")
-        confirm_row.grid_columnconfigure(0, weight=1, uniform="confirm")
-        confirm_row.grid_columnconfigure(1, weight=1, uniform="confirm")
-        summary = tk.Frame(confirm_row, bg=PANEL_BG, padx=10, pady=7, highlightthickness=1, highlightbackground=BORDER)
-        summary.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        tk.Label(summary, text="客服执行前确认", bg=PANEL_BG, fg=INK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        summary_body = tk.Label(
-            summary,
-            text="确认账号、Key、系统检测和 Agent 选择都完成后再执行；开始前会再查风险工具。",
-            bg=PANEL_BG,
-            fg=MUTED,
-            wraplength=240,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9),
-        )
-        summary_body.pack(fill="x", pady=(3, 0))
-        restart = tk.Frame(confirm_row, bg=WARNING_BG, padx=10, pady=7, highlightthickness=1, highlightbackground="#f1c995")
-        restart.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        tk.Label(restart, text="客户要知道", bg=WARNING_BG, fg=PRIMARY_DARK, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-        restart_body = tk.Label(
-            restart,
-            text="配置写完后必须重新打开对应 Agent，并完成最小对话验证。",
-            bg=WARNING_BG,
-            fg="#71411c",
-            wraplength=240,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9),
-        )
-        restart_body.pack(fill="x", pady=(3, 0))
-        ttk.Checkbutton(frame, text="完成后打开对应 Agent，并临时打开必要的官方访问窗口", variable=self.open_app).pack(
-            anchor="w", pady=(8, 0)
-        )
-
-        actions = tk.Frame(frame, bg=CARD_BG)
-        actions.pack(fill="x", pady=(10, 0))
-        for col in range(2):
-            actions.grid_columnconfigure(col, weight=1, uniform="actions")
-        self.deploy_button = self._grid_button(actions, "一键部署（普通）", self.start_deploy, "success", 0, 0)
-        self.dual_state_button = self._grid_button(actions, "双态配置", self.start_dual_state_config, "primary", 0, 1)
-        self.config_button = self._grid_button(actions, "仅修复 Codex 配置", self.start_config_only, "primary", 1, 0)
-        self.official_chatgpt_button = self._grid_button(
-            actions,
-            "官方直登",
-            self.start_official_chatgpt_config,
-            "secondary",
-            1,
-            1,
-        )
-        aux_actions = tk.Frame(frame, bg=CARD_BG)
-        aux_actions.pack(fill="x", pady=(0, 0))
-        for col in range(2):
-            aux_actions.grid_columnconfigure(col, weight=1, uniform="actions2")
-        self.restore_button = self._grid_button(aux_actions, "恢复最近备份", self.restore_backups, "secondary", 0, 0)
-        self._grid_button(aux_actions, "复制日志", self.copy_logs, "secondary", 0, 1)
-        self._grid_button(aux_actions, "打开工作区", self.open_workspace, "secondary", 1, 0)
-        self._grid_button(aux_actions, "打开配置目录", self.open_config_dir, "secondary", 1, 1)
-        self._grid_button(aux_actions, "打开功能验收矩阵", self.open_acceptance_matrix, "secondary", 2, 0, 2)
-
-        help_box = tk.Frame(frame, bg=INFO_BG, padx=10, pady=7, highlightthickness=1, highlightbackground=BORDER)
-        help_box.pack(fill="x", pady=(10, 0))
-        help_box.grid_columnconfigure(0, weight=1)
-        tk.Label(
-            help_box,
-            text="按钮功能",
-            bg=INFO_BG,
-            fg=PRIMARY_DARK,
-            font=("Microsoft YaHei UI", 9, "bold"),
-        ).grid(row=0, column=0, sticky="w")
-        help_body = tk.Label(
-            help_box,
-            text="普通/双态都走胖虎AI中转站；官方直登走用户自己的 ChatGPT 账号额度。交付是否完成，以“功能验收矩阵”里的最小对话结果为准。",
-            bg=INFO_BG,
-            fg=MUTED,
-            wraplength=420,
-            justify="left",
-            anchor="w",
-            font=("Microsoft YaHei UI", 9),
-        )
-        help_body.grid(row=1, column=0, sticky="ew", pady=(3, 0))
-        self._sync_wraplength(help_body, 130, 330)
-        self._text_button(help_box, "查看全部按钮说明", lambda: self._show_help("按钮功能说明", codex_action_help_text())).grid(
-            row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0)
-        )
-
     def has_valid_key(self) -> bool:
         return self.saved_key_ok and self.saved_key_signature == self.current_key_signature()
 
@@ -6552,26 +7471,28 @@ class InstallerApp:
 
     def first_missing_step(self) -> tuple[int, str] | None:
         if not self.logged_in_user or not self.deployer_auth:
-            return 1, "第一步还没完成：请登录胖虎AI账号并获取商业部署授权。"
+            return 1, "请登录胖虎AI账号并获取商业部署授权。"
         if not self.has_valid_key():
-            return 2, "第二步还没完成：请填写胖虎AI API Key，并点击“保存并测试 Key”。"
+            return 1, "第一步还没完成：请填写胖虎AI API Key，并点击“保存并测试 Key”。"
         if not self.environment_ok:
-            return 3, "第三步还没完成：请点击“检测环境”，并处理所有风险提示。"
+            return 2, "第二步还没完成：请点击“检测环境”，并处理所有风险提示。"
         if not self.agents_ready():
-            return 4, "第四步还没完成：请至少选择一个 Agent。"
+            return 3, "第三步还没完成：请至少选择一个 Agent。"
         return None
 
     def can_access_step(self, idx: int) -> bool:
-        if idx <= 1:
+        if not self.logged_in_user or not self.deployer_auth:
+            return False
+        if idx == 1:
             return True
         if idx == 2:
-            return bool(self.logged_in_user and self.deployer_auth)
-        if idx == 3:
             return self.has_valid_key()
-        if idx == 4:
+        if idx == 3:
             return self.has_valid_key() and self.environment_ok
-        if 5 <= idx <= len(FLOW_STEPS):
+        if 4 <= idx <= 9:
             return self.first_missing_step() is None
+        if idx in (10, 11):
+            return True
         return False
 
     def go_to_step(self, idx: int) -> None:
@@ -6584,29 +7505,31 @@ class InstallerApp:
             target_step, message = missing
             self.step.set(target_step)
             self.refresh_steps()
-            messagebox.showwarning("暂时不能进入下一步", message)
+            self.notify_warning("暂时不能进入下一步", message)
 
     def step_button_copy(self, idx: int) -> tuple[str, str, str]:
         copies = {step_idx: (title, subtitle) for step_idx, title, subtitle in FLOW_STEPS}
         title, subtitle = copies[idx]
         if idx == 1:
-            status = "已完成" if self.logged_in_user and self.deployer_auth else "进行中"
+            status = "已完成" if self.has_valid_key() else "进行中"
         elif idx == 2:
-            status = "已完成" if self.has_valid_key() else "进行中" if self.step.get() == 2 and self.can_access_step(2) else "未开始"
+            status = "已完成" if self.environment_ok else "进行中" if self.step.get() == 2 and self.can_access_step(2) else "未开始"
         elif idx == 3:
-            status = "已完成" if self.environment_ok else "进行中" if self.step.get() == 3 and self.can_access_step(3) else "未开始"
+            status = "已完成" if self.agents_ready() and self.can_access_step(3) else "进行中" if self.step.get() == 3 and self.can_access_step(3) else "未开始"
         elif idx == 4:
-            status = "已完成" if self.agents_ready() and self.can_access_step(4) else "进行中" if self.step.get() == 4 and self.can_access_step(4) else "未开始"
-        elif idx == 5:
-            status = "进行中" if self.worker_running and self.can_access_step(5) else "可执行" if self.can_access_step(5) else "未开始"
+            status = "进行中" if self.worker_running and self.step.get() == 4 else "可执行" if self.can_access_step(4) else "未开始"
+        elif idx == 10:
+            status = "可配置" if self.can_access_step(10) else "未开始"
+        elif idx == 11:
+            status = "待验收" if self.can_access_step(11) else "未开始"
         else:
-            status = "待验收" if self.can_access_step(idx) else "未开始"
+            status = "进行中" if self.step.get() == idx else "待验收" if self.can_access_step(idx) else "未开始"
         return title, subtitle, status
 
     def current_flow_message(self) -> str:
         missing = self.first_missing_step()
         if not missing:
-            return "客服提示：前 4 步已完成，进入安装与验收阶段。"
+            return "客服提示：前 3 步已完成，进入安装与验收阶段。"
         return f"客服提示：{missing[1]}"
 
     def current_commercial_summary_text(self) -> str:
@@ -6662,82 +7585,99 @@ class InstallerApp:
     def refresh_recommended_agent_product(self) -> None:
         if not hasattr(self, "buyer_product_id"):
             return
+        # 按买家在第 3 步实际勾选的 Agent 推荐要购买的商品，而不是写死 codex——
+        # 否则选了 Claude/OpenClaw 等的买家扫码付款却买成 Codex 权益，回来仍装不了自己要的，白花钱。
+        target_agent_id = "codex"
+        target_mode_key = CodexConfigMode.DIRECT_API.value
+        try:
+            selected = self.selected_agents()
+        except Exception:
+            selected = []
+        if selected:
+            agent, mode = selected[0]
+            target_agent_id = agent.id
+            target_mode_key = commercial_mode_key_for_deployment(agent.id, mode)
         product = find_listed_product(
             self.commercial_products,
-            agent_id="codex",
-            mode_key=CodexConfigMode.DIRECT_API.value,
+            agent_id=target_agent_id,
+            mode_key=target_mode_key,
         )
-        if product and not self.buyer_product_id.get().strip():
-            self.buyer_product_id.set(product.product_id)
-        if getattr(self, 'webview_mode', False):
-            self.sync_webview_state()
-        product = find_listed_product(
-            self.commercial_products,
-            agent_id="codex",
-            mode_key=CodexConfigMode.DIRECT_API.value,
-        )
-        if product and not self.buyer_product_id.get().strip():
-            self.buyer_product_id.set(product.product_id)
+        if not product:
+            return
+        current = self.buyer_product_id.get().strip()
+        last_auto = getattr(self, "_auto_recommended_product_id", "")
+        # 仅当"未填"或"仍是上次自动推荐值"时更新，保留买家手工填写的商品号；
+        # 随选择变化自动改写推荐商品，避免停留在旧的(codex)商品上。
+        if not current or current == last_auto:
+            if product.product_id != current:
+                self.buyer_product_id.set(product.product_id)
+                if getattr(self, 'webview_mode', False):
+                    self.sync_webview_state()
+            self._auto_recommended_product_id = product.product_id
 
     def update_step_hints(self) -> None:
         hint_data = {
             1: (
-                "已完成：账号已登录并获取商业部署授权，可以进入第二步。"
-                if self.logged_in_user and self.deployer_auth
-                else "待完成：请登录胖虎AI账号。账号、次数、有效期和设备数均以服务端返回为准。"
-            ),
-            2: (
-                "已完成：Key 已保存并通过当前配置校验，可以进入第三步。"
+                "已完成：Key 已保存并通过当前配置校验，可以进入第二步。"
                 if self.has_valid_key()
                 else "待完成：请创建或填写胖虎AI API Key，并点击“保存并测试 Key”。Key 不写入日志，默认使用公共域名。"
             ),
-            3: (
-                "已完成：环境检测通过，可以进入第四步。"
+            2: (
+                "已完成：环境检测通过，可以进入第三步。"
                 if self.environment_ok
                 else "待完成：点击“检测环境”，先处理所有风险提示。"
             ),
-            4: (
-                f"已完成：已选择 {len(self.selected_agents())} 个 Agent，可以进入第五步。"
+            3: (
+                f"已完成：已选择 {len(self.selected_agents())} 个 Agent，可以进入第四步。"
                 if self.agents_ready()
                 else "待完成：至少选择一个 Agent。普通客户建议保留 Codex；ClaudeCode、OpenClaw、Hermes 只按已打通链路验收。"
             ),
-            5: (
-                "可执行：前 4 步已完成。普通客户点“一键部署（普通）”；需要登录态共存才点“双态配置”。"
-                if self.can_access_step(5)
+            4: (
+                "可执行：前三项前置检查已完成。普通客户点“一键部署（普通）”；需要登录态共存才点“双态配置”。"
+                if self.can_access_step(4)
                 else "未解锁：请先完成登录、Key 保存、环境检测和 Agent 选择。"
             ),
+            5: (
+                "待验收：部署执行后检查配置写入结果。买家密码只有用户勾选记住密码时才进入本机加密保存；部署授权 token 不落 profile.json，Key 不输出到日志。"
+                if self.can_access_step(5)
+                else "未解锁：请先完成前置检查并执行安装。"
+            ),
             6: (
-                "待验收：部署执行后检查配置写入结果。保留胖虎AI买家会话，但不保存密码或部署授权 token，不把 Key 输出到日志。"
+                "待验收：确认 CLI 或客户端入口可启动。需要重开终端时按提示处理后复验。"
                 if self.can_access_step(6)
-                else "未解锁：请先完成前 4 步并执行安装。"
+                else "未解锁：请先完成前置检查并执行安装。"
             ),
             7: (
-                "待验收：确认 CLI 或客户端入口可启动。需要重开终端时按提示处理后复验。"
+                "待验收：对每个目标 Agent 执行最小中文对话。QQ、微信、TG 等第三方通道默认跳过。"
                 if self.can_access_step(7)
-                else "未解锁：请先完成前 4 步并执行安装。"
+                else "未解锁：请先完成前置检查并执行安装。"
             ),
             8: (
-                "待验收：对每个目标 Agent 执行最小中文对话。QQ、微信、TG 等第三方通道默认跳过。"
+                "待验收：打开功能验收矩阵，逐项确认安装、启动、对话、验收、交付状态。"
                 if self.can_access_step(8)
-                else "未解锁：请先完成前 4 步并执行安装。"
+                else "未解锁：请先完成前置检查并执行安装。"
             ),
             9: (
-                "待验收：打开功能验收矩阵，逐项确认安装、启动、对话、验收、交付状态。"
+                "待交付：矩阵全部达标后才算客户可交付；正式发客户前还要确认安装包和下载页。"
                 if self.can_access_step(9)
-                else "未解锁：请先完成前 4 步并执行安装。"
+                else "未解锁：请先完成前置检查并执行安装。"
             ),
             10: (
-                "待交付：矩阵全部达标后才算客户可交付；正式发客户前还要确认安装包和下载页。"
+                "可配置：连接通讯软件是独立增值服务，可绑定本次、历史或已有本机 Agent；订单、通道和价格以服务端返回为准。"
                 if self.can_access_step(10)
-                else "未解锁：请先完成前 4 步并执行安装。"
+                else "未解锁：请先登录胖虎AI账号。"
+            ),
+            11: (
+                "待验收：必须提交入站消息、Agent 调用、出站回复和证据 URL，服务端确认后才算连接通讯软件交付。"
+                if self.can_access_step(11)
+                else "未解锁：请先登录胖虎AI账号。"
             ),
         }
         for idx, label in getattr(self, "step_hint_labels", {}).items():
             ready = (
-                idx == 1 and self.logged_in_user and self.deployer_auth
-                or idx == 2 and self.has_valid_key()
-                or idx == 3 and self.environment_ok
-                or idx == 4 and self.agents_ready()
+                idx == 1 and self.has_valid_key()
+                or idx == 2 and self.environment_ok
+                or idx == 3 and self.agents_ready()
             )
             unlocked = self.can_access_step(idx)
             label.configure(
@@ -6805,7 +7745,7 @@ class InstallerApp:
                         highlightbackground=outline,
                     )
         if hasattr(self, "flow_status_label"):
-            if getattr(self, "active_module", tk.StringVar(value=MODULE_AGENT)).get() == MODULE_AGENT:
+            if getattr(self, "active_module", WebviewStringVar(value=MODULE_AGENT)).get() == MODULE_AGENT:
                 self.flow_status_label.configure(text=self.current_flow_message())
             else:
                 _title, _url, note = self.current_module_page_meta()
@@ -6814,13 +7754,14 @@ class InstallerApp:
         self.refresh_agent_commercial_states()
         self.refresh_recommended_agent_product()
         self.refresh_buyer_purchase_status()
+        self.refresh_communication_software_link_panel()
         self.refresh_topbar()
         self.refresh_commercial_info_panel()
         self.refresh_agent_matrix_panel()
         self.update_step_hints()
         for idx, button in getattr(self, "step_next_buttons", {}).items():
             button.configure(state="normal" if self.can_access_step(idx + 1) and not self.worker_running else "disabled")
-        ready_for_step_5 = self.can_access_step(5) and not self.worker_running
+        ready_for_step_5 = self.can_access_step(4) and not self.worker_running
         for button in (getattr(self, "deploy_button", None), getattr(self, "dual_state_button", None), getattr(self, "config_button", None)):
             if button:
                 button.configure(state="normal" if ready_for_step_5 else "disabled")
@@ -6838,26 +7779,56 @@ class InstallerApp:
         else:
             self._show_login_gate_shell()
 
-    def toggle_key(self) -> None:
-        self.key_entry.configure(show="" if self.show_key.get() else "*")
+    def _js_push_worker(self) -> None:
+        """专用 evaluate_js 执行线程。所有前端推送经 _push_js 入队后在此执行，
+        保证任何线程（含 js_api 回调）调用推送都不会重入死锁。
+        注意用 getattr 读 app_closed：本线程在 __init__ 早期启动，属性可能尚未赋值。"""
+        while not getattr(self, "app_closed", False):
+            try:
+                script = self._js_push_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            window = getattr(self, "webview_window", None)
+            if window is None or not getattr(self, "webview_ready", False):
+                continue  # 未就绪：丢弃，内容会随首次全量拉取带给前端
+            try:
+                window.evaluate_js(script)
+            except Exception:
+                pass
+
+    def _push_js(self, script: str) -> None:
+        if not getattr(self, "webview_mode", False):
+            return
+        try:
+            self._js_push_queue.put_nowait(script)
+        except Exception:
+            pass
+
+    def push_webview_toast(self, message: str, level: str = "info") -> None:
+        """向 WebView 前端弹一条提示（异步入队，任何线程可安全调用）。"""
+        if not getattr(self, "webview_mode", False):
+            return
+        safe = sanitize_log_text(message, *self._all_deploy_keys())
+        self._push_js(
+            f"(window.showToast||window.appendPythonLog)({json.dumps(safe)}, {json.dumps(level)})"
+        )
 
     def log(self, message: str, replace: bool = False) -> None:
-        safe = sanitize_log_text(message, self.api_key.get().strip())
+        safe = sanitize_log_text(message, *self._all_deploy_keys())
         tag = self._log_tag_for_message(safe)
         if getattr(self, 'webview_mode', False):
             current_step = self.step.get()
             if not hasattr(self, "webview_logs"):
-                self.webview_logs = {i: [] for i in range(1, 10)}
+                self.webview_logs = empty_flow_logs()
             now = time.strftime("%H:%M:%S")
             log_line = {"t": now, "c": tag_to_css(tag), "m": safe}
             if replace:
                 self.webview_logs[current_step] = [log_line]
             else:
                 self.webview_logs[current_step].append(log_line)
-            if getattr(self, "webview_window", None):
-                if replace:
-                    self.webview_window.evaluate_js(f"logsData[{current_step}] = []; renderLogs();")
-                self.webview_window.evaluate_js(f"appendPythonLog({json.dumps(log_line)})")
+            if replace:
+                self._push_js(f"logsData[{current_step}] = []; renderLogs();")
+            self._push_js(f"appendPythonLog({json.dumps(log_line)})")
         else:
             self.log_box.configure(state="normal")
             if replace:
@@ -6936,22 +7907,83 @@ class InstallerApp:
     def set_status_from_worker(self, message: str) -> None:
         self.run_on_ui(lambda: self.status.set(sanitize_worker_message(message)))
 
+    def notify_user(self, title: str, message: str, level: str = "info") -> None:
+        """统一用户提示出口（webview 安全）。
+
+        webview 模式下 Tk messagebox 不可用：主线程阻塞在 webview.start()，
+        Tk mainloop 永远不运行，bridge/后台线程调 messagebox 直接抛
+        RuntimeError 并被上层 try/except 吞掉，表现为"点了无反应"。
+        因此 webview 模式统一改为：写入运行日志 + 前端全局 toast。
+        """
+        safe = sanitize_worker_message(str(message))
+        text = f"{title}：{safe}" if title else safe
+        if getattr(self, 'webview_mode', False):
+            self.log(text)
+            self.push_webview_toast(text, level)
+            return
+        shows = {"info": messagebox.showinfo, "error": messagebox.showerror}
+        shows.get(level, messagebox.showwarning)(title, safe)
+
+    def notify_info(self, title: str, message: str) -> None:
+        self.notify_user(title, message, "info")
+
+    def notify_warning(self, title: str, message: str) -> None:
+        self.notify_user(title, message, "warning")
+
+    def notify_error(self, title: str, message: str) -> None:
+        self.notify_user(title, message, "error")
+
     def show_info_from_worker(self, title: str, message: str) -> None:
-        self.run_on_ui(lambda: messagebox.showinfo(title, sanitize_worker_message(message)))
+        self.run_on_ui(lambda: self.notify_info(title, message))
 
     def show_warning_from_worker(self, title: str, message: str) -> None:
-        self.run_on_ui(lambda: messagebox.showwarning(title, sanitize_worker_message(message)))
+        self.run_on_ui(lambda: self.notify_warning(title, message))
 
     def show_error_from_worker(self, title: str, message: str) -> None:
-        self.run_on_ui(lambda: messagebox.showerror(title, sanitize_worker_message(message)))
+        self.run_on_ui(lambda: self.notify_error(title, message))
 
     def set_busy(self, busy: bool) -> None:
         self.worker_running = busy
         self.refresh_steps()
 
+    def key_model_for_agent(self, agent_id: str, fallback_key: str = "", fallback_model: str = "") -> tuple[str, str]:
+        fmt = key_format_for_agent(agent_id)
+        entry = (getattr(self, "deploy_keys", None) or {}).get(fmt) or {}
+        key = (entry.get("key") or "").strip()
+        model = (entry.get("model") or "").strip()
+        # 每种格式的默认模型不同：gemini 走 Gemini 接口，型号是 GEMINI_DEFAULT_MODEL，
+        # 不能兜底成 openai 的 DEFAULT_MODEL(gpt-5.5)，否则一键修复会把 gpt-5.5 写进 Gemini
+        # 配置，且 inspect 因 expected_model 非空反而能正确标出漂移。
+        default_model = GEMINI_DEFAULT_MODEL if fmt == "gemini" else DEFAULT_MODEL
+        if fmt == "openai":
+            if not key:
+                key = (fallback_key or "").strip() or (self.api_key.get().strip() if hasattr(self, "api_key") else "")
+            if not model:
+                model = (fallback_model or "").strip() or (self.model.get().strip() if hasattr(self, "model") else "") or default_model
+        elif not model:
+            # gemini/anthropic 的模型不复用 openai 的 self.model / fallback_model(那是 gpt-5.5)，
+            # 只按本格式默认模型兜底。
+            model = default_model
+        return key, model
+
+    def _primary_deploy_key(self) -> str:
+        dk = getattr(self, "deploy_keys", None) or {}
+        for fmt in KEY_FORMAT_IDS:
+            k = (dk.get(fmt, {}).get("key") or "").strip()
+            if k:
+                return k
+        return self.api_key.get().strip()
+
+    def _all_deploy_keys(self) -> list[str]:
+        dk = getattr(self, "deploy_keys", None) or {}
+        keys = [(dk.get(fmt, {}).get("key") or "").strip() for fmt in KEY_FORMAT_IDS]
+        if hasattr(self, "api_key"):
+            keys.append(self.api_key.get().strip())
+        return [k for k in keys if k]
+
     def current_key_signature(self) -> tuple[str, str, str, bool]:
         return (
-            self.api_key.get().strip(),
+            self._primary_deploy_key(),
             DEFAULT_BASE_URL,
             self.model.get().strip(),
             self.skip_test.get(),
@@ -6973,15 +8005,6 @@ class InstallerApp:
 
     def mark_agent_selection_changed(self, *_args) -> None:
         self.refresh_steps()
-
-    def start_login(self) -> None:
-        if self.worker_running:
-            return
-        username = self.login_username.get()
-        password = self.login_password.get()
-        self.set_busy(True)
-        self.status.set("状态：正在登录胖虎AI...")
-        threading.Thread(target=self._login_worker, args=(username, password), daemon=True).start()
 
     def _login_worker(self, username: str, password: str) -> None:
         try:
@@ -7005,8 +8028,19 @@ class InstallerApp:
             display_name = str(data.get("username") or username)
             save_buyer_session_state(data, self.cookie_jar)
             save_profile_data({"username": display_name}, self.commercial_contexts)
+            
+            # Save account state to login_accounts.json
+            save_login_account_state(
+                username=username,
+                password=password,
+                remember_password=self.remember_password.get(),
+                auto_login=self.auto_login.get(),
+                user_id=str(data.get("id") or ""),
+            )
+
             display_username = display_name if len(display_name) <= 20 else f"{display_name[:17]}..."
-            self.run_on_ui(lambda: self.user_label.configure(text=f"已登录：{display_username}"))
+            if hasattr(self, "user_label"):
+                self.run_on_ui(lambda: self.user_label.configure(text=f"已登录：{display_username}"))
             self.run_on_ui(self.show_wizard)
             self.run_later(1200, self.start_auto_update_check)
             self.run_later(1600, self.start_refresh_commercial_manifest)
@@ -7060,6 +8094,15 @@ class InstallerApp:
             "工具会下载对应系统安装包，自动覆盖当前程序并重新打开。"
             "你的登录状态、API Key、Codex 配置和工作区资料都会保留。"
         )
+        if getattr(self, 'webview_mode', False):
+            # webview 模式无法用 Tk askyesno 阻塞等待用户确认；打包发布当前叫停中，
+            # 先只提示不自动更新（后续接前端确认对话框后再放开自动更新链路）。
+            self.notify_info(
+                "发现新版本",
+                f"检测到新版本 {update.latest_tag}（当前 {APP_VERSION}）。当前版本可继续使用，暂不自动更新。",
+            )
+            self.set_busy(False)
+            return
         if not messagebox.askyesno("发现新版本", message):
             if auto:
                 self.status.set("状态：已跳过本次自动更新")
@@ -7084,80 +8127,25 @@ class InstallerApp:
     def confirm_and_start_online_update(self, path: Path) -> None:
         try:
             start_online_update(path, self.log)
-            messagebox.showinfo("开始在线更新", "更新程序已启动。本工具将退出，更新完成后会自动重新打开。")
+            self.notify_info("开始在线更新", "更新程序已启动。本工具将退出，更新完成后会自动重新打开。")
             self.run_later(200, self.close_app)
         except Exception as exc:
             self.set_busy(False)
-            messagebox.showerror("在线更新失败", sanitize_worker_message(str(exc)))
-
-    def start_save_key(self) -> None:
-        if self.worker_running:
-            return
-        if not self.logged_in_user:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI账号。")
-            return
-        if not self.deployer_auth:
-            messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
-            return
-        api_key = self.api_key.get()
-        self.base_url.set(DEFAULT_BASE_URL)
-        base_url = DEFAULT_BASE_URL
-        model = self.model.get()
-        skip_test = self.skip_test.get()
-        open_app = self.open_app.get()
-        self.set_busy(True)
-        self.status.set("状态：正在测试 API Key...")
-        threading.Thread(target=self._save_key_worker, args=(api_key, base_url, model, skip_test, open_app), daemon=True).start()
-
-    def _save_key_worker(self, api_key: str, base_url: str, model: str, skip_test: bool, open_app: bool) -> None:
-        try:
-            base_url = DEFAULT_BASE_URL
-            if not api_key.strip():
-                raise ValueError("请先填写胖虎AI API Key。")
-            contexts = deployment_commercial_contexts(self.logged_in_user or {})
-            self.log_from_worker(execute_api_key_owner_verify(api_key, contexts, opener=urlopen, deployer_auth=self.deployer_auth))
-            if skip_test:
-                ok, msg = True, "已保存 Key，接口测试被跳过。"
-            else:
-                base_url = DEFAULT_BASE_URL
-                ok, msg = test_api(base_url, api_key)
-            self.log_from_worker(msg)
-            self.saved_key_ok = ok
-            if ok:
-                self.saved_key_signature = (api_key.strip(), DEFAULT_BASE_URL, model.strip(), skip_test)
-                save_profile_data(
-                    {
-                        "api_key": api_key.strip(),
-                        "base_url": DEFAULT_BASE_URL,
-                        "model": model.strip(),
-                        "skip_test": skip_test,
-                        "open_app": open_app,
-                    },
-                    contexts,
-                )
-                self.set_status_from_worker("状态：Key 已保存")
-                self.run_on_ui(lambda: self.step.set(3))
-                self.run_on_ui(self.refresh_steps)
-            else:
-                self.set_status_from_worker("状态：Key 测试失败")
-                self.show_warning_from_worker("Key 测试失败", msg)
-        except Exception as exc:
-            self.set_status_from_worker("状态：Key 保存失败")
-            self.show_error_from_worker("Key 保存失败", str(exc))
-        finally:
-            self.run_on_ui(lambda: self.set_busy(False))
+            self.notify_error("在线更新失败", sanitize_worker_message(str(exc)))
 
     def run_environment_check(self) -> None:
         if not self.has_valid_key():
-            messagebox.showwarning("请先完成第二步", "请先保存并测试胖虎AI API Key，再检测环境。")
-            self.step.set(2)
+            self.notify_warning("请先完成第一步", "请先保存并测试胖虎AI API Key，再检测环境。")
+            self.step.set(1)
             self.refresh_steps()
             return
         lines = detect_environment()
-        self.env_text.configure(state="normal")
-        self.env_text.delete("1.0", "end")
-        self.env_text.insert("end", "\n".join(lines))
-        self.env_text.configure(state="disabled")
+        if not getattr(self, 'webview_mode', False):
+            # env_text 是旧 Tk 界面控件，webview 模式不存在；结果统一走日志。
+            self.env_text.configure(state="normal")
+            self.env_text.delete("1.0", "end")
+            self.env_text.insert("end", "\n".join(lines))
+            self.env_text.configure(state="disabled")
         for line in lines:
             self.log(line)
         self.environment_checked = True
@@ -7165,10 +8153,10 @@ class InstallerApp:
         self.environment_ok = not risk_findings
         if self.environment_ok:
             self.status.set("状态：环境检测通过")
-            self.step.set(4)
+            self.step.set(3)
         else:
             self.status.set("状态：发现第三方配置插件，请先处理")
-            messagebox.showwarning("环境检测未通过", format_risk_plugin_block_message(risk_findings))
+            self.notify_warning("环境检测未通过", format_risk_plugin_block_message(risk_findings))
         self.refresh_steps()
 
     def selected_agents(self) -> list[tuple[AgentSpec, str]]:
@@ -7182,22 +8170,22 @@ class InstallerApp:
         if self.worker_running:
             return False, None
         if not self.logged_in_user:
-            messagebox.showwarning("请先登录", "请先登录胖虎AI账号。")
+            self.notify_warning("请先登录", "请先登录胖虎AI账号。")
             return False, None
         if not self.deployer_auth:
-            messagebox.showwarning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
+            self.notify_warning("缺少部署授权", "请重新登录胖虎AI账号获取部署授权。")
             return False, None
         if not codex_config_mode_requires_panghu_key(mode):
             return True, self.current_key_signature()
         current_key_signature = self.current_key_signature()
         if not current_key_signature[0]:
-            messagebox.showwarning("请先填写 Key", "请先在第二步填写胖虎AI API Key。")
-            self.step.set(2)
+            self.notify_warning("请先填写 Key", "请先在第一步填写胖虎AI API Key。")
+            self.step.set(1)
             self.refresh_steps()
             return False, None
         if not self.saved_key_ok or self.saved_key_signature != current_key_signature:
-            messagebox.showwarning("请先保存 Key", "请先在第二步保存当前胖虎AI API Key，然后再开始部署。")
-            self.step.set(2)
+            self.notify_warning("请先保存 Key", "请先在第一步保存当前胖虎AI API Key，然后再开始部署。")
+            self.step.set(1)
             self.refresh_steps()
             return False, None
         return True, current_key_signature
@@ -7206,21 +8194,21 @@ class InstallerApp:
         actual_system = current_system_id()
         if self.selected_system.get() != actual_system:
             readable = {"windows": "Windows", "mac": "Mac", "other": "其他系统"}
-            messagebox.showwarning(
+            self.notify_warning(
                 "系统选择不一致",
                 f"当前电脑识别为 {readable.get(actual_system, actual_system)}，"
-                f"但你选择的是 {readable.get(self.selected_system.get(), self.selected_system.get())}。请回到第三步选择当前电脑系统。",
+                f"但你选择的是 {readable.get(self.selected_system.get(), self.selected_system.get())}。请回到第二步选择当前电脑系统。",
             )
-            self.step.set(3)
+            self.step.set(2)
             self.refresh_steps()
             return False
         risk_findings = detect_risk_plugins()
         if risk_findings:
             for line in risk_plugin_report_lines(risk_findings):
                 self.log(line)
-            messagebox.showwarning("请先卸载第三方插件", format_risk_plugin_block_message(risk_findings))
+            self.notify_warning("请先卸载第三方插件", format_risk_plugin_block_message(risk_findings))
             self.status.set("状态：发现第三方配置插件，请先卸载后再部署")
-            self.step.set(3)
+            self.step.set(2)
             self.refresh_steps()
             return False
         return True
@@ -7229,12 +8217,12 @@ class InstallerApp:
         ok, _current_key_signature = self.validate_config_ready()
         if not ok:
             return
-        if not self.can_access_step(5):
-            self.go_to_step(5)
+        if not self.can_access_step(4):
+            self.go_to_step(4)
             return
         selected = self.selected_agents()
         if not selected:
-            messagebox.showwarning("请选择 Agent", "请至少选择一个 Agent。")
+            self.notify_warning("请选择 Agent", "请至少选择一个 Agent。")
             return
         if not self.validate_system_and_risk_plugins():
             return
@@ -7256,6 +8244,48 @@ class InstallerApp:
             daemon=True,
         ).start()
 
+    def start_install(self) -> None:
+        """第 4 步「安装」：仅下载安装所选 Agent，不写配置、不做商业权益预占/扣次。
+        配置写入与交付计费在第 5 步「写入配置」（start_deploy）完成。"""
+        # 与 start_deploy/validate_config_ready 一致的并发护栏：已有后台任务在跑时直接返回，
+        # 避免第二个安装线程与部署/安装线程并发抢写同一批 ~/.codex、~/.claude、快照/备份文件而损坏。
+        if self.worker_running:
+            return
+        if not self.can_access_step(4):
+            self.go_to_step(4)
+            return
+        selected = self.selected_agents()
+        if not selected:
+            self.notify_warning("请选择 Agent", "请至少选择一个 Agent。")
+            return
+        if not self.validate_system_and_risk_plugins():
+            return
+        self.set_busy(True)
+        self.status.set("状态：正在安装 Agent...")
+        threading.Thread(
+            target=self._install_worker,
+            args=(list(selected),),
+            daemon=True,
+        ).start()
+
+    def _install_worker(self, selected) -> None:
+        try:
+            self.log_from_worker("开始安装所选 Agent（仅安装，不写配置、不计费）……")
+            done = 0
+            for agent, mode in selected:
+                if install_agent(agent, mode, self.log_from_worker):
+                    done += 1
+                    self.log_from_worker(f"{agent.name}/{mode} 安装完成。")
+                else:
+                    self.log_from_worker(f"{agent.name}/{mode} 安装失败，请查看日志。")
+            self.set_status_from_worker(f"状态：安装完成 {done}/{len(selected)}，请进入第 5 步「写入配置」")
+            self.log_from_worker("安装阶段结束。请点第 5 步「写入配置」写入配置并完成交付（验收通过才扣次）。")
+        except Exception as exc:
+            self.set_status_from_worker("状态：安装失败")
+            self.log_from_worker(f"安装过程中出错：{exc}")
+        finally:
+            self.run_on_ui(lambda: self.set_busy(False))
+
     def start_config_only(self) -> None:
         self.start_config_for_mode(CodexConfigMode.DIRECT_API)
 
@@ -7270,12 +8300,12 @@ class InstallerApp:
         if not ok:
             return
         if not codex_config_mode_requires_panghu_key(mode) and not self.environment_ok:
-            self.step.set(3)
+            self.step.set(2)
             self.refresh_steps()
-            messagebox.showwarning("请先检测环境", "请先完成第三步环境检测，再切换官方直登模式。")
+            self.notify_warning("请先检测环境", "请先完成第二步环境检测，再切换官方直登模式。")
             return
-        if not self.can_access_step(5) and codex_config_mode_requires_panghu_key(mode):
-            self.go_to_step(5)
+        if not self.can_access_step(4) and codex_config_mode_requires_panghu_key(mode):
+            self.go_to_step(4)
             return
         if not self.validate_system_and_risk_plugins():
             return
@@ -7498,6 +8528,7 @@ class InstallerApp:
             self.deployer_manifest = manifest
             self.commercial_capabilities = manifest_commercial_capabilities(manifest)
             self.commercial_products = manifest_commercial_products(manifest)
+            self.value_added_services = manifest_value_added_services(manifest)
             self.commercial_entitlements = manifest_commercial_entitlements(manifest)
             self.run_on_ui(self.refresh_commercial_summary)
             commercial_manifest_present = manifest_has_commercial_controls(manifest)
@@ -7553,37 +8584,59 @@ class InstallerApp:
                 if install_agent(agent, mode, self.log_from_worker):
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS)
                     try:
-                        configured = apply_agent_config_plan(agent, mode, api_key, model, self.log_from_worker)
-                        progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS if configured else NodeStatus.NEEDS_MANUAL)
+                        a_key, a_model = self.key_model_for_agent(agent.id, api_key, model)
+                        if not a_key:
+                            self.log_from_worker(f"{agent.name}/{mode} 未填写「{KEY_FORMAT_LABELS.get(key_format_for_agent(agent.id), '')}」的 API Key，跳过配置写入。")
+                            progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.NEEDS_MANUAL)
+                        else:
+                            configured = apply_agent_config_plan(agent, mode, a_key, a_model, self.log_from_worker)
+                            progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS if configured else NodeStatus.NEEDS_MANUAL)
                     except Exception as exc:
                         progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
                         self.log_from_worker(f"{agent.name}/{mode} 配置写入失败：{exc}")
-                    success_count += 1
+                    # 只有配置真正写入成功才算"成功处理"，否则顶栏"成功 N/M"会虚高误导买家。
+                    # Codex 在首循环走的是占位 no-op（apply_agent_config 对 codex 恒 return True），
+                    # 真实写入+验收在下方 Codex 专用块；因此 codex 的成功计数放到那里按真实结果算，
+                    # 这里跳过 codex，避免"没真装上/接口测试失败/回退了也算成功"的虚高。
+                    if agent.id != "codex" and progress.status_for(DeploymentNode.CONFIG_WRITE) == NodeStatus.PASS:
+                        success_count += 1
                 else:
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.FAILED)
                     progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
             if any(agent.id == "codex" for agent, _ in selected):
+                codex_key, codex_model = self.key_model_for_agent("codex", api_key, model)
+                codex_progress = agent_progress.setdefault(("codex", CodexConfigMode.DIRECT_API.value), DeploymentProgress())
+                # 真实二进制安装结果来自上面的 install_agent；install_codex_config 只写配置+打网关，
+                # 不能证明 Codex 命令/客户端真的装上了。若二进制没装上仍判 INSTALL=PASS，会造成
+                # "没装也扣次"的假交付，因此扣次前必须以真实安装结果为准。
+                codex_binary_ok = codex_progress.status_for(DeploymentNode.INSTALL) == NodeStatus.PASS
                 ok = install_codex_config(
-                    api_key,
+                    codex_key,
                     base_url,
-                    model,
+                    codex_model,
                     skip_test,
                     open_app,
                     self.log_from_worker,
                     temporary_access,
                 )
-                codex_progress = agent_progress.setdefault(("codex", CodexConfigMode.DIRECT_API.value), DeploymentProgress())
                 if ok:
-                    codex_progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS)
+                    codex_progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS if codex_binary_ok else NodeStatus.NEEDS_MANUAL)
                     codex_progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS)
+                    # Codex 真实配置写入成功，计入顶栏"成功处理 N/M"（与非 codex 同口径：CONFIG_WRITE==PASS）。
+                    success_count += 1
                     codex_progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.NEEDS_MANUAL)
                     self.log_from_worker("Codex 胖虎AI配置已应用。")
-                    probe_ok, probe_excerpt = run_real_task_probe(base_url, api_key, model)
+                    if codex_binary_ok:
+                        probe_ok, probe_excerpt = run_real_task_probe(base_url, codex_key, codex_model)
+                    else:
+                        probe_ok = False
+                        probe_excerpt = "未在本机检测到 Codex 命令/客户端，跳过真实任务验证；判为未完整交付、不扣次。请重开终端或按安装指引装好 Codex 后重试。"
+                        self.log_from_worker(probe_excerpt)
                     real_task = verify_real_task_evidence(
                         diagnostic_code=diagnostic_code,
                         agent_id="codex",
                         mode_key=CodexConfigMode.DIRECT_API.value,
-                        request_ok=True,
+                        request_ok=codex_binary_ok,
                         response_ok=probe_ok,
                         response_excerpt=probe_excerpt,
                     )
@@ -7640,6 +8693,52 @@ class InstallerApp:
                 progress = agent_progress.setdefault(session_key, DeploymentProgress())
                 if progress.status_for(DeploymentNode.CONFIG_WRITE) != NodeStatus.PASS:
                     continue
+                if agent_mode_requires_client_scope(mode):
+                    client_ok, client_excerpt = verify_agent_client_scope(agent, mode)
+                    config_written = progress.status_for(DeploymentNode.CONFIG_WRITE) == NodeStatus.PASS
+                    progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.PASS if client_ok else NodeStatus.FAILED)
+                    self.log_from_worker(client_excerpt)
+                    # 产品决策：桌面客户端无法自动做联网对话验收，退而求其次——
+                    # 官方客户端已安装 + 配置已写入即视为客户端交付合格并扣次。
+                    # CLI-only Agent 在 verify_agent_client_scope 处已 client_ok=False，仍会判失败。
+                    real_task = verify_client_scope_delivery_evidence(
+                        diagnostic_code=diagnostic_code,
+                        agent_id=agent.id,
+                        mode_key=commercial_mode_key,
+                        client_installed=client_ok,
+                        config_written=config_written,
+                        detail=client_excerpt,
+                    )
+                    progress.mark(DeploymentNode.REAL_TASK_VERIFY, real_task.status)
+                    real_task_results[session_key] = real_task
+                    self.log_from_worker(build_real_task_diagnostic_summary(real_task, api_key))
+                    config_session_id = config_session_ids.get(session_key, "")
+                    if real_task.passed:
+                        if config_session_id:
+                            _data, summary = execute_config_session_complete(
+                                config_session_id,
+                                diagnostic_code,
+                                opener=trusted_urlopen,
+                                contexts=contexts,
+                                deployer_auth=deployer_auth,
+                            )
+                            completed_session_keys.add(session_key)
+                            self.log_from_worker(f"{agent.name}/{commercial_mode_key} 客户端交付已完成（安装+配置）；已提交成功并扣次：{summary}")
+                        else:
+                            self.log_from_worker(f"{agent.name}/{commercial_mode_key} 客户端交付已完成（安装+配置）；当前未获得服务端配置会话 ID，本次不提交成功、不扣次。")
+                    else:
+                        if config_session_id:
+                            _data, summary = execute_config_session_fail(
+                                config_session_id,
+                                diagnostic_code,
+                                real_task.customer_message,
+                                opener=trusted_urlopen,
+                                contexts=contexts,
+                                deployer_auth=deployer_auth,
+                            )
+                            completed_session_keys.add(session_key)
+                            self.log_from_worker(f"{agent.name}/{commercial_mode_key} 客户端未形成完整交付；已提交失败且不扣次：{summary}")
+                    continue
                 verified, version = version_for(agent.verify_command)
                 progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.PASS if verified else NodeStatus.NEEDS_MANUAL)
                 if not verified:
@@ -7647,7 +8746,7 @@ class InstallerApp:
                     progress.mark(DeploymentNode.REAL_TASK_VERIFY, NodeStatus.FAILED)
                     continue
                 self.log_from_worker(f"{agent.name}/{mode} 启动检测通过：{version or '已安装'}")
-                probe_ok, probe_excerpt = run_agent_dialogue_probe(agent, mode, model)
+                probe_ok, probe_excerpt = run_agent_dialogue_probe(agent, mode, self.key_model_for_agent(agent.id, api_key, model)[1])
                 real_task = verify_real_task_evidence(
                     diagnostic_code=diagnostic_code,
                     agent_id=agent.id,
@@ -7740,6 +8839,11 @@ class InstallerApp:
             self.run_on_ui(lambda: self.set_busy(False))
 
     def start_refresh_commercial_manifest(self) -> None:
+        # 与其它 start_* 一致的单-worker 纪律：前台 worker 在跑时不启动这个后台清单刷新，
+        # 避免登录后 1.6s 的定时刷新与前台 worker 并发改写共享商业状态(last-writer-wins)。
+        # 这是后台自动刷新，跳过即可（下次触发或用户操作会再拉），不占用 set_busy。
+        if self.worker_running:
+            return
         if not self.logged_in_user or not self.deployer_auth:
             return
         user = dict(self.logged_in_user)
@@ -7765,39 +8869,16 @@ class InstallerApp:
             for line in build_customer_commercial_summary_lines(self.commercial_products, self.commercial_entitlements):
                 self.log_from_worker(line)
 
-    def fetch_temporary_openai_access(
-        self,
-        user: dict,
-        deployer_auth: dict,
-        mode: CodexConfigMode = CodexConfigMode.DIRECT_API,
-    ) -> TemporaryOpenAIAccessConfig | None:
-        token = str(deployer_auth.get("token") or "")
-        ok, msg, manifest = fetch_deployer_manifest(user, self.cookie_jar, token)
-        self.log_from_worker(msg)
-        if not ok:
-            self.log_from_worker("未能刷新部署清单，本次只修复 Codex 配置，不开启 OpenAI 官网临时访问窗口。")
-            return None
-        ensure_commercial_manifest_trusted(manifest)
-        self.deployer_manifest = manifest
-        self.apply_commercial_manifest_snapshot(manifest)
-        mode_key = commercial_mode_key_for_config_mode(mode)
-        commercial_manifest_present = manifest_has_commercial_controls(manifest)
-        gate = commercial_config_gate(
-            agent_id="codex",
-            mode_key=mode_key,
-            capabilities=self.commercial_capabilities,
-            entitlements=self.commercial_entitlements,
-            commercial_manifest_present=commercial_manifest_present,
-        )
-        if not gate.allowed:
-            raise RuntimeError(gate.message)
-        return parse_temporary_openai_access_config(manifest)
-
     def apply_commercial_manifest_snapshot(self, manifest: dict) -> None:
         self.commercial_capabilities = manifest_commercial_capabilities(manifest)
         self.commercial_products = manifest_commercial_products(manifest)
+        self.value_added_services = manifest_value_added_services(manifest)
         self.commercial_entitlements = manifest_commercial_entitlements(manifest)
+        center = manifest.get("agent_center") if isinstance(manifest, dict) else None
+        if isinstance(center, dict):
+            self.agent_center_live_data = parse_agent_center_snapshot_data(center)
         self.run_on_ui(self.refresh_steps)
+        self.run_on_ui(self.sync_webview_state)
 
     def open_workspace(self) -> None:
         path = workspace_root()
@@ -7809,25 +8890,22 @@ class InstallerApp:
         path.mkdir(parents=True, exist_ok=True)
         open_path(path)
 
-    def open_acceptance_matrix(self) -> None:
-        path = customer_acceptance_matrix_path()
-        if not path.exists():
-            messagebox.showwarning("功能验收矩阵", "还没有生成验收矩阵。请先执行一次部署或配置验收。")
-            return
-        open_path(path)
-
     def restore_backups(self) -> None:
         if self.worker_running:
             return
         ok = restore_latest_backups(self.log)
         if ok:
             self.status.set("状态：已恢复最近备份")
-            messagebox.showinfo("恢复备份", "已恢复找到的最近备份。")
+            self.notify_info("恢复备份", "已恢复找到的最近备份。")
         else:
             self.status.set("状态：未找到可恢复备份")
-            messagebox.showwarning("恢复备份", "未找到可恢复的配置备份。")
+            self.notify_warning("恢复备份", "未找到可恢复的配置备份。")
 
     def copy_logs(self) -> None:
+        # WebView 模式下没有 tk 的 log_box/clipboard，实际复制由前端 copyLogs() 用 logsData 完成。
+        # 这里保留后端入口只做防御：不再访问 self.log_box（旧实现在正式 WebView 版每次必抛 AttributeError）。
+        if getattr(self, "webview_mode", False):
+            return
         text = sanitize_worker_message(self.log_box.get("1.0", "end").strip())
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
@@ -7835,13 +8913,14 @@ class InstallerApp:
 
 
 def self_test() -> None:
-    assert APP_VERSION == "1.0.15"
+    assert APP_VERSION == "1.0.16"
     assert any(agent.id == "codex" for agent in AGENTS)
     assert any(agent.id == "claude_code" for agent in AGENTS)
     assert [agent.id for agent in AGENTS] == ["codex", "claude_code", "openclaw", "hermes", "gemini_agy"]
     gemini = next(agent for agent in AGENTS if agent.id == "gemini_agy")
-    assert not any(mode.supports_config for mode in gemini.modes)
-    assert "配置待开发" in agent_dialogue_probe_command_text(gemini, DEFAULT_MODEL)
+    assert all(mode.supports_config for mode in gemini.modes)
+    assert "agy" in agent_dialogue_probe_command_text(gemini, DEFAULT_MODEL)
+    assert "GEMINI_API_KEY=sk-test" in build_gemini_agy_env("", "sk-test", DEFAULT_MODEL)
     assert any(spec.id == "ccswitch" for spec in RISK_PLUGIN_SPECS)
     assert any(spec.id == "codex_plus_plus" for spec in RISK_PLUGIN_SPECS)
     assert LOGIN_URL.endswith("/api/user/login?turnstile=")
@@ -7873,7 +8952,7 @@ def self_test() -> None:
         api_contract,
         "ent",
         "buyer",
-        "operator",
+        "buyer",
         "codex",
         "direct_api",
         "device",
@@ -7894,6 +8973,7 @@ def self_test() -> None:
     assert node_rows[0].title == "登录身份"
     assert node_rows[-1].title == "客服诊断"
     assert manifest_has_commercial_controls({"products": []})
+    assert manifest_has_commercial_controls({"value_added_services": []})
     assert not manifest_has_commercial_controls({"agents": []})
     assert validate_commercial_manifest_trust({"agents": []}).trusted
     assert not validate_commercial_manifest_trust({"products": []}).trusted
@@ -7916,6 +8996,24 @@ def self_test() -> None:
     )
     assert "当前等级：L1" in center_summary
     assert "邀请入口：已开放" in center_summary
+    value_added_summary = value_added_services_summary_text(
+        {
+            "value_added_services": [
+                {
+                    "service_id": "sms_code",
+                    "title": "接码控制台",
+                    "target_project": "手机号接码控制中心",
+                    "status": "pending_production",
+                    "entry_url": "https://sim.aitokenapi.cc",
+                    "entitlement_status": "unknown",
+                    "requires_webview_session": True,
+                    "unverified_reason": "生产验收待完成",
+                }
+            ]
+        }
+    )
+    assert "待生产验收" in value_added_summary
+    assert "已交付" not in value_added_summary
     assert "请先登录买家账号" in InstallerApp.current_commercial_summary_text(
         type(
             "SummaryProbe",
@@ -7987,8 +9085,8 @@ def self_test() -> None:
     assert "已禁止继续安装" in "\n".join(risk_plugin_report_lines([RiskPluginFinding("CCSwitch", "命令", "ccswitch", "")]))
     config = build_config("sk-test", DEFAULT_BASE_URL, DEFAULT_MODEL)
     expected_config = '''model_provider = "panghuAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
@@ -8056,7 +9154,7 @@ requires_openai_auth = true
         title for _idx, title, _subtitle in FLOW_STEPS
     ]
     assert MODULE_PAGE_META[MODULE_SITE]["key"][1] == KEY_CREATE_URL
-    assert DEFAULT_BASE_URL == "https://aitokenapi.cc"
+    assert DEFAULT_BASE_URL == (PANGHU_DEV_BASE_URL_OVERRIDE or "https://aitokenapi.cc")
     assert normalize_version("v1.2.3") > normalize_version("1.0.9")
     merged = merge_agents_rules("# old")
     assert PANGHU_AGENTS_START in merged and PANGHU_AGENTS_END in merged
@@ -8071,8 +9169,8 @@ requires_openai_auth = true
     assert 'shExpMatch(host, "*.openai.com")' in pac
     assert 'shExpMatch(host, "*.chatgpt.com")' in pac
     assert "return \"PROXY aitokenapi.cc:80; DIRECT\";" in pac
-    update = UpdateInfo("v9.9.9", "https://example.com/update.zip", "https://example.com/release", "AI.Agent.-Windows.zip", "Windows")
-    assert update.asset_name == "AI.Agent.-Windows.zip"
+    update = UpdateInfo("v9.9.9", "https://example.com/update.zip", "https://example.com/release", "胖虎AI客户端-Windows.zip", "Windows")
+    assert update.asset_name == "胖虎AI客户端-Windows.zip"
     win_update_script = build_windows_update_script(Path("C:/tmp/update.zip"), Path("C:/App"), Path("C:/App/app.exe"), 1234)
     assert "Wait-Process -Id $pidToWait" in win_update_script
     assert "Expand-Archive" in win_update_script
@@ -8114,6 +9212,17 @@ requires_openai_auth = true
     finally:
         platform.system = original_system  # type: ignore[method-assign]
         platform.machine = original_machine  # type: ignore[method-assign]
+    # 支付二维码依赖 qrcode+pillow；打包漏装依赖时必须在 exe --self-test 阶段红掉，
+    # 不能等买家付款时静默拿到空二维码（2026-07-09 实际发生过：requirements-build.txt 漏 qrcode）。
+    assert build_payment_qr_data_url("https://example.com/self-test").startswith("data:image/png;base64,")
+    # 内嵌可信 URL 闸门（安全）：只放行 aitokenapi.cc 家族，挡住服务端可控的外部站内嵌。
+    assert is_trusted_embedded_url("https://aitokenapi.cc/console")
+    assert is_trusted_embedded_url("https://sim.aitokenapi.cc")
+    assert not is_trusted_embedded_url("https://evil.com/payment")
+    assert not is_trusted_embedded_url("https://aitokenapi.cc.evil.com/pay")
+    assert embedded_customer_page_title("https://evil.com/payment") == ""
+    # 充值工具卡密参数必须落进 query、保留 SPA fragment。
+    assert append_url_query_param("https://plus.aitokenapi.cc/#/a", "code", "X") == "https://plus.aitokenapi.cc/?code=X#/a"
     print("UI self-test OK")
 
 
@@ -8123,51 +9232,37 @@ def main() -> int:
         return 0
     enable_windows_dpi_awareness()
 
-    use_tkinter = "--tkinter" in sys.argv
-    webview_available = False
-    if not use_tkinter:
-        try:
-            import webview
-            webview_available = True
-        except ImportError:
-            pass
-
-    if webview_available:
-        try:
-            root = tk.Tk()
-            root.withdraw()
-
-            app = InstallerApp(root, webview_mode=True)
-
-            html_file = ui_path("index.html")
-            if not html_file.exists():
-                raise FileNotFoundError(f"index.html not found at {html_file}")
-
-            window = webview.create_window(
-                title=APP_NAME,
-                url=str(html_file.absolute()),
-                js_api=WebviewApi(app),
-                width=1400,
-                height=900,
-                min_size=(1180, 760),
-                resizable=True
-            )
-            app.webview_window = window
-
-            app_shell_storage = web_profile_root() / "app-shell"
-            app_shell_storage.mkdir(parents=True, exist_ok=True)
-            webview.start(debug=False, private_mode=False, storage_path=str(app_shell_storage))
-            app.close_app()
-            return 0
-        except Exception as e:
-            print(f"Failed to start PyWebview GUI, falling back to Tkinter: {e}")
-            use_tkinter = True
-
-    if use_tkinter:
+    try:
+        webview_runtime, bundled_webview_shell = require_webview_runtime_and_ui()
         root = tk.Tk()
-        InstallerApp(root, webview_mode=False)
-        root.mainloop()
+        root.withdraw()
+
+        app = InstallerApp(root, webview_mode=True)
+
+        window_title = APP_NAME
+        if PANGHU_DEV_BASE_URL_OVERRIDE:
+            # 联调覆盖生效时窗口标题醒目提示，防止误当生产环境使用。
+            window_title = f"{APP_NAME}【本地联调 {PANGHU_DEV_BASE_URL_OVERRIDE}】"
+            print(f"[联调] 服务端地址已覆盖为 {PANGHU_DEV_BASE_URL_OVERRIDE}", flush=True)
+        window = webview_runtime.create_window(
+            title=window_title,
+            url=str(bundled_webview_shell.absolute()),
+            js_api=WebviewApi(app),
+            width=1400,
+            height=900,
+            min_size=(1180, 760),
+            resizable=True
+        )
+        app.webview_window = window
+
+        app_shell_storage = web_profile_root() / "app-shell"
+        app_shell_storage.mkdir(parents=True, exist_ok=True)
+        webview_runtime.start(debug=False, private_mode=False, storage_path=str(app_shell_storage))
+        app.close_app()
         return 0
+    except Exception as e:
+        print(f"胖虎AI客户端启动失败：{e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
