@@ -24,7 +24,8 @@ APP_NAME="胖虎AI客户端"
 APP_VERSION="${APP_VERSION:-$(.venv/bin/python - <<'PY'
 import ast
 from pathlib import Path
-for node in ast.parse(Path("src/panghu_ai_client.py").read_text(encoding="utf-8")).body:
+# APP_VERSION 已在三模块拆分时移到 src/panghu_constants.py（panghu_ai_client.py 只 import 使用，无顶层赋值）。
+for node in ast.parse(Path("src/panghu_constants.py").read_text(encoding="utf-8")).body:
     if isinstance(node, ast.Assign):
         for target in node.targets:
             if getattr(target, "id", "") == "APP_VERSION":

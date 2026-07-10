@@ -1234,6 +1234,8 @@ class InstallerBackendTests(unittest.TestCase):
         self.assertIn("session=abc123", script)
         self.assertIn("SameSite=Lax", script)
         self.assertIn("Secure", script)
+        # 广播到 aitokenapi.cc 家族，接码站 sim.、Plus 工具 plus. 等子域才能带上买家登录态。
+        self.assertIn("Domain=.aitokenapi.cc", script)
 
     def test_webview_cookie_bridge_does_not_fake_httponly_cookie(self) -> None:
         jar = http.cookiejar.CookieJar()
@@ -1271,7 +1273,6 @@ class InstallerBackendTests(unittest.TestCase):
     def test_try_open_embedded_webview_injects_cookie_before_loading_target_page(self) -> None:
         jar = http.cookiejar.CookieJar()
         jar.set_cookie(make_cookie("session", "abc123"))
-        done = threading.Event()
         calls: list[tuple[str, object]] = []
 
         class LoadedEvent:
@@ -1279,7 +1280,9 @@ class InstallerBackendTests(unittest.TestCase):
                 self.handler = None
 
             def __iadd__(self, handler):  # type: ignore[no-untyped-def]
+                # 主 GUI 循环运行时 create_window 会立即建窗；模拟：注册 loaded 回调即触发一次。
                 self.handler = handler
+                handler()
                 return self
 
         class FakeWindow:
@@ -1291,10 +1294,14 @@ class InstallerBackendTests(unittest.TestCase):
 
             def load_url(self, url: str) -> None:
                 calls.append(("load_url", url))
-                done.set()
 
         class FakeWebview:
             window = FakeWindow()
+
+            @staticmethod
+            def active_window():  # type: ignore[no-untyped-def]
+                # 主窗已在跑 → GUI 循环处于活动态，允许直接 create_window 开新窗。
+                return FakeWebview.window
 
             @staticmethod
             def create_window(title, url, **kwargs):  # type: ignore[no-untyped-def]
@@ -1303,33 +1310,85 @@ class InstallerBackendTests(unittest.TestCase):
 
             @staticmethod
             def start(**kwargs):  # type: ignore[no-untyped-def]
+                # 二次 start() 在真机会抛 'must be run on a main thread'；新实现绝不能再调它。
                 calls.append(("start", kwargs))
-                FakeWebview.window.events.loaded.handler()
+                raise AssertionError("try_open_embedded_webview 不得二次调用 webview.start()")
 
         original_webview = pci.webview
-        with TemporaryDirectory() as temp_dir:
-            try:
-                pci.webview = FakeWebview()  # type: ignore[assignment]
-                self.assertTrue(
-                    pci.try_open_embedded_webview(
-                        pci.CONSOLE_URL,
-                        title="控制台",
-                        cookie_jar=jar,
-                        storage_path=Path(temp_dir) / "buyer-webview",
-                    )
+        try:
+            pci.webview = FakeWebview()  # type: ignore[assignment]
+            self.assertTrue(
+                pci.try_open_embedded_webview(
+                    pci.CONSOLE_URL,
+                    title="控制台",
+                    cookie_jar=jar,
                 )
-                self.assertTrue(done.wait(timeout=2))
-            finally:
-                pci.webview = original_webview
+            )
+        finally:
+            pci.webview = original_webview
 
+        kinds = [c[0] for c in calls]
+        self.assertNotIn("start", kinds)
         self.assertEqual(calls[0][0], "create_window")
         self.assertEqual(calls[0][1][1], pci.PANGHU_HOME_URL)
-        self.assertEqual(calls[1][0], "start")
-        self.assertFalse(calls[1][1]["private_mode"])
-        self.assertIn("storage_path", calls[1][1])
-        self.assertEqual(calls[2][0], "evaluate_js")
-        self.assertIn("session=abc123", calls[2][1])
-        self.assertEqual(calls[3], ("load_url", pci.CONSOLE_URL))
+        self.assertEqual(calls[1][0], "evaluate_js")
+        self.assertIn("session=abc123", calls[1][1])
+        self.assertIn("Domain=.aitokenapi.cc", calls[1][1])
+        self.assertEqual(calls[2], ("load_url", pci.CONSOLE_URL))
+
+    def test_try_open_embedded_webview_returns_false_when_loop_not_active(self) -> None:
+        # GUI 循环未启动(active_window 为 None)时不得二次 start()，返回 False 让调用方兜底外部浏览器。
+        class IdleWebview:
+            @staticmethod
+            def active_window():  # type: ignore[no-untyped-def]
+                return None
+
+            @staticmethod
+            def create_window(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+                raise AssertionError("循环未启动时不得建窗")
+
+            @staticmethod
+            def start(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+                raise AssertionError("循环未启动时不得二次 start")
+
+        original_webview = pci.webview
+        try:
+            pci.webview = IdleWebview()  # type: ignore[assignment]
+            self.assertFalse(pci.try_open_embedded_webview(pci.CONSOLE_URL, title="控制台"))
+        finally:
+            pci.webview = original_webview
+
+    def test_is_trusted_embedded_url_only_allows_panghu_family(self) -> None:
+        self.assertTrue(pci.is_trusted_embedded_url("https://aitokenapi.cc/console"))
+        self.assertTrue(pci.is_trusted_embedded_url("https://sim.aitokenapi.cc/"))
+        self.assertTrue(pci.is_trusted_embedded_url("https://plus.aitokenapi.cc/#/activate"))
+        # 外部站、后缀伪装、非 http 协议一律不可信 → 不进内置可信窗口。
+        self.assertFalse(pci.is_trusted_embedded_url("https://evil.com/payment"))
+        self.assertFalse(pci.is_trusted_embedded_url("https://aitokenapi.cc.evil.com/pay"))
+        self.assertFalse(pci.is_trusted_embedded_url("http://aitokenapi.cc/pay"))
+        self.assertFalse(pci.is_trusted_embedded_url("javascript:alert(1)"))
+        self.assertFalse(pci.is_trusted_embedded_url(""))
+
+    def test_embedded_customer_page_title_rejects_untrusted_lookalike(self) -> None:
+        # 历史高危：子串匹配把 https://evil.com/payment 当"胖虎AI 购买与充值"内嵌。现应返回空。
+        self.assertEqual(pci.embedded_customer_page_title("https://evil.com/payment"), "")
+        self.assertEqual(pci.embedded_customer_page_title("https://evil.com/agent"), "")
+        self.assertEqual(pci.embedded_customer_page_title("https://sim.aitokenapi.cc"), "手机号接码控制中心")
+
+    def test_append_url_query_param_preserves_fragment_and_query(self) -> None:
+        # SPA 井号路由：code 必须落进 query，不能落进 # 之后的 fragment，否则工具端读不到。
+        self.assertEqual(
+            pci.append_url_query_param("https://plus.aitokenapi.cc/#/activate", "code", "PHK-1"),
+            "https://plus.aitokenapi.cc/?code=PHK-1#/activate",
+        )
+        self.assertEqual(
+            pci.append_url_query_param("https://plus.aitokenapi.cc/tool?ref=x", "code", "PHK 2"),
+            "https://plus.aitokenapi.cc/tool?ref=x&code=PHK%202",
+        )
+        self.assertEqual(
+            pci.append_url_query_param("https://plus.aitokenapi.cc/tool", "code", ""),
+            "https://plus.aitokenapi.cc/tool",
+        )
 
 
 if __name__ == "__main__":

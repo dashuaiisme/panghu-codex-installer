@@ -445,7 +445,7 @@ AGENT_LABELS: dict[str, str] = {
     "claude_code": "ClaudeCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "gemini_agy": "Gemini / agy",
+    "gemini_agy": "Google 反重力（agy）",
 }
 
 ENTITLEMENT_STATUS_LABELS: dict[str, str] = {
@@ -653,12 +653,28 @@ def format_customer_price(price_cents: int, currency: str) -> str:
     return f"{amount:.2f}"
 
 
-def build_customer_purchase_product_lines(products: list[CommercialProduct]) -> list[str]:
+def build_customer_purchase_product_lines(
+    products: list[CommercialProduct],
+    app_version: str = "",
+    buyer_user_id: str = "",
+) -> list[str]:
     lines: list[str] = []
     for product in products:
         if not product.is_listed:
             continue
         if not _valid_until_is_active(product.valid_until):
+            continue
+        # 与 find_orderable_product 同口径过滤：展示的"可购买商品"必须真能下单，否则会展示
+        # 交付范围不符/版本门槛未达/买家白名单外的商品，买家一点"创建订单"就是死单(B-CAT-CONSIST)。
+        if product.delivery_scope not in (
+            DeliveryScope.FULL_CONFIG,
+            DeliveryScope.ASSISTED_FULL_CONFIG,
+            DeliveryScope.GUIDED_FULL_CONFIG,
+        ):
+            continue
+        if not _client_version_allowed(app_version, product.min_client_version):
+            continue
+        if not _buyer_allowed(buyer_user_id, product.allowed_buyer_user_ids):
             continue
         uses_label = "不限次" if product.is_unlimited else f"{max(0, product.remaining_uses)}次"
         device_label = f"{max(1, product.device_limit)}台设备"

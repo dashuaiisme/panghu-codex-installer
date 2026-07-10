@@ -76,6 +76,13 @@ class AgentPlaybookTests(unittest.TestCase):
                     self.assertIn("第三方通道默认跳过", text)
                     self.assertIn("最小对话验证", text)
                     self.assertNotIn("sk-test-secret-123456", text)
+                elif agent.id == "claude_code":
+                    # ClaudeCode 走 ANTHROPIC_BASE_URL（不带 /v1）；plan 不得对它硬写 /v1。
+                    self.assertIn("https://aitokenapi.cc", text)
+                    self.assertNotIn("https://aitokenapi.cc/v1", text)
+                    self.assertIn("gpt-5.5", text)
+                    self.assertIn("第三方通道默认跳过", text)
+                    self.assertIn("最小对话验证", text)
                 else:
                     self.assertIn("https://aitokenapi.cc/v1", text)
                     self.assertIn("gpt-5.5", text)

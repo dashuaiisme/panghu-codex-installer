@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse, urlsplit, urlunsplit
 from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener, urlopen
 
 from commercial_api import (
@@ -65,6 +65,7 @@ from commercial_api import (
     build_subscription_order_status_request,
     parse_subscription_products_data,
     parse_subscription_order_data,
+    SUBSCRIPTION_PAID_STATUSES,
     sanitize_commercial_text,
     stable_config_reserve_idempotency_key,
     stable_config_session_idempotency_key,
@@ -166,9 +167,12 @@ def build_agent_config_plan(agent_id: str, mode_id: str, api_key: str, model: st
         ]
     playbook = agent_delivery_playbook(agent_id)
     masked_key = mask_key(api_key)
+    # ClaudeCode 走 ANTHROPIC_BASE_URL（不带 /v1），其余 openai 格式走带 /v1 的网关；
+    # 别对所有 agent 硬写 /v1，否则与实际写入及本函数下方的 config_commands 自相矛盾。
+    gateway_display = CLAUDE_CODE_BASE_URL if agent_id == "claude_code" else CODEX_BASE_URL
     return [
         f"{agent_id}/{mode_id}：使用官方发行入口安装或检测。",
-        f"{agent_id}/{mode_id}：写入胖虎AI网关 https://aitokenapi.cc/v1。",
+        f"{agent_id}/{mode_id}：写入胖虎AI网关 {gateway_display}。",
         f"{agent_id}/{mode_id}：写入模型 {model}。",
         f"{agent_id}/{mode_id}：写入买家胖虎AI API Key {masked_key}。",
         f"{agent_id}/{mode_id}：第三方通道默认跳过。",
@@ -2104,12 +2108,17 @@ def commercial_api_request_with_auth(
     elif action == "subscription_order_create":
         product_id = str(kwargs["product_id"])
         quantity = int(kwargs.get("quantity") or 1)
+        # 每次下单带一次性 nonce：AI订阅是真金付款，买家复购同商品同数量必须生成新订单。
+        # 旧幂等键纯确定性(order:sub:{pid}:x{qty}:{buyer}:{operator})→ 同商品同数量二次购买
+        # 永远撞回旧订单：已付旧单会把已核销卡密当"新交付"弹出，撤销旧单则永久无法再买。
+        # 防重复提交由前端下单按钮的 in-flight 护栏负责；这里保证复购是新订单。
+        purchase_nonce = str(kwargs.get("purchase_nonce") or "")
         request = build_subscription_order_create_request(
             CommercialApiContract(DEFAULT_BASE_URL),
             product_id=product_id,
             quantity=quantity,
             idempotency_key=stable_order_idempotency_key(
-                product_id=f"sub:{product_id}:x{quantity}",
+                product_id=f"sub:{product_id}:x{quantity}:{purchase_nonce}",
                 buyer_user_id=contexts.target_buyer.user_id,
                 operator_user_id=contexts.operator.user_id,
             ),
@@ -2125,14 +2134,46 @@ def commercial_api_request_with_auth(
 
 
 def _subscription_delivery_fields(order: dict) -> dict:
-    """从已解析 AI订阅订单里抽交付字段（卡密批/工具链接/客服微信），付款后才有值。"""
-    out: dict = {}
+    """从已解析 AI订阅订单里抽交付字段（卡密批/工具链接/客服微信），付款后才有值。
+
+    delivery_mode 始终一并返回：前端 showSubscriptionDelivery 靠它区分 self_service_plus(自助卡密)
+    与人工发货。历史上"即时履约(0元/已 paid)"分支漏带 delivery_mode，导致 GPT Plus 卡密被误当成
+    人工发货、买家看不到卡密。统一从这里返回，杜绝 create/instant/query 三处口径漂移。
+    """
+    out: dict = {"delivery_mode": order.get("delivery_mode", "")}
     if order.get("delivery_mode") == "self_service_plus":
         out["card_codes"] = list(order.get("card_codes") or [])
         out["cards_shortfall"] = int(order.get("cards_shortfall") or 0)
         out["plus_tool_url"] = order.get("plus_tool_url", "")
     if order.get("customer_service"):
         out["customer_service"] = order["customer_service"]
+    return out
+
+
+def _normalize_agent_detail_items(data: object, keys: tuple[str, ...], limit: int = 50) -> list[dict]:
+    """把代理中心明细(下游客户/返佣)服务端响应规整成可安全渲染的浅层字典列表。
+
+    服务端明细响应的列表键不固定(items/downstreams/customers 或 items/commissions/ledger)，
+    每条只保留标量字段(str/num/bool)，丢弃嵌套结构；前端渲染时仍需 escapeHtml。空数据返回 []，
+    这样代理中心明细页在无数据时显示"暂无明细"而不是把抓到的数据丢弃。
+    """
+    if not isinstance(data, dict):
+        return []
+    items = None
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, list):
+            items = value
+            break
+    if items is None:
+        return []
+    out: list[dict] = []
+    for item in items[:limit]:
+        if isinstance(item, dict):
+            row = {str(k): v for k, v in item.items() if isinstance(v, (str, int, float, bool)) or v is None}
+            out.append(row)
+        elif isinstance(item, (str, int, float, bool)):
+            out.append({"value": item})
     return out
 
 
@@ -2785,10 +2826,59 @@ def build_webview_cookie_bridge_script(cookie_jar: http.cookiejar.CookieJar | No
         if any(str(key).lower() == "httponly" for key in rest):
             continue
         parts = [f"{cookie.name}={cookie.value}", "path=/", "SameSite=Lax"]
+        # 广播到 aitokenapi.cc 家族，让接码站 sim.、Plus 工具 plus. 等子域也带上买家登录态。
+        # 旧实现不写 Domain → cookie 只对当前主域 host-only 生效，桥接到子域时登录态丢失，
+        # 却仍在日志里谎称"已桥接成功"。仅对生产家族加 Domain；本地联调 IP 主机加 Domain 会被
+        # 浏览器拒绝，保持 host-only。
+        if domain.endswith("aitokenapi.cc"):
+            parts.append("Domain=.aitokenapi.cc")
         if cookie.secure:
             parts.append("Secure")
         statements.append(f"document.cookie = {json.dumps('; '.join(parts))};")
     return "\n".join(statements)
+
+
+def is_trusted_embedded_url(url: str) -> bool:
+    """只有以下链接才允许进"胖虎AI"内置可信 WebView（会携带买家登录态 cookie）：
+
+    - https 且主机属于 aitokenapi.cc 家族（生产）；
+    - 与 DEFAULT_BASE_URL 完全同源（本地联调覆盖，可能是 http://127.0.0.1:port）。
+
+    服务端可控的 entry_url / plus_tool_url 若指向外部站点，一律判为不可信，交外部浏览器打开，
+    杜绝把任意站点嵌进可信窗口造成的开放重定向/登录态泄漏。
+    """
+    try:
+        parts = urlsplit(str(url or "").strip())
+    except Exception:
+        return False
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    if parts.scheme == "https" and (host == "aitokenapi.cc" or host.endswith(".aitokenapi.cc")):
+        return True
+    try:
+        base = urlsplit(DEFAULT_BASE_URL)
+        if parts.scheme == base.scheme and host == (base.hostname or "").lower():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def append_url_query_param(url: str, key: str, value: str) -> str:
+    """把 key=value 安全地追加到 URL 的 query 段，保留已有 query 和 fragment。
+
+    充值工具可能用 SPA 井号路由（如 https://plus.aitokenapi.cc/#/activate）。
+    旧实现 f"{base}{'&' if '?' in base else '?'}code=..." 会把 ?code= 落进 # 之后的 fragment，
+    导致工具端 location.search 读不到卡密。这里用 urlsplit/urlunsplit 精确写进 query。
+    """
+    value = str(value or "").strip()
+    if not value:
+        return url
+    parts = urlsplit(str(url or ""))
+    sep = "&" if parts.query else ""
+    new_query = f"{parts.query}{sep}{quote(str(key), safe='')}={quote(value, safe='')}"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
 
 
 def open_customer_page(
@@ -2857,6 +2947,10 @@ def embedded_customer_page_title(url: str) -> str:
     safe = str(url or "").strip().lower()
     if not safe:
         return ""
+    # 先做主机/协议可信闸门：非 aitokenapi.cc 家族(或联调同源)的链接一律不进内置可信窗口。
+    # 原实现只按 "payment"/"/buy" 等子串给标题，https://evil.com/payment 会被误判可信内嵌。
+    if not is_trusted_embedded_url(url):
+        return ""
     if safe.rstrip("/") in {DEFAULT_BASE_URL, CONSOLE_URL.lower()}:
         return "胖虎AI 控制台"
     if safe.rstrip("/") == SIM_CONTROL_URL.lower():
@@ -2874,6 +2968,20 @@ def embedded_customer_page_title(url: str) -> str:
     return ""
 
 
+def embedded_webview_loop_active() -> bool:
+    """主 GUI 事件循环是否已经在跑（main() 里已 create_window + start()）。
+
+    只有此时才能用 create_window 直接开第二个窗口——pywebview 会立即建窗。
+    循环未启动时若再调 webview.start() 会抛 'pywebview must be run on a main thread'。
+    """
+    if webview is None:
+        return False
+    try:
+        return webview.active_window() is not None
+    except Exception:
+        return False
+
+
 def try_open_embedded_webview(
     url: str,
     title: str = "",
@@ -2886,30 +2994,45 @@ def try_open_embedded_webview(
     page_url = str(url or "").strip()
     if not page_url:
         return False
+    # 打包后的客户端 main() 已在主线程跑了唯一的 webview.start()。旧实现在 daemon 线程里
+    # 二次调用 webview.start() → 必然抛 'must be run on a main thread' 并静默崩溃，
+    # 而函数早已 return True，调用方以为"已打开"、兜底外部浏览器也不触发 →
+    # 接码"独立窗口打开"、Plus"打开充值工具"点了都没反应。
+    # 正解：GUI 循环运行时开新窗只调 create_window（pywebview 立即建窗），绝不二次 start()。
+    if not embedded_webview_loop_active():
+        return False
     window_title = title or "胖虎AI"
     bridge_script = build_webview_cookie_bridge_script(cookie_jar)
-    persistent_storage_path = Path(storage_path) if storage_path else web_profile_root() / "buyer-site"
-    persistent_storage_path.mkdir(parents=True, exist_ok=True)
+    start_url = PANGHU_HOME_URL if bridge_script else page_url
+    try:
+        window = webview.create_window(
+            window_title, start_url, width=1180, height=860, resizable=True
+        )
+    except Exception as exc:
+        if log:
+            try:
+                log(f"内置窗口打开失败，改用系统浏览器：{exc}")
+            except Exception:
+                pass
+        return False
+    if window is None:
+        return False
+    if bridge_script:
+        state = {"bridged": False}
 
-    def launch() -> None:
-        start_url = PANGHU_HOME_URL if bridge_script else page_url
-        window = webview.create_window(window_title, start_url, width=1180, height=860, resizable=True)
-        if bridge_script:
-            state = {"bridged": False}
-
-            def on_loaded() -> None:
-                if state["bridged"]:
-                    return
-                state["bridged"] = True
+        def on_loaded() -> None:
+            if state["bridged"]:
+                return
+            state["bridged"] = True
+            try:
                 window.evaluate_js(bridge_script)
                 window.load_url(page_url)
                 if log:
-                    log(f"已向内置 WebView 桥接本次胖虎AI登录态：{window_title}")
+                    log(f"已向内置 WebView 注入本次胖虎AI登录 cookie：{window_title}")
+            except Exception:
+                pass
 
-            window.events.loaded += on_loaded
-        webview.start(private_mode=False, storage_path=str(persistent_storage_path))
-
-    threading.Thread(target=launch, daemon=True).start()
+        window.events.loaded += on_loaded
     return True
 
 
@@ -3438,10 +3561,10 @@ def install_gemini_agy_cli(log) -> bool:
     ok, output = run_command(command, timeout=900)
     log(output)
     if ok:
-        log("Gemini / agy CLI 安装入口已执行；首次使用请按 Google 官方流程登录账号。")
+        log("Google 反重力（agy）CLI 安装入口已执行；首次使用请按 Google 官方流程登录账号。")
     else:
         open_url(GEMINI_AGY_DOCS_URL)
-        log("Gemini / agy CLI 自动安装未确认，已打开 Google Antigravity 官方入口。")
+        log("Google 反重力（agy）CLI 自动安装未确认，已打开 Google Antigravity 官方入口。")
     return ok
 
 
@@ -3826,9 +3949,9 @@ def install_gemini_agy_config(api_key: str, model: str, log) -> bool:
     existed_before = env_path.exists()
     backup = backup_file(env_path)
     if backup:
-        log(f"已备份 Gemini / agy 环境配置：{backup}")
+        log(f"已备份 Google 反重力（agy）环境配置：{backup}")
     else:
-        log(f"将创建 Gemini / agy 环境配置：{env_path}")
+        log(f"将创建 Google 反重力（agy）环境配置：{env_path}")
 
     try:
         existing_text = env_path.read_text(encoding="utf-8") if existed_before else ""
@@ -3837,11 +3960,11 @@ def install_gemini_agy_config(api_key: str, model: str, log) -> bool:
         restore_backup(env_path, backup, existed_before)
         raise
 
-    log(f"已写入 Gemini / agy 环境配置：{env_path}")
-    log(f"Gemini / agy 网关（Gemini 格式）：{DEFAULT_BASE_URL}")
-    log(f"Gemini / agy 模型：{model.strip()}")
-    log(f"Gemini / agy Key：{mask_key(api_key.strip())}")
-    log("Gemini / agy 提示：请完全退出 agy 后重新打开，再执行最小中文对话验收。")
+    log(f"已写入 Google 反重力（agy）环境配置：{env_path}")
+    log(f"Google 反重力（agy）网关（Gemini 格式）：{DEFAULT_BASE_URL}")
+    log(f"Google 反重力（agy）模型：{model.strip()}")
+    log(f"Google 反重力（agy）Key：{mask_key(api_key.strip())}")
+    log("Google 反重力（agy）提示：请完全退出 agy 后重新打开，再执行最小中文对话验收。")
     return True
 
 
@@ -4082,11 +4205,11 @@ def inspect_agent_config_drift(agent_id: str, expected_model: str = "") -> dict:
         configured = bool(env_text)
         if configured:
             if f"GOOGLE_GEMINI_BASE_URL={DEFAULT_BASE_URL}" not in env_text:
-                add("base_url", DRIFT_RED, "Gemini/agy GOOGLE_GEMINI_BASE_URL 未指向胖虎AI网关")
+                add("base_url", DRIFT_RED, "Google 反重力（agy）GOOGLE_GEMINI_BASE_URL 未指向胖虎AI网关")
             if "GEMINI_API_KEY=" not in env_text:
-                add("api_key", DRIFT_RED, "Gemini/agy 缺少 GEMINI_API_KEY")
+                add("api_key", DRIFT_RED, "Google 反重力（agy）缺少 GEMINI_API_KEY")
             if expected_model and f"GEMINI_MODEL={expected_model}" not in env_text:
-                add("model", DRIFT_YELLOW, f"Gemini/agy 未使用推荐模型 {expected_model}")
+                add("model", DRIFT_YELLOW, f"Google 反重力（agy）未使用推荐模型 {expected_model}")
     else:
         raise ValueError(f"未知 Agent：{agent_id}")
 
@@ -4143,7 +4266,10 @@ def repair_agent_config_drift(agent_id: str, api_key: str, model: str, log) -> b
     if agent is None:
         raise ValueError(f"未知 Agent：{agent_id}")
     log(f"开始一键修复 {agent.name} 配置漂移……")
-    ok = apply_agent_config(agent, "cli", api_key, model or DEFAULT_MODEL, log)
+    # 兜底模型必须按 Agent 的接口格式取：gemini_agy 走 Gemini 格式，默认 GEMINI_DEFAULT_MODEL，
+    # 不能统一兜底成 openai 的 DEFAULT_MODEL(gpt-5.5)。
+    fallback_default_model = GEMINI_DEFAULT_MODEL if key_format_for_agent(agent_id) == "gemini" else DEFAULT_MODEL
+    ok = apply_agent_config(agent, "cli", api_key, model or fallback_default_model, log)
     if ok:
         after = inspect_agent_config_drift(agent_id, model)
         if after["level"] == DRIFT_RED:
@@ -4459,7 +4585,7 @@ def build_agent_setup_guide_content(selected: list[tuple[AgentSpec, str]], api_k
 4. 只有点击“双态配置”时，才需要用户重新打开 Codex 后自行登录自己的 ChatGPT 账号。
 5. 双态模式下，Codex 会保持用户自己的账号登录态，同时模型调用消耗胖虎AI API Key。本工具不代替登录、不保存 ChatGPT 账号密码。
 6. ClaudeCode/CC、OpenClaw、Hermes 都按官方 CLI 与客户端入口做安装和配置；IDE 插件形态不处理。
-7. Gemini / agy（Google Antigravity）按官方 CLI 与客户端入口安装，写入胖虎AI网关 Gemini 格式配置；未通过最小中文对话验收前不计完整交付。
+7. Google 反重力（agy，Google Antigravity）按官方 CLI 与客户端入口安装，写入胖虎AI网关 Gemini 格式配置；未通过最小中文对话验收前不计完整交付。
 8. OpenClaw、Hermes 等复杂第三方通道默认跳过，只走能让买家直接对话的最短可用链路。
 9. 已接入配置链路的 Agent 必须完成配置写入、重启/启动检查和最小中文对话验证后，才算完整交付。
 10. 本工具不会把 API Key 明文写入日志。
@@ -4521,14 +4647,14 @@ def environment_help_text() -> str:
 def agent_choice_help_text() -> str:
     return "\n".join(
         [
-            "本工具固定覆盖五个 Agent：Codex、Claude Code/CC、Hermes、OpenClaw、Gemini / agy。",
+            "本工具固定覆盖五个 Agent：Codex、Claude Code/CC、Hermes、OpenClaw、Google 反重力（agy）。",
             "",
             "Agent 差异：",
             "- Codex：写入胖虎AI API Key、接口、模型和中文规则。",
             "- Claude Code/CC：覆盖官方 CLI 和客户端入口，写入胖虎AI网关配置。",
             "- OpenClaw：覆盖官方 CLI 和 Hub/客户端入口，第三方通道默认跳过，只保留直接对话链路。",
             "- Hermes：覆盖官方 CLI 和客户端入口，第三方通道默认跳过，只保留直接对话链路。",
-            "- Gemini / agy：覆盖 Google Antigravity 官方 CLI 和客户端入口，写入胖虎AI网关 Gemini 格式配置。",
+            "- Google 反重力（agy）：覆盖 Google Antigravity 官方 CLI 和客户端入口，写入胖虎AI网关 Gemini 格式配置。",
             "",
             "CLI 和客户端都要做进去；VS Code / IDE 插件形态不作为本轮交付对象。",
         ]
@@ -4630,15 +4756,6 @@ def detect_environment() -> list[str]:
     for command in ("powershell", "winget", "npm", "node"):
         exists, path = command_exists(command)
         lines.append(f"{command}: {'已找到 ' + path if exists else '未找到'}")
-    system = current_system_id()
-    lines = [
-        f"系统：{platform.system()} {platform.release()}",
-        f"架构：{platform.machine()}",
-        f"识别结果：{'Windows' if system == 'windows' else 'Mac' if system == 'mac' else '其他系统'}",
-    ]
-    for command in ("powershell", "winget", "npm", "node"):
-        exists, path = command_exists(command)
-        lines.append(f"{command}: {'已找到 ' + path if exists else '未找到'}")
     lines.extend(agent_install_status_lines())
     lines.extend(risk_plugin_report_lines(detect_risk_plugins()))
     return lines
@@ -4661,6 +4778,11 @@ def enable_windows_dpi_awareness() -> None:
 class WebviewApi:
     def __init__(self, app: "InstallerApp") -> None:
         self.app = app
+        # 登录并发护栏：login() 每次都无条件起后台 worker 线程，双击/连点会起多个
+        # _login_bridge_worker 并发写会话/账号文件。用锁+标志拒绝并发登录，
+        # 前端按钮禁用只是即时反馈、不可依赖（pending 立刻返回后就复位了）。
+        self._login_lock = threading.Lock()
+        self._login_in_flight = False
 
     @staticmethod
     def _accepted(message: str) -> dict:
@@ -4671,7 +4793,7 @@ class WebviewApi:
         self.app.webview_ready = True
         is_logged = self.app.logged_in_user is not None and self.app.deployer_auth is not None
         metrics = self.app._commercial_metric_values()
-        agent_center_state = self.app.current_agent_center_state()
+        agent_center_state = self.app.current_agent_center_web_state()
 
         agent_enabled = {}
         for k, v in self.app.agent_enabled.items():
@@ -4768,6 +4890,10 @@ class WebviewApi:
         # 1) 网络请求不能堵 GUI 线程；
         # 2) 关键——绝不能在 js_api 回调里同步调 evaluate_js（pywebview 会重入死锁）。
         # 因此本方法只启线程后立刻返回，任何 log/evaluate_js 都由线程里做。
+        with self._login_lock:
+            if self._login_in_flight:
+                return {"success": False, "message": "登录进行中，请稍候……", "pending": False}
+            self._login_in_flight = True
         threading.Thread(
             target=self._login_bridge_worker,
             args=(username, password, bool(remember_password), bool(auto_login)),
@@ -4822,6 +4948,9 @@ class WebviewApi:
             self.app.status.set("状态：登录错误")
             self.app.log(f"登录错误：{e}")
             self.app.push_webview_toast(f"登录错误：{e}", "error")
+        finally:
+            with self._login_lock:
+                self._login_in_flight = False
 
     def login_saved_account(self, username):
         target = login_account_private_entry(username)
@@ -5615,7 +5744,7 @@ class InstallerApp:
 
         is_logged = self.logged_in_user is not None and self.deployer_auth is not None
         metrics = self._commercial_metric_values()
-        agent_center_state = self.current_agent_center_state()
+        agent_center_state = self.current_agent_center_web_state()
 
         agent_enabled = {}
         for k, v in self.agent_enabled.items():
@@ -6142,6 +6271,23 @@ class InstallerApp:
                 return parse_agent_center_snapshot_data(center)
         return {}
 
+    def current_agent_center_web_state(self) -> dict:
+        """代理中心前端状态：在快照(总览/等级/服务端页面 URL)之外，把明细 worker 抓到的
+        下游客户 / 各类返佣列表一并下发，供前端按子导航 key 渲染明细；否则明细抓取即丢弃、
+        "同步数据/重新拉取快照"成死按钮（B-AGENT-DATA）。"""
+        snapshot = self.current_agent_center_state()
+        out = dict(snapshot) if isinstance(snapshot, dict) else {}
+        out["downstreams"] = _normalize_agent_detail_items(
+            getattr(self, "agent_downstreams_live_data", {}), ("items", "downstreams", "customers")
+        )
+        commissions_live = getattr(self, "agent_commissions_live_data", {}) or {}
+        out["commissions"] = {
+            item_id: _normalize_agent_detail_items(data, ("items", "commissions", "ledger"))
+            for item_id, data in commissions_live.items()
+            if isinstance(data, dict)
+        }
+        return out
+
     def current_value_added_services_state(self) -> list[dict]:
         services = getattr(self, "value_added_services", []) or []
         result: list[dict] = []
@@ -6219,6 +6365,10 @@ class InstallerApp:
         return {
             "order": order_status,
             "requiresPayment": order_status.get("requires_payment") is True,
+            # 服务端权威判定：付款(paid/success/completed)或人工复核(manual_review/manual-review/
+            # presale_review/staff_review)且订单未终止 → 允许建会话。前端横幅直接用这个布尔，
+            # 不再各自枚举字符串（历史上只认 paid/manual_review 两态，漏掉其余 3 态→横幅空白）。
+            "sessionAllowed": order_status.get("session_allowed") is True,
             "chargeStatus": str(order_status.get("charge_status") or ""),
             "paymentUrl": order_payment_url,
             "paymentQrDataUrl": payment_qr_data_url,
@@ -6494,7 +6644,10 @@ class InstallerApp:
         threading.Thread(target=self._communication_software_link_create_session_worker, args=(request,), daemon=True).start()
 
     def _apply_communication_software_link_state_fields(self, fields: dict[str, str]) -> None:
-        order_id = str(fields.get("order_id") or "").strip()
+        # order_id 回退到客户端已知订单：session get/test 等响应常不回显 order_id，
+        # 若不回退，下面整段 `if order_id:` 会被跳过，本次真实验收/扣费/完成标志(acceptance_status、
+        # charged、client_may_claim_delivery_complete)被静默丢弃，前端永远显示不出“已验收/已扣费”。
+        order_id = str(fields.get("order_id") or "").strip() or self._safe_var_value("communication_software_link_order_id").strip()
         session_id = str(fields.get("session_id") or "").strip()
         status = str(fields.get("status") or "").strip()
         var_updates = {
@@ -7075,7 +7228,8 @@ class InstallerApp:
         except (TypeError, ValueError):
             qty = 1
         request = commercial_api_request_with_auth(
-            "subscription_order_create", self.commercial_contexts, product_id=product_id, quantity=qty,
+            "subscription_order_create", self.commercial_contexts,
+            product_id=product_id, quantity=qty, purchase_nonce=uuid.uuid4().hex[:12],
         )
         data, summary = execute_commercial_api_with_trusted_certs(request)
         self.log_from_worker(summary)
@@ -7085,7 +7239,7 @@ class InstallerApp:
             return {"success": False, "message": "创建订单返回缺少订单 ID。"}
         payment_url = order["payment_url"]
         # 0 元 / 已即时履约（无支付链接且已 paid）
-        if not payment_url and order["status"] in ("paid", "delivered"):
+        if not payment_url and order["status"] in SUBSCRIPTION_PAID_STATUSES:
             return {"success": True, "order_id": order_id, "paid": True, "quantity": qty,
                     "message": "订单无需付款，已直接开通。", **_subscription_delivery_fields(order)}
         if not payment_url:
@@ -7115,7 +7269,7 @@ class InstallerApp:
         data, summary = execute_commercial_api_with_trusted_certs(request)
         self.log_from_worker(summary)
         order = parse_subscription_order_data(data)
-        paid = order["status"] in ("paid", "delivered")
+        paid = order["status"] in SUBSCRIPTION_PAID_STATUSES
         return {
             "success": True, "order_id": order["order_id"], "status": order["status"],
             "paid": paid, "delivery_mode": order["delivery_mode"],
@@ -7127,15 +7281,21 @@ class InstallerApp:
         """内置浏览器打开 Plus 充值工具，带 ?code=<卡密> 免手输激活。"""
         base = str(plus_tool_url or "").strip()
         if not base:
-            return {"success": False, "message": "缺少充值工具地址。"}
-        safe_code = quote(str(code or "").strip(), safe="")
-        sep = "&" if "?" in base else "?"
-        target = f"{base}{sep}code={safe_code}" if safe_code else base
-        opened = try_open_embedded_webview(
-            target, title="GPT Plus 自助充值", cookie_jar=None, log=self.log_from_worker,
+            return {"success": False, "message": "缺少充值工具地址（后台未配置该商品的充值工具链接），请联系客服。"}
+        parsed = urlsplit(base)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            # plus_tool_url 由服务端下发，必须校验协议/主机，杜绝 javascript:/file: 等注入。
+            return {"success": False, "message": "充值工具地址无效，请联系客服核对。"}
+        target = append_url_query_param(base, "code", str(code or "").strip())
+        # 仅 aitokenapi.cc 家族(如 plus.)进内置可信窗口；其余 http(s) 站点走外部浏览器，不内嵌。
+        opened = (
+            try_open_embedded_webview(
+                target, title="GPT Plus 自助充值", cookie_jar=None, log=self.log_from_worker,
+            )
+            if is_trusted_embedded_url(base)
+            else False
         )
         if not opened:
-            # 内置 WebView 不可用时兜底走外部浏览器（仍带 code）
             open_url(target, log=self.log_from_worker)
         return {"success": True, "message": "已打开充值工具，请在其中完成激活。"}
 
@@ -7278,7 +7438,9 @@ class InstallerApp:
             return
         product_label = getattr(self, "buyer_product_summary_label", None)
         if product_label:
-            lines = build_customer_purchase_product_lines(self.commercial_products)
+            contexts = getattr(self, "commercial_contexts", None)
+            buyer_user_id = contexts.target_buyer.user_id if contexts else ""
+            lines = build_customer_purchase_product_lines(self.commercial_products, APP_VERSION, buyer_user_id)
             if lines:
                 product_label.configure(text="可购买商品：\n" + "\n".join(f"- {line}" for line in lines[:5]))
             else:
@@ -7788,11 +7950,19 @@ class InstallerApp:
         entry = (getattr(self, "deploy_keys", None) or {}).get(fmt) or {}
         key = (entry.get("key") or "").strip()
         model = (entry.get("model") or "").strip()
+        # 每种格式的默认模型不同：gemini 走 Gemini 接口，型号是 GEMINI_DEFAULT_MODEL，
+        # 不能兜底成 openai 的 DEFAULT_MODEL(gpt-5.5)，否则一键修复会把 gpt-5.5 写进 Gemini
+        # 配置，且 inspect 因 expected_model 非空反而能正确标出漂移。
+        default_model = GEMINI_DEFAULT_MODEL if fmt == "gemini" else DEFAULT_MODEL
         if fmt == "openai":
             if not key:
                 key = (fallback_key or "").strip() or (self.api_key.get().strip() if hasattr(self, "api_key") else "")
             if not model:
-                model = (fallback_model or "").strip() or (self.model.get().strip() if hasattr(self, "model") else "") or DEFAULT_MODEL
+                model = (fallback_model or "").strip() or (self.model.get().strip() if hasattr(self, "model") else "") or default_model
+        elif not model:
+            # gemini/anthropic 的模型不复用 openai 的 self.model / fallback_model(那是 gpt-5.5)，
+            # 只按本格式默认模型兜底。
+            model = default_model
         return key, model
 
     def _primary_deploy_key(self) -> str:
@@ -8424,7 +8594,10 @@ class InstallerApp:
                         progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.FAILED)
                         self.log_from_worker(f"{agent.name}/{mode} 配置写入失败：{exc}")
                     # 只有配置真正写入成功才算"成功处理"，否则顶栏"成功 N/M"会虚高误导买家。
-                    if progress.status_for(DeploymentNode.CONFIG_WRITE) == NodeStatus.PASS:
+                    # Codex 在首循环走的是占位 no-op（apply_agent_config 对 codex 恒 return True），
+                    # 真实写入+验收在下方 Codex 专用块；因此 codex 的成功计数放到那里按真实结果算，
+                    # 这里跳过 codex，避免"没真装上/接口测试失败/回退了也算成功"的虚高。
+                    if agent.id != "codex" and progress.status_for(DeploymentNode.CONFIG_WRITE) == NodeStatus.PASS:
                         success_count += 1
                 else:
                     progress.mark(DeploymentNode.INSTALL, NodeStatus.FAILED)
@@ -8448,6 +8621,8 @@ class InstallerApp:
                 if ok:
                     codex_progress.mark(DeploymentNode.INSTALL, NodeStatus.PASS if codex_binary_ok else NodeStatus.NEEDS_MANUAL)
                     codex_progress.mark(DeploymentNode.CONFIG_WRITE, NodeStatus.PASS)
+                    # Codex 真实配置写入成功，计入顶栏"成功处理 N/M"（与非 codex 同口径：CONFIG_WRITE==PASS）。
+                    success_count += 1
                     codex_progress.mark(DeploymentNode.LAUNCH_VERIFY, NodeStatus.NEEDS_MANUAL)
                     self.log_from_worker("Codex 胖虎AI配置已应用。")
                     if codex_binary_ok:
@@ -8663,6 +8838,11 @@ class InstallerApp:
             self.run_on_ui(lambda: self.set_busy(False))
 
     def start_refresh_commercial_manifest(self) -> None:
+        # 与其它 start_* 一致的单-worker 纪律：前台 worker 在跑时不启动这个后台清单刷新，
+        # 避免登录后 1.6s 的定时刷新与前台 worker 并发改写共享商业状态(last-writer-wins)。
+        # 这是后台自动刷新，跳过即可（下次触发或用户操作会再拉），不占用 set_busy。
+        if self.worker_running:
+            return
         if not self.logged_in_user or not self.deployer_auth:
             return
         user = dict(self.logged_in_user)
@@ -9031,6 +9211,17 @@ requires_openai_auth = true
     finally:
         platform.system = original_system  # type: ignore[method-assign]
         platform.machine = original_machine  # type: ignore[method-assign]
+    # 支付二维码依赖 qrcode+pillow；打包漏装依赖时必须在 exe --self-test 阶段红掉，
+    # 不能等买家付款时静默拿到空二维码（2026-07-09 实际发生过：requirements-build.txt 漏 qrcode）。
+    assert build_payment_qr_data_url("https://example.com/self-test").startswith("data:image/png;base64,")
+    # 内嵌可信 URL 闸门（安全）：只放行 aitokenapi.cc 家族，挡住服务端可控的外部站内嵌。
+    assert is_trusted_embedded_url("https://aitokenapi.cc/console")
+    assert is_trusted_embedded_url("https://sim.aitokenapi.cc")
+    assert not is_trusted_embedded_url("https://evil.com/payment")
+    assert not is_trusted_embedded_url("https://aitokenapi.cc.evil.com/pay")
+    assert embedded_customer_page_title("https://evil.com/payment") == ""
+    # 充值工具卡密参数必须落进 query、保留 SPA fragment。
+    assert append_url_query_param("https://plus.aitokenapi.cc/#/a", "code", "X") == "https://plus.aitokenapi.cc/?code=X#/a"
     print("UI self-test OK")
 
 

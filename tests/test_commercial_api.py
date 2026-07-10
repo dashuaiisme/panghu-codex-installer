@@ -10,6 +10,8 @@ sys.path.insert(0, str(SRC))
 
 from commercial_api import (  # noqa: E402
     CommercialApiContract,
+    parse_subscription_order_data,
+    SUBSCRIPTION_PAID_STATUSES,
     build_admin_agent_application_review_request,
     build_admin_agent_ledger_action_request,
     build_admin_agent_marketing_content_update_request,
@@ -409,6 +411,14 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertNotIn("csl-1", safe_url)
         self.assertNotIn("svc-ord-1", safe_url)
 
+    def test_api_url_summary_masks_subscription_order_id(self) -> None:
+        # AI订阅订单号形如 sub-xxxxxxxxxxxx，轮询时会进日志摘要，必须脱敏。
+        safe_url = sanitize_commercial_api_url(
+            "https://aitokenapi.cc/api/subscription/orders/sub-abcdef123456"
+        )
+        self.assertEqual(safe_url, "https://aitokenapi.cc/api/subscription/orders/[redacted]")
+        self.assertNotIn("sub-abcdef123456", safe_url)
+
     def test_entitlement_order_payment_and_config_session_requests_carry_required_context(self) -> None:
         entitlement = build_entitlement_query_request(self.contract, buyer_user_id="buyer-1", operator_user_id="buyer-1")
         order = build_order_create_request(
@@ -553,6 +563,23 @@ class CommercialApiContractTests(unittest.TestCase):
         self.assertIsNotNone(body)
         self.assertEqual(safe_payload["api_key"], "***")
         self.assertNotIn("sk-secret", str(safe_payload))
+
+    def test_subscription_order_status_is_case_insensitive_and_broad(self) -> None:
+        # 资损防线：服务端若回大写/别名成功状态，客户端也要判为已付款、正常回带卡密。
+        for raw in ("PAID", "Paid", "delivered", "SUCCESS", "completed"):
+            order = parse_subscription_order_data({"order_id": "sub-1", "status": raw})
+            self.assertIn(order["status"], SUBSCRIPTION_PAID_STATUSES,
+                          f"status {raw!r} 归一化后应属已付款集")
+        # 未付款状态不得误判为已付款
+        created = parse_subscription_order_data({"order_id": "sub-2", "status": "Created"})
+        self.assertEqual(created["status"], "created")
+        self.assertNotIn(created["status"], SUBSCRIPTION_PAID_STATUSES)
+        # delivery_mode 也归一化小写；payment_url 兼容别名键
+        alt = parse_subscription_order_data(
+            {"order_id": "sub-3", "status": "paid", "delivery_mode": "Self_Service_Plus", "pay_url": "https://x/y"}
+        )
+        self.assertEqual(alt["delivery_mode"], "self_service_plus")
+        self.assertEqual(alt["payment_url"], "https://x/y")
 
     def test_commercial_api_payload_masks_customer_and_commercial_ids_in_logs(self) -> None:
         safe_payload = sanitize_commercial_api_payload(

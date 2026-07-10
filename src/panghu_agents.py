@@ -125,8 +125,8 @@ AGENTS = (
     ),
     AgentSpec(
         id="gemini_agy",
-        name="Gemini / agy",
-        description="Google Antigravity（agy）Agent，写入胖虎AI网关 Gemini 格式配置，覆盖 CLI 与官方客户端入口。",
+        name="Google 反重力（agy）",
+        description="Google 反重力 Antigravity（agy）Agent（非 Gemini CLI），写入胖虎AI网关 Gemini 格式配置，覆盖 CLI 与官方客户端入口。",
         verify_command=("agy", "--version"),
         modes=(
             AgentMode("cli", "CLI", "安装 Google Antigravity CLI，并写入胖虎AI网关 Gemini 格式配置。", supports_config=True),
@@ -193,11 +193,11 @@ AGENT_DELIVERY_PLAYBOOKS = {
         cli_supported=True,
         client_supported=True,
         skip_third_party_channels=True,
-        customer_goal="安装和配置后，买家可以直接打开 Gemini / agy 对话。",
+        customer_goal="安装和配置后，买家可以直接打开 Google 反重力（agy）对话。",
         config_commands=(
             f"写入 ~/.gemini/.env: GOOGLE_GEMINI_BASE_URL={DEFAULT_BASE_URL}",
             "写入 ~/.gemini/.env: GEMINI_API_KEY=买家胖虎AI API Key",
-            f"写入 ~/.gemini/.env: GEMINI_MODEL={DEFAULT_MODEL}",
+            f"写入 ~/.gemini/.env: GEMINI_MODEL={GEMINI_DEFAULT_MODEL}",
         ),
         minimal_dialogue_check="运行 agy 最小中文对话命令，确认能通过胖虎AI网关（Gemini 格式）返回。",
     ),

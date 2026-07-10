@@ -1,6 +1,6 @@
 # 测试与验收
 
-最后更新：2026-07-03
+最后更新：2026-07-09
 
 ## 1. 标准验证矩阵
 
@@ -38,6 +38,15 @@ rg -n "48 人|2000|350|50\.00|downstream_count: 48|available_settlement_cents: 2
 ```
 
 ## 3. 本轮验证记录
+
+### 2026-07-09 终版收尾轮（三链路打通 + Google 反重力改名 + 终版全量扫描修复）
+
+- `python -m pytest -q`：**`374 passed, 192 subtests passed`**（本文件为客户端测试数字唯一权威；此前 338/359/367/370/371 均为历史记录，勿再引用）。
+- `python src\panghu_ai_client.py --self-test`：`UI self-test OK`（含支付二维码生成与内嵌可信 URL 安全闸门断言）。
+- 前端 `node --check`（内联 `<script>`）：通过。
+- `python scripts\commercial_release_acceptance.py --with-exe-self-test --artifact-scope windows`：**`PASS`**（Windows 包已重打包、含 qrcode/pillow、公钥已注入；缺 Mac 两包只能 CI 打，属预期）。
+- 本轮内容：Plus充值/接码/中转站三链路 bug 修复 + 生产 nginx 订阅路由已上线打通；Google agent 显示名统一为「Google 反重力（agy）」；终版全量扫描（78 子agent对抗验证）修复顶栏成功计数虚高、订阅状态大小写归一化、Mac 打包版本号取值文件、若干前端转义/命名/死引用与文档一致性。
+- 未在本轮完成（属用户在场/真机项）：真实支付宝小额付款端到端、真号 ChatGPT + Plus 工具自动化校准、Mac 双包（需 Mac/CI）、正式对外分发。
 
 ### 2026-07-03 R5 买家机器人创建/注册/凭证填写引导
 

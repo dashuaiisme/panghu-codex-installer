@@ -632,6 +632,64 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertNotEqual(first.headers["Idempotency-Key"], different_product.headers["Idempotency-Key"])
         self.assertTrue(first.headers["Idempotency-Key"].startswith("order-"))
 
+    def test_subscription_order_create_nonce_allows_repurchase(self) -> None:
+        # AI订阅是真金付款，同商品同数量复购必须生成新订单（不同幂等键）；
+        # 同一 nonce（同一次点击的重试）仍复用同键，保留防重复提交。
+        contexts = deployment_commercial_contexts({"id": "buyer-1", "username": "本人"})
+        first = commercial_api_request_with_auth(
+            "subscription_order_create", contexts, deployer_auth={"token": "buyer-token"},
+            product_id="plus-1", quantity=1, purchase_nonce="nonce-a",
+        )
+        again_same_nonce = commercial_api_request_with_auth(
+            "subscription_order_create", contexts, deployer_auth={"token": "buyer-token"},
+            product_id="plus-1", quantity=1, purchase_nonce="nonce-a",
+        )
+        repurchase = commercial_api_request_with_auth(
+            "subscription_order_create", contexts, deployer_auth={"token": "buyer-token"},
+            product_id="plus-1", quantity=1, purchase_nonce="nonce-b",
+        )
+        self.assertEqual(first.headers["Idempotency-Key"], again_same_nonce.headers["Idempotency-Key"])
+        self.assertNotEqual(first.headers["Idempotency-Key"], repurchase.headers["Idempotency-Key"])
+        self.assertTrue(first.headers["Idempotency-Key"].startswith("order-"))
+
+    def test_subscription_open_plus_tool_validates_and_routes_url(self) -> None:
+        # subscription_open_plus_tool 只用到 self.log_from_worker，用轻量探针经类调用即可。
+        probe = type("Probe", (), {"log_from_worker": lambda self, *_a, **_k: None})()
+        open_tool = installer_module.InstallerApp.subscription_open_plus_tool
+        embedded: list[str] = []
+        external: list[str] = []
+        original_embed = installer_module.try_open_embedded_webview
+        original_open = installer_module.open_url
+        try:
+            installer_module.try_open_embedded_webview = (
+                lambda url, **_kwargs: embedded.append(url) or True
+            )
+            installer_module.open_url = lambda url, **_kwargs: external.append(url)
+
+            bad = open_tool(probe, "javascript:alert(1)", "PHK-1")
+            self.assertFalse(bad["success"])
+            self.assertFalse(embedded)
+            self.assertFalse(external)
+
+            empty = open_tool(probe, "", "PHK-1")
+            self.assertFalse(empty["success"])
+
+            # 可信 plus. 子域 → 内置窗口，卡密进 query 且保留 fragment。
+            trusted = open_tool(probe, "https://plus.aitokenapi.cc/#/activate", "PHK-9")
+            self.assertTrue(trusted["success"])
+            self.assertEqual(embedded, ["https://plus.aitokenapi.cc/?code=PHK-9#/activate"])
+            self.assertFalse(external)
+
+            # 非可信 https 站 → 外部浏览器，不内嵌可信窗口。
+            embedded.clear()
+            outside = open_tool(probe, "https://third-party.example/tool", "PHK-8")
+            self.assertTrue(outside["success"])
+            self.assertFalse(embedded)
+            self.assertEqual(external, ["https://third-party.example/tool?code=PHK-8"])
+        finally:
+            installer_module.try_open_embedded_webview = original_embed
+            installer_module.open_url = original_open
+
     def test_execute_config_session_complete_uses_real_server_session_id(self) -> None:
         captured_headers = []
         captured = {}
@@ -2376,7 +2434,7 @@ class PanghuCommercialManifestTests(unittest.TestCase):
             "gemini_agy",
             "cfg-gemini-client",
             client_ok=False,
-            client_message="Gemini / agy/client client scope 需要官方客户端；当前未检测到：未安装 Antigravity。",
+            client_message="Google 反重力（agy）/client client scope 需要官方客户端；当前未检测到：未安装 Antigravity。",
         )
         self.assertEqual(completed, [])
         self.assertEqual(failed, ["cfg-gemini-client"])

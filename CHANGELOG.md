@@ -1,5 +1,40 @@
 # 变更记录
 
+## 2026-07-10（多智能体查 bug 全量修复 + 代理中心文案合规改写）
+
+> 多智能体工作流（10 路查找 + 逐条对抗验证 + 综合）：17 候选 → 15 确认 → 去重 12 个真实 bug，全部修复；随后 3 视角（业务准确 / 文案 UX / 合规风控）分析后对代理中心文案做合规改写。客户端 **375 测试全绿**、前端 `node --check` 通过、本地预览逐页冒烟零 console 错误。**本地修复，未改生产。**
+
+### 查 bug 修复（前端 / 后端 / 代理中心 / 接码 / 订阅 / 硬化）
+- **前端**：接码第 11 步 `updateCSLPayload` 覆盖用户通道/来源选择（`channel`/`agentSource` 补 `|| previous.*` 兜底）；服务端下发目录后接码控制台 `sms_code` 子导航消失（内置 tab 白名单纳入 sms_code）；应用内扫码付款双击重复下单（`payInAppWithQr` 加在途护栏）；登录并发（后端登录锁 + 前端提示温和化）；接码收费横幅漏判 5 态（后端下发权威 `sessionAllowed` 布尔，前端直判）。
+- **后端**：`gemini_agy` 一键修复把 `gpt-5.5` 写进 Gemini 配置且 inspect 静默变绿（`key_model_for_agent` / repair 按格式兜底 `GEMINI_DEFAULT_MODEL`）；GPT Plus 即时履约漏 `delivery_mode` 致卡密误显人工发货（收进 `_subscription_delivery_fields` 统一返回）；接码验收 `order_id` 不回显时验收/扣费标志被丢弃（回退客户端已知订单）。
+- **代理中心**：courses 8 个子导航是死入口（按子导航 key 分流 + 渲染“打开服务端页面”按钮，URL 优先用服务端快照 `backend_url`/`rules_url`/`join_page_url`/`invite_url`）；下游客户/返佣明细抓取即丢弃（后端 `current_agent_center_web_state` 下发明细，前端 `renderAgentCenterDetail` 渲染，含 escapeHtml 转义）。
+- **硬化**：清单刷新并发护栏（`worker_running`）；`commercial_api` 路径段百分号编码防路径注入（7 处 `_safe_path_segment`）；展示“可购买商品”复用与下单一致的过滤（防死单）。
+
+### 代理中心文案合规改写（3 视角分析后）
+- **去多级分销/传销风险话术**：删除 `renderAgentJoinExplainer` 与 agent_rules 里“L1–L5 五级 / 层级越深收益越多”、招商标题“一起赚钱 / 邀请更多下游赚更多”；改中性表述 +“返佣是真实推广/服务的对价、禁止拉人头/刷单/自邀请/多账号套利”+“不构成收益承诺”。
+- **去本地硬编码服务端规则**（`docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md` §4 红线）：删除客户端里“默认 T+7 / L1–L5 纯五级 / 按授权节点数量计算 / 功能验收矩阵”等，改“由服务器结算规则、后台决定”；安装返佣补回“付费”限定；下游客户删除超出 `agent_center` 快照字段的“客户分类 / 诊断码”过度承诺；空状态补“暂未对你的账号开放，并非软件故障”。文案两处同源改（`src/ui/index.html` 与 `src/panghu_constants.py` MODULE_ACTION_CARDS[MODULE_COURSES]）。
+
+### 待服务端（已挂 Codex，hub 请求 REQ-20260710-075122）
+- 代理中心买家 API 生产 nginx 仍 404（`/api/agent/*`、`/api/vas/*`、`/api/communication-software-link/*`），需服务端补精确 location 后客户端修复才公网生效。
+- 招商/规则文案应改为渲染服务端 `agent_center` 快照 `benefits`/`boundaries`（SSOT），客户端只留中性脚手架；代理中心页面路由（`/agent` vs `/agent-center`）待确认线上真实值后统一。
+
+## 2026-07-09（三链路融合排查：Plus充值 / 中转站 / 手机接码 —— 多智能体审查后全量修复）
+
+> 5 维度并行审查（Plus充值链路 / 接码控制台 / 中转站对接 / 前端状态机 / 复核 07-08 报告）+ 每条发现 2 视角对抗验证后，按确认结论修复。客户端 **374 测试全绿**（+7 新测试）、`--self-test` OK、index.html `node --check` 通过、subnav 合并逻辑真实函数求值验证通过。**本地修复，未改生产。**
+
+- **P0 支付二维码断链（Plus充值 + 工具订单）**：`requirements-build.txt` 漏 `qrcode`/`pillow`，已发布 zip 内 0 个二维码模块 → 买家付款时 `build_payment_qr_data_url` 抛 `ModuleNotFoundError`、只看到"二维码生成失败"。补依赖 + `--self-test` 增二维码生成断言守卫（以后漏依赖打包即红）。**旧 zip 必须重打包才可分发。**
+- **P0 内置窗口点了没反应（接码"独立窗口"+ Plus"打开充值工具"）**：`try_open_embedded_webview` 在 daemon 线程里二次 `webview.start()` → 真机必抛 `must be run on a main thread` 静默崩溃，函数却已 `return True`、兜底不触发。改为 GUI 循环运行时只 `create_window`（新增 `embedded_webview_loop_active()` 判活），循环未启动才返回 False 兜底外部浏览器。
+- **P0 服务端下发增值目录后 AI订阅商城 tab 消失（收入链断）**：前端 `currentSubnavItems` 用服务端 `value_added_services` 完全替换子导航，而整个订阅商城只在 `key==="ai_subscription"` 渲染 → 服务端一发目录，Plus 充值入口整体不可达。改为**始终保留内置 `ai_subscription` 店铺 tab 并置顶**，再把服务端目录去重并入。
+- **P1 内嵌可信 URL 闸门（安全）**：`embedded_customer_page_title` 原按 `"payment"/"/buy"` 子串判可信内嵌，`https://evil.com/payment` 会被当"胖虎AI 购买与充值"嵌进带买家 cookie 的可信窗口。新增 `is_trusted_embedded_url`：仅 https 的 aitokenapi.cc 家族（或联调同源）可内嵌，其余走外部浏览器。
+- **P1 接码子域登录态桥接**：cookie 桥注入 `document.cookie` 不写 `Domain` → host-only、桥不到 `sim.`/`plus.` 子域却谎报成功。改为对 aitokenapi.cc 家族补 `Domain=.aitokenapi.cc` 做子域单点登录，日志文案改诚实。
+- **P1 复购被幂等键锁死**：AI订阅幂等键纯确定性（`order:sub:{pid}:x{qty}:{buyer}:{op}`）→ 同商品同数量二次购买永远撞旧订单（已付旧单把已核销卡密当"新交付"弹出／撤销旧单永久无法再买）。每次下单带一次性 nonce 保证复购是新订单；防重复提交改由前端下单按钮 in-flight 护栏负责。
+- **P1 充值工具地址校验**：`subscription_open_plus_tool` 对服务端下发 `plus_tool_url` 零校验，且 `?code=` 用 `+"?code="` 拼接在 SPA 井号路由（`/#/x`）时卡密落进 fragment、工具端读不到。新增 http(s) scheme/host 校验 + `append_url_query_param`（卡密进 query、保留 fragment）；非可信站走外部浏览器。
+- **P2**：① "打开充值工具"按钮吞掉桥失败返回（后台没配地址点了没反应）→ 现给买家 toast 反馈。② 商品列表一次网络失败即固化"暂无商品"无重试 → 区分"加载失败/真的没有"并给"重试加载"。③ 支付轮询 75 次（~5 分钟）静默停 → 收口提示"已停止自动查询，请手动查询"。④ 订阅订单号 `sub-` 不在日志脱敏前缀清单 → 补 `sub`，轮询不再把订单号明文写日志。
+- **收尾补修**：桥契约补齐预览桩 `build_register_url`、`openRegister` 加 `.catch`；manual_qr 交付弹窗在缺 `customer_service` 时补一次状态回查取回客服微信（0元/幂等回放即时付款走下单接口、服务端仅在状态查询接口附客服信息）。
+- **跨仓契约核对（客户端 vs panghu-admin）**：`parse_subscription_*` 字段、金额单位（均 *_cents）、状态枚举、quantity 上限 500、幂等 (key,buyer) 语义全部对齐；各 Agent 配置写入（hermes YAML/gemini .env/openclaw JSON）经恶意输入实测防注入。
+- **未改（按对抗验证结论/既有决策）**：预览桩硬编码（仅浏览器预览态 `isBrowser` 分支，打包后不可达）、订阅 `cancelled` 态（服务端从不置此态）、release 顶层 WARN 档（本机缺 Mac 包属预期稳态、CI 已 `--strict`）、`MODULE_VALUE_ADDED` 前后端 key 差异与 `AGENT_CENTER_URL`（webview 主线路死数据）、`build_config` 写死 base_url/model（生产正确、self-test 锁死、交接文档标"设计如此"）。
+- **✅ 生产 nginx 订阅路由已上线（Plus 充值公网链路打通）**：排查发现 `https://aitokenapi.cc/api/subscription/*` 生产原 **404**（panghu-admin 订阅后端 2026-07-08 上线时漏加公网 nginx location）→ 经用户"授权我上线"，已在生产 nginx 加 3 条精确/正则 location 转发到 panghu-admin(8300)，复测 404→401/405（已路由），主站 `/api/subscription/alipay/pay` 零碰撞、回归全 200。中转站/接码本就在线。上线前已用客户端真实 token+解析器打本地 panghu-admin 跑通 7 项 HTTP 端到端断言。详见 `docs/交付状态_2026-07-09.md` 与 hub `PANGHUAI_CHANGE_LOG.md` 同日条。剩真号真钱端到端验收 + 后台录商品/卡密。
+
 ## 2026-07-07（第二轮：多视角验收 + 全量修复 P0/P1/P2）
 
 > 5 视角审查(买家端到端/跨仓合同/前端/客户端后端/服务端资金安全)后的全量修复。详见 `docs/交接说明_2026-07-07_Claude.md` 第 7 节。

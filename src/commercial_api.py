@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.parse import urlsplit, urlunsplit
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -46,7 +46,7 @@ SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+\b"),
     re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|service_order_id|entitlement_id|config_session_id|session_id|source_event_id|platform_account_id|platform_chat_id|platform_message_id|inbound_platform_message_id|outbound_platform_message_id|sender_id)\s*[:=]\s*[A-Za-z0-9._~:/+-]+\b"),
     re.compile(r"(?i)\b(token|access_token|refresh_token|api_key|invite_code|order_id|service_order_id|entitlement_id|config_session_id|session_id|source_event_id|platform_account_id|platform_chat_id|platform_message_id|inbound_platform_message_id|outbound_platform_message_id|sender_id)\s+[A-Za-z0-9._~:/+-]+\b"),
-    re.compile(r"\b(?:ord|order|ent|cfg|assist|invite|mca|svc|evt|csl|ledger|pay)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
+    re.compile(r"\b(?:ord|order|sub|ent|cfg|assist|invite|mca|svc|evt|csl|ledger|pay)-[A-Za-z0-9._-]+\b", re.IGNORECASE),
 )
 
 AGENT_CENTER_REQUIRED_SUMMARY_FIELDS = (
@@ -77,6 +77,19 @@ class CommercialApiContract:
 
     def _url(self, path: str) -> str:
         return self.base_url.rstrip("/") + path
+
+    @staticmethod
+    def _safe_path_segment(value: object, label: str) -> str:
+        """把 ID 规整成安全的 URL 路径段：非空校验 + 百分号编码(safe='')。
+
+        纵深加固：这些 ID 由服务端下发、base_url 固定，但仍对路径段做百分号编码，
+        杜绝内部 '/'、'..' 改写请求路径(path traversal)。正常不含特殊字符的 ID
+        (如 svc-ord-1)编码后保持不变，不影响既有请求。
+        """
+        segment = str(value or "").strip().strip("/")
+        if not segment:
+            raise ValueError(f"{label} 为空。")
+        return quote(segment, safe="")
 
     @property
     def api_key_owner_verify_url(self) -> str:
@@ -157,9 +170,7 @@ class CommercialApiContract:
     def admin_agent_ledger_action_url(self, ledger_id: str, action: str) -> str:
         if action not in {"freeze", "release", "reverse"}:
             raise ValueError("未知代理账本动作。")
-        safe_ledger_id = str(ledger_id or "").strip().strip("/")
-        if not safe_ledger_id:
-            raise ValueError("代理账本 ID 为空。")
+        safe_ledger_id = self._safe_path_segment(ledger_id, "代理账本 ID")
         return self._url(f"/api/admin/agent/ledger/{safe_ledger_id}/{action}")
 
     @property
@@ -171,9 +182,7 @@ class CommercialApiContract:
         return self._url("/api/communication-software-link/orders")
 
     def communication_software_link_order_url(self, order_id: str) -> str:
-        safe_order_id = str(order_id or "").strip().strip("/")
-        if not safe_order_id:
-            raise ValueError("连接通讯软件订单 ID 为空。")
+        safe_order_id = self._safe_path_segment(order_id, "连接通讯软件订单 ID")
         return self._url(f"/api/communication-software-link/orders/{safe_order_id}")
 
     @property
@@ -181,9 +190,7 @@ class CommercialApiContract:
         return self._url("/api/communication-software-link/sessions")
 
     def communication_software_link_session_url(self, session_id: str) -> str:
-        safe_session_id = str(session_id or "").strip().strip("/")
-        if not safe_session_id:
-            raise ValueError("连接通讯软件会话 ID 为空。")
+        safe_session_id = self._safe_path_segment(session_id, "连接通讯软件会话 ID")
         return self._url(f"/api/communication-software-link/sessions/{safe_session_id}")
 
     def communication_software_link_session_test_url(self, session_id: str) -> str:
@@ -200,9 +207,7 @@ class CommercialApiContract:
         return self._url("/api/communication-software-link/platform-auth")
 
     def communication_software_link_platform_auth_session_url(self, auth_session_id: str) -> str:
-        safe_auth_session_id = str(auth_session_id or "").strip().strip("/")
-        if not safe_auth_session_id:
-            raise ValueError("连接通讯软件平台授权会话 ID 为空。")
+        safe_auth_session_id = self._safe_path_segment(auth_session_id, "连接通讯软件平台授权会话 ID")
         return self._url(f"/api/communication-software-link/platform-auth/{safe_auth_session_id}")
 
     def communication_software_link_callback_url(self, channel: str) -> str:
@@ -226,17 +231,13 @@ class CommercialApiContract:
     def admin_communication_software_link_session_action_url(self, session_id: str, action: str) -> str:
         if action not in {"freeze", "release"}:
             raise ValueError("未知连接通讯软件会话后台动作。")
-        safe_session_id = str(session_id or "").strip().strip("/")
-        if not safe_session_id:
-            raise ValueError("连接通讯软件会话 ID 为空。")
+        safe_session_id = self._safe_path_segment(session_id, "连接通讯软件会话 ID")
         return self._url(f"/api/admin/communication-software-link/sessions/{safe_session_id}/{action}")
 
     def admin_communication_software_link_order_action_url(self, order_id: str, action: str) -> str:
         if action not in {"refund", "manual-review"}:
             raise ValueError("未知连接通讯软件订单后台动作。")
-        safe_order_id = str(order_id or "").strip().strip("/")
-        if not safe_order_id:
-            raise ValueError("连接通讯软件订单 ID 为空。")
+        safe_order_id = self._safe_path_segment(order_id, "连接通讯软件订单 ID")
         return self._url(f"/api/admin/communication-software-link/orders/{safe_order_id}/{action}")
 
     # ---------------- AI订阅服务商城（增值业务 · 代充/成品号） ----------------
@@ -249,9 +250,7 @@ class CommercialApiContract:
         return self._url("/api/subscription/orders")
 
     def subscription_order_url(self, order_id: str) -> str:
-        safe = str(order_id or "").strip().strip("/")
-        if not safe:
-            raise ValueError("AI订阅订单 ID 为空。")
+        safe = self._safe_path_segment(order_id, "AI订阅订单 ID")
         return self._url(f"/api/subscription/orders/{safe}")
 
 
@@ -920,15 +919,23 @@ def parse_subscription_products_data(data: dict[str, Any]) -> list[dict[str, Any
     return out
 
 
+# AI订阅订单"已付款/可交付"状态集，与 parse_payment_status_data 的成功集口径一致 + delivered。
+# 大小写不敏感：解析时已归一化为小写，服务端返回 PAID/Success 等也能正确判为已付款，
+# 避免"已付款却判未付款、卡密不回传"的资损级问题。
+SUBSCRIPTION_PAID_STATUSES = frozenset({"paid", "success", "completed", "delivered"})
+
+
 def parse_subscription_order_data(data: dict[str, Any]) -> dict[str, Any]:
     """解析订单状态：状态 + 批量卡密 + 工具链接 + 客服微信（manual_qr）。"""
     result: dict[str, Any] = {
         "order_id": str(data.get("order_id") or ""),
-        "status": str(data.get("status") or ""),
-        "delivery_mode": str(data.get("delivery_mode") or ""),
+        "status": str(data.get("status") or "").strip().lower(),
+        "delivery_mode": str(data.get("delivery_mode") or "").strip().lower(),
         "quantity": int(data.get("quantity") or 1),
         "amount_cents": int(data.get("amount_cents") or 0),
-        "payment_url": str(data.get("payment_url") or ""),
+        "payment_url": str(
+            data.get("payment_url") or data.get("pay_url") or data.get("checkout_url") or ""
+        ),
     }
     card_codes = data.get("card_codes")
     if isinstance(card_codes, list):

@@ -1944,6 +1944,7 @@
           subscription_query_order: () => noopPromise({ success: true, order_id: "sub-preview", status: "paid", paid: true, delivery_mode: "self_service_plus", card_codes: ["PHK-PREVIEW-0001", "PHK-PREVIEW-0002"], cards_shortfall: 0, plus_tool_url: "https://plus.aitokenapi.cc", message: "（预览）已付款。" }),
           subscription_open_plus_tool: () => { appendPythonLog("（预览）已打开充值工具（模拟）。", "success"); return noopPromise({ success: true }); },
           open_sms_console: () => { appendPythonLog("（预览）已在独立窗口打开接码控制台（模拟）。", "success"); return noopPromise({ success: true }); },
+          build_register_url: (invite) => noopPromise("https://aitokenapi.cc/register" + (invite ? ("?invite=" + encodeURIComponent(invite)) : "")),
           copy_logs: () => noopPromise(),
           switch_module: (m) => { state.activeModule = m; state.activeSubnav = defaultSubnav(m); refreshAll(); return noopPromise(); },
           switch_subnav: (s) => { state.activeSubnav = String(s); refreshAll(); return noopPromise(); },
@@ -1986,6 +1987,7 @@
             }, 600);
             return noopPromise();
           },
+          communication_software_link_refresh_offering: () => noopPromise(),
           communication_software_link_create_order: () => noopPromise(),
           communication_software_link_get_order: () => noopPromise(),
           communication_software_link_create_session: () => noopPromise(),
@@ -2093,7 +2095,7 @@
       ["claude_code", "ClaudeCode"],
       ["openclaw", "OpenClaw"],
       ["hermes", "Hermes"],
-      ["gemini_agy", "Gemini / agy"]
+      ["gemini_agy", "Google 反重力（agy）"]
     ];
 
     const agentModeOptions = {
@@ -2119,7 +2121,25 @@
       if (mod !== "value_added") return subnav[mod] || [];
       const services = state.valueAddedServices || [];
       if (!services.length) return subnav.value_added;
-      return services.map(service => [service.service_id, service.title || service.service_id]);
+      // AI订阅商城(ai_subscription)是客户端内置店铺(下单/支付宝/卡密自助)，不是服务端目录项。
+      // 旧实现用服务端 value_added_services 完全替换子导航 → 服务端一发目录，整个 Plus 充值
+      // 入口就消失。必须始终保留内置店铺 tab，再把服务端目录项去重后并进来。
+      const items = [];
+      const seen = {};
+      // ai_subscription(AI订阅商城) 与 sms_code(接码控制台) 都是客户端内置 tab，
+      // 有各自的内置渲染分支(renderAiSubscriptionShop / renderSmsConsoleEmbed)，不是服务端目录项。
+      // 必须恒定保留全部内置 tab，再把服务端目录项去重后并进来；否则服务端目录一非空，
+      // 漏保留的内置 tab（历史上只保了 ai_subscription、漏了 sms_code）就从子导航消失、不可达。
+      const BUILT_IN_VALUE_ADDED = ["ai_subscription", "sms_code"];
+      subnav.value_added.forEach(pair => {
+        if (BUILT_IN_VALUE_ADDED.includes(pair[0])) { items.push(pair); seen[pair[0]] = true; }
+      });
+      services.forEach(service => {
+        if (!service || !service.service_id || seen[service.service_id]) return;
+        items.push([service.service_id, service.title || service.service_id]);
+        seen[service.service_id] = true;
+      });
+      return items;
     }
 
     function currentPageMeta(mod, key) {
@@ -2788,7 +2808,25 @@
       });
     }
 
+    // 接码/通讯软件商品自动获取：cslServiceProductId 占位符写着"自动获取"，但历史上没有任何
+    // 前端入口调 refresh_offering，service_product_id 永不自动回填、下单无从启动。这里在接码流程
+    // 首次渲染时自动触发一次；后端 worker 会回填 service_product_id 并 sync 回前端。
+    let cslOfferingAutoRequested = false;
+    function maybeAutoLoadCSLOffering() {
+      if (cslOfferingAutoRequested) return;
+      const c = state.communicationSoftwareLink || {};
+      const hasOffering = !!c.serviceProductId || (c.offering && Object.keys(c.offering).length > 0);
+      if (hasOffering) return;
+      const api = window.pywebview && window.pywebview.api;
+      if (!api || typeof api.communication_software_link_refresh_offering !== "function") return;
+      cslOfferingAutoRequested = true;
+      try {
+        Promise.resolve(api.communication_software_link_refresh_offering(c)).catch(() => {});
+      } catch (e) { /* 忽略：自动获取失败不阻断手动填写 */ }
+    }
+
     function renderCommunicationLink(step) {
+      maybeAutoLoadCSLOffering();
       const c = state.communicationSoftwareLink || {};
       const serviceProductId = c.serviceProductId || "";
       const agentId = c.agentId || "codex";
@@ -2929,8 +2967,8 @@
           </div>
 
           ${orderId ? (
-            (s.chargeStatus === "paid" || s.chargeStatus === "manual_review")
-              ? `<div style="margin-bottom:16px;width:100%;border-radius:6px;padding:8px 12px;line-height:1.5;background:rgba(0,242,169,.10);color:#00f2a9;border:1px solid rgba(0,242,169,.22);">✅ 订单已支付/已开通（${escapeHtml(s.chargeStatus)}），可建立通信会话。</div>`
+            s.sessionAllowed
+              ? `<div style="margin-bottom:16px;width:100%;border-radius:6px;padding:8px 12px;line-height:1.5;background:rgba(0,242,169,.10);color:#00f2a9;border:1px solid rgba(0,242,169,.22);">✅ 订单已支付/已开通（${escapeHtml(s.chargeStatus || "已开通")}），可建立通信会话。</div>`
               : (s.requiresPayment ? `
           <div class="gm-canvas-card gm-hud-corners" style="margin-bottom:16px;padding:16px;">
             <b style="color:var(--g-primary);">订单支付（手机支付宝扫码）</b>
@@ -3002,7 +3040,7 @@
     function captureCanvasFormState(container) {
       if (!container) return null;
       const domOnly = {};
-      container.querySelectorAll('input[id^="key_"], input[id^="model_"]').forEach(el => {
+      container.querySelectorAll('input[id^="key_"], input[id^="model_"], input[id^="subqty_"]').forEach(el => {
         if (el.value) domOnly[el.id] = { value: el.value, type: el.type };
       });
       const focused = document.activeElement;
@@ -3062,18 +3100,37 @@
     function loadSubscriptionProducts() {
       if (state.subscriptionLoading) return;
       state.subscriptionLoading = true;
+      state.subscriptionError = null;
       Promise.resolve(window.pywebview.api.subscription_list_products())
         .then(res => {
-          state.subscriptionProducts = (res && res.success && Array.isArray(res.products)) ? res.products : [];
+          if (res && res.success && Array.isArray(res.products)) {
+            state.subscriptionProducts = res.products;
+          } else {
+            // 区分"加载失败"与"真的没有商品"：失败要能重试，不能一次网络抖动就固化成"暂无商品"。
+            state.subscriptionProducts = [];
+            state.subscriptionError = (res && res.message) || "商品加载失败，请检查网络后重试。";
+          }
         })
-        .catch(() => { state.subscriptionProducts = []; })
+        .catch(err => { state.subscriptionProducts = []; state.subscriptionError = "商品加载出错：" + err; })
         .finally(() => { state.subscriptionLoading = false; if (state.activeModule === "value_added" && state.activeSubnav === "ai_subscription") renderServiceCanvas(); });
+    }
+
+    function retrySubscriptionProducts() {
+      state.subscriptionProducts = null;
+      state.subscriptionError = null;
+      if (state.activeModule === "value_added" && state.activeSubnav === "ai_subscription") renderServiceCanvas();
     }
 
     function renderAiSubscriptionShop() {
       if (state.subscriptionProducts === null) {
         loadSubscriptionProducts();
         return `<div class="gm-canvas-card gm-hud-corners" style="padding:24px;text-align:center;color:var(--g-text-muted);">正在从服务端加载商品……</div>`;
+      }
+      if (state.subscriptionError) {
+        return `<div class="gm-canvas-card gm-hud-corners" style="padding:24px;text-align:center;color:var(--g-text-muted);">
+          <div style="color:#f28b82;margin-bottom:12px;">${escapeHtml(state.subscriptionError)}</div>
+          <button class="gm-btn gm-btn-primary" onclick="retrySubscriptionProducts()">重试加载</button>
+        </div>`;
       }
       const products = state.subscriptionProducts || [];
       const cards = products.length ? products.map(p => {
@@ -3126,7 +3183,12 @@
       el.value = Math.max(1, Math.min(500, (parseInt(el.value, 10) || 1) + d));
     }
 
+    let subscriptionOrderInFlight = false;
     function buySubscription(pid) {
+      // 后端每次下单带一次性 nonce（复购同商品同数量会生成新订单），防重复提交改由前端护栏负责：
+      // 下单请求在途时禁止再次触发，避免双击生成两张支付宝二维码/两笔订单。
+      if (subscriptionOrderInFlight) return;
+      subscriptionOrderInFlight = true;
       const qty = clampQty(pid);
       window.showToast("正在创建订单……", "running");
       Promise.resolve(window.pywebview.api.subscription_create_order(pid, qty))
@@ -3135,7 +3197,8 @@
           if (res.paid) { showSubscriptionDelivery(res); return; }
           showSubscriptionPayModal(res);
         })
-        .catch(err => window.showToast("下单出错：" + err, "error"));
+        .catch(err => window.showToast("下单出错：" + err, "error"))
+        .finally(() => { subscriptionOrderInFlight = false; });
     }
 
     let subscriptionPollTimer = null;
@@ -3191,7 +3254,13 @@
       let attempts = 0;
       subscriptionPollTimer = setInterval(() => {
         attempts += 1;
-        if (attempts > 75) { clearInterval(subscriptionPollTimer); subscriptionPollTimer = null; return; }
+        if (attempts > 75) {
+          clearInterval(subscriptionPollTimer); subscriptionPollTimer = null;
+          // 轮询到点后必须收口告知，否则买家以为一直在自动确认。
+          const st = document.getElementById("gmSubStatus");
+          if (st) st.textContent = "已停止自动查询。若已付款，请点“我已付款，查询结果”手动确认。";
+          return;
+        }
         querySubscriptionOnce(order.order_id, true);
       }, 4000);
     }
@@ -3235,7 +3304,13 @@
           codeBox.style.cssText = "flex:1;font-family:monospace;";
           const open = document.createElement("button");
           open.className = "gm-btn gm-btn-primary"; open.textContent = "打开充值工具";
-          open.addEventListener("click", () => window.pywebview.api.subscription_open_plus_tool(res.plus_tool_url || "", code));
+          open.addEventListener("click", () => {
+            // 桥方法失败(如后台没配 plus_tool_url)会返回 {success:false,message}，必须给买家反馈，
+            // 不能吞掉让按钮"点了没反应"。
+            Promise.resolve(window.pywebview.api.subscription_open_plus_tool(res.plus_tool_url || "", code))
+              .then(r => { if (!r || !r.success) window.showToast((r && r.message) || "打开充值工具失败，请联系客服。", "error"); })
+              .catch(err => window.showToast("打开充值工具出错：" + err, "error"));
+          });
           row.appendChild(codeBox); row.appendChild(open);
           card.appendChild(row);
         });
@@ -3247,6 +3322,7 @@
         }
       } else {
         const cs = res.customer_service || {};
+        const hasCs = safeHttpUrl(cs.wechat_qr_url) || cs.wechat_id;
         const intro = document.createElement("div");
         intro.style.cssText = "font-size:12px;color:var(--g-text-muted);line-height:1.7;margin-bottom:10px;text-align:center;";
         intro.textContent = "该商品由人工发货。请加下面客服微信，凭本订单号联系发货。";
@@ -3262,6 +3338,24 @@
           wid.style.cssText = "text-align:center;font-size:13px;margin-bottom:8px;";
           wid.textContent = "客服微信号：" + cs.wechat_id;
           card.appendChild(wid);
+        }
+        if (!hasCs) {
+          // 立即付款(0元/幂等回放)走下单接口，服务端未随下单附客服微信（仅状态查询接口附）；
+          // 补一次状态回查把客服信息取回，避免弹窗只剩订单号让买家无处联系。
+          const hint = document.createElement("div");
+          hint.style.cssText = "text-align:center;font-size:12px;color:#f0b34b;margin-bottom:8px;";
+          hint.textContent = "客服信息加载中…若长时间未显示，请凭订单号联系客服。";
+          card.appendChild(hint);
+          if (!res.__csRefetched && res.order_id) {
+            Promise.resolve(window.pywebview.api.subscription_query_order(res.order_id))
+              .then(r => {
+                const rcs = r && r.customer_service;
+                if (r && r.success && rcs && (rcs.wechat_id || rcs.wechat_qr_url)) {
+                  showSubscriptionDelivery(Object.assign({}, r, { __csRefetched: true }));
+                }
+              })
+              .catch(() => {});
+          }
         }
         const oid = document.createElement("div");
         oid.style.cssText = "text-align:center;font-size:12px;color:#8aa0bd;word-break:break-all;";
@@ -3284,15 +3378,15 @@
       return `
       <div class="gm-canvas-card gm-hud-corners" style="padding:20px;margin-bottom:16px;background:linear-gradient(180deg,rgba(0,242,169,.05),transparent),var(--g-surface-2);border-color:rgba(0,242,169,.18);">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
-          <b style="font-size:15px;color:var(--g-primary);">${isAgent ? "你已是胖虎AI代理 · 邀请更多下游赚更多" : "成为胖虎AI代理，一起赚钱"}</b>
+          <b style="font-size:15px;color:var(--g-primary);">${isAgent ? "你已是胖虎AI代理 · 查看招商与升级详情" : "代理合作 · 查看招商与申请详情"}</b>
           <button class="gm-btn gm-btn-primary" onclick="window.pywebview.api.open_url('${joinUrl}')">${isAgent ? "查看升级 / 招商详情" : "查看招商详情 / 申请成为代理"}</button>
         </div>
         <div style="font-size:12.5px;color:var(--g-text-muted);line-height:1.8;">
-          邀请下游买家使用胖虎AI，你可以从他们持续的消费里获得返佣。收益分三类：
-          <b style="color:var(--g-text);">下游 token / API 消费返佣</b>、
+          你推广胖虎AI、邀请下游买家使用，可按服务端规则获得推广返佣。返佣是对你真实推广与服务的回报，分三类：
+          <b style="color:var(--g-text);">下游 token / API 用量返佣</b>、
           <b style="color:var(--g-text);">下游付费激活 / 充值返佣</b>、
           <b style="color:var(--g-text);">下游付费安装 Agent 返佣</b>。
-          代理分 <b style="color:var(--g-text);">L1–L5 五级</b>，等级越高，可覆盖的下游层级越深、收益越多。
+          代理等级、级数、返佣比例与门槛均由胖虎AI服务端招商页与后台设定，本页不预设；禁止拉人头、刷单、自我邀请或多账号套利。
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:14px;">
           <div style="background:rgba(255,255,255,.02);border:1px solid var(--g-line);border-radius:8px;padding:12px;">
@@ -3308,7 +3402,7 @@
             <div style="font-size:12px;color:var(--g-text-muted);line-height:1.6;">收益进入你的代理账本，满结算等待期后转为可提现（具体天数与规则以后台为准）。</div>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--g-text-subtle);margin-top:12px;">说明：具体费用、返佣比例、等级门槛与结算规则均由胖虎AI服务端统一控制，以招商页和后台为准；本页只做展示与入口，不代表最终收益。</div>
+        <div style="font-size:11px;color:var(--g-text-subtle);margin-top:12px;">说明：具体费用、返佣比例、等级门槛与结算规则均由胖虎AI服务端统一控制，以招商页和后台为准；本页仅作展示与入口，不构成收益承诺、不代表最终收益。</div>
       </div>`;
     }
 
@@ -3323,6 +3417,96 @@
         <iframe src="${url}" title="接码控制台" referrerpolicy="no-referrer"
           style="width:100%;height:calc(100vh - 230px);min-height:520px;border:1px solid var(--g-line);border-radius:8px;background:#0d1526;"></iframe>
         <div style="font-size:11px;color:var(--g-text-subtle);margin-top:8px;">若上方未显示内容（网站限制了内嵌）或需要登录，请点右上角「在独立窗口打开」，用内置浏览器打开；若未登录，用你的胖虎AI中转站账号登录即可。</div>`;
+    }
+
+    // 代理中心明细渲染：下游客户/各类返佣。数据来自后端 current_agent_center_web_state 下发的
+    // state.agentCenter.downstreams / commissions[key]（后端明细 worker 抓取后规整为浅层字典列表）。
+    // 无数据时显示"暂无明细"，不再是抓取即丢弃的死按钮(B-AGENT-DATA)。所有字段过 escapeHtml。
+    function renderAgentCenterDetail(key) {
+      const ac = state.agentCenter || {};
+      let items = null, label = "";
+      if (key === "agent_customers") { items = ac.downstreams || []; label = "下游客户明细"; }
+      else if (key === "agent_token_comm" || key === "agent_activation_comm" || key === "agent_install_comm") {
+        items = (ac.commissions && ac.commissions[key]) || []; label = "返佣明细";
+      } else { return ""; }
+      const rows = (items || []).map(it => {
+        const cells = Object.keys(it || {}).map(k =>
+          `<span style="margin-right:14px;white-space:nowrap;"><b style="color:var(--g-text-subtle);">${escapeHtml(k)}</b>: ${escapeHtml(String(it[k]))}</span>`
+        ).join("");
+        return `<div style="padding:6px 0;border-bottom:1px solid var(--g-line);">${cells || '<span class="gm-log-row muted">（空记录）</span>'}</div>`;
+      }).join("");
+      return `
+        <div class="gm-canvas-card gm-hud-corners" style="margin-top:16px;padding:16px;">
+          <b style="color:var(--g-primary);">${escapeHtml(label)}（已同步 ${(items || []).length} 条）</b>
+          <div style="margin-top:10px;font-size:11px;color:var(--g-text-muted);max-height:320px;overflow:auto;">
+            ${(items || []).length ? rows : '<div class="gm-log-row muted">暂无明细；点上方“同步数据/重新拉取快照”从服务端拉取。数据以服务端账本为准。</div>'}
+          </div>
+        </div>`;
+    }
+
+    // 代理中心每个子导航的专属说明文案（与后端 panghu_constants.MODULE_ACTION_CARDS[MODULE_COURSES]
+    // 同源、口径一致）。历史上 courses 8 个子页面共用同一段"邀请下游"文案、彼此无区别；这里给每一项
+    // 单独的"本页说明"卡片，让工具代理后端/代理规则/招商介绍等各有清晰说明。
+    const agentCenterCopy = {
+      agent_home: { title: "代理总览", intro: "这一页是你的代理“首页”：一眼看清你现在是几级代理、有多少下游、赚了多少、能提多少。数字都来自胖虎AI服务器，本地不改。", points: [
+        ["先看这几个数", "上方几个数字——下游客户数、可提现、待结算、冻结金额，就是你现在的收益概况。"],
+        ["收益怎么来", "分三类：下游用得多（用量返佣）、下游付费开通、下游付费安装 Agent，都会自动记到你名下。"],
+        ["怎么邀请下游", "把专属邀请链接或邀请码发给别人，对方注册就成为你的下游；若对方已有上级，则不会转到你名下。"],
+        ["数字为 0 别慌", "金额、冻结、提现都以服务器账本为准；显示为 0 多半是还没同步、或该功能暂未对你开放，不是坏了。"]] },
+      agent_customers: { title: "下游客户", intro: "这一页列出通过你邀请进来的下游客户。名单由服务器判定归属，本地不自己推算。", points: [
+        ["名单从哪来", "谁算你的下游由胖虎AI服务器判定，不靠本地邀请码去猜。"],
+        ["能看到什么", "当前提供下游客户总数等汇总摘要；逐个客户的明细与状态以服务器代理后台为准。"],
+        ["归属规则", "已经有上级代理的客户，不会因为用了你的邀请码就转到你名下。"],
+        ["暂时为空怎么办", "还没有下游时这里是空的，先去“代理总览”拿到邀请链接分享出去。"]] },
+      agent_token_comm: { title: "token 返佣", intro: "下游日常使用胖虎AI（按用量/token 计费）产生的返佣，都汇总在这一页。“token”就是“按用量计费”的意思。", points: [
+        ["这笔钱怎么来", "下游每次真实使用消费，都会按比例返你一笔，用得越多返得越多。"],
+        ["只认真实消费", "以服务器结算后的真实用量为准，同一笔不会重复算钱。"],
+        ["什么时候能提", "通常先进“待结算”，过一段等待期转可提现，具体天数以后台为准。"],
+        ["可能被退回", "下游退款或触发风控时，这笔返佣可能被冻结或退回（撤销入账）。"]] },
+      agent_activation_comm: { title: "激活返佣", intro: "下游付费开通、充值或购买套餐时产生的返佣看这一页。", points: [
+        ["这笔钱怎么来", "下游每完成一笔付费开通或充值，你按当时的规则拿一笔返佣。"],
+        ["按下单当时算", "佣金按下单那一刻你的代理关系和返佣比例计算，事后调整不影响已成交订单。"],
+        ["什么时候能提", "同样先“待结算”，过等待期转可提现，具体以后台为准。"],
+        ["退款会退回", "订单撤销或退款后，对应返佣会退回并留一条撤销记录。"]] },
+      agent_install_comm: { title: "安装返佣", intro: "下游客户付费安装 Agent 成功后产生的返佣看这一页。", points: [
+        ["这笔钱怎么来", "下游每成功付费安装并用起来一个 Agent，你可拿到一笔返佣。"],
+        ["金额怎么定", "由服务器根据实际安装情况动态计算，客户端不写死比例。"],
+        ["什么算数", "需下游真正安装成功并能正常使用才计入，具体判定条件以服务器为准。"],
+        ["什么不算", "已退款或异常安装不算有效返佣，可能不计入或被退回。"]] },
+      agent_proxy: { title: "工具代理后端", intro: "这里是给已经在做代理的人管理业务的后台入口（比如代理工具、回调、售后）。功能多在服务器端，客户端只做跳转。", points: [
+        ["这页做什么", "把代理相关的业务后台入口汇总到一处，方便你从这里进入。"],
+        ["开了哪些", "具体哪些功能已开放由服务器决定，未开放的会显示占位。"],
+        ["后续会加", "代理工具的问题排查、回调和售后入口也会陆续收到这里。"],
+        ["客户端只做入口", "客户端不在本地重做代理业务规则，点按钮打开服务器页面操作。"]] },
+      agent_join: { title: "招商介绍", intro: "想成为胖虎AI代理、或升级到更高等级，这一页帮你先看懂，再进入公开招商页申请。", points: [
+        ["招商页有什么", "公开招商页会讲清“卖什么、怎么赚钱、费用多少、适合谁、怎么结算、有什么风险、如何申请”。"],
+        ["费用与规则", "具体费用、返佣比例、等级门槛都由服务器设定，本页不写死，一切以招商页为准。"],
+        ["返佣是回报不是拉人头", "返佣是对你真实推广和服务的回报，禁止拉人头、刷单、自我邀请或多账号套利。"],
+        ["免责说明", "本页仅作展示与入口，不构成收益承诺、不代表最终收益。"]] },
+      agent_rules: { title: "代理规则", intro: "代理怎么收费、怎么升级、怎么结算提现、什么情况会被冻结，这一页帮你看懂大方向，细则以服务器为准。", points: [
+        ["费用与升级", "是否收费、如何升到更高等级，由后台配置，客户端不预设费种或金额，以招商页显示为准。"],
+        ["等级模型", "代理等级、级数与对应权益由服务器配置，客户端不预设，请以招商页和后台为准。"],
+        ["结算与提现", "收益先“待结算”，过等待期转可提现；退款或异常会退回（冲正），全部以服务器账本为准。"],
+        ["合规底线", "返佣以真实推广/交付服务为对价；禁止拉人头、刷单、自我邀请或多账号套利，异常收益服务器可冻结。"]] }
+    };
+
+    function renderAgentCenterCopy(key) {
+      const c = agentCenterCopy[key];
+      if (!c) return "";
+      const pts = c.points.map(p => `
+        <div style="background: rgba(255,255,255,0.015); border: 1px solid var(--g-line); border-radius: var(--g-radius-control); padding: 12px 14px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--g-primary); margin-bottom: 5px;">${escapeHtml(p[0])}</div>
+          <div style="font-size: 12px; color: var(--g-text-muted); line-height: 1.6;">${escapeHtml(p[1])}</div>
+        </div>`).join("");
+      return `
+        <div class="gm-canvas-card gm-hud-corners" style="padding: 20px; margin-bottom: 16px; background: linear-gradient(180deg, rgba(138,180,248,0.03) 0%, transparent 100%), var(--g-surface-2);">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+            <span class="gm-activity-badge gm-tech-num">本页说明</span>
+            <b style="font-size: 15px; color: var(--g-text);">${escapeHtml(c.title)}</b>
+          </div>
+          <p style="font-size: 12px; color: var(--g-text-muted); line-height: 1.6; margin-bottom: 14px;">${escapeHtml(c.intro)}</p>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">${pts}</div>
+        </div>`;
     }
 
     function renderServiceCanvas() {
@@ -3384,13 +3568,14 @@
               <div class="gm-empty-state-banner" style="padding: 24px; border: 1px dashed rgba(253, 214, 99, 0.2); background: rgba(253, 214, 99, 0.005); margin-bottom: 20px; border-radius: var(--g-radius-control);">
                 <div style="font-size: 24px; margin-bottom: 8px; animation: ledPulse 2s infinite ease-in-out; color: var(--g-warning);">✦</div>
                 <h4 style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--g-text);">还没同步数据</h4>
-                <p style="font-size: 11px; color: var(--g-text-subtle); max-width: 420px; line-height: 1.6; margin: 0 auto;">
-                  代理等级、分成比例、账目明细都在胖虎AI服务器上，本地不缓存。点下面的按钮同步最新数据。
+                <p style="font-size: 11px; color: var(--g-text-subtle); max-width: 460px; line-height: 1.6; margin: 0 auto;">
+                  代理等级、分成比例、账目明细都在胖虎AI服务器上，本地不缓存。点下面的按钮同步最新数据。<br>
+                  代理中心正在陆续开放，若多次同步仍无数据，说明该功能暂未对你的账号开放，并非软件故障。
                 </p>
               </div>
 
               <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
-                <span style="font-size: 11px; color: var(--g-text-subtle);">上次同步: <strong class="gm-tech-num">${lastSync}</strong></span>
+                <span style="font-size: 11px; color: var(--g-text-subtle);">上次同步: <strong class="gm-tech-num">${escapeHtml(lastSync)}</strong></span>
                 <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
                   同步数据
                 </button>
@@ -3441,7 +3626,7 @@
               </div>
 
               <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--g-radius-control); border: 1px solid var(--g-line);">
-                <span style="font-size: 11px; color: var(--g-text-subtle);">更新时间: <strong class="gm-tech-num">${lastSync}</strong></span>
+                <span style="font-size: 11px; color: var(--g-text-subtle);">更新时间: <strong class="gm-tech-num">${escapeHtml(lastSync)}</strong></span>
                 <button class="gm-btn gm-btn-primary gm-glow-btn" onclick="window.pywebview.api.refresh_agent_center_detail()" style="min-width: 150px;">
                   重新拉取快照
                 </button>
@@ -3462,7 +3647,7 @@
           <div class="gm-canvas-card gm-hud-corners" style="background: rgba(255, 255, 255, 0.015); padding: 16px;">
             <b>授权与规则说明</b>
             <div style="font-size: 11px; margin-top: 8px; color: var(--g-text-muted);">
-              <span>当前等级: </span><strong style="color: var(--g-primary);">${level}</strong>
+              <span>当前等级: </span><strong style="color: var(--g-primary);">${escapeHtml(level)}</strong>
             </div>
             <ul style="font-size: 11px; color: var(--g-text-subtle); line-height: 1.6; margin-top: 10px; padding-left: 14px;">
               <li>业务合作及收益清算遵循服务端规则。</li>
@@ -3480,11 +3665,30 @@
             </table>
           </div>`;
 
+        // 代理中心按子导航 key 分流：
+        // 1) 打开服务端页面入口——agent_proxy/agent_rules/agent_join/agent_home 优先用服务端快照
+        //    下发的权威 URL(backend_url/rules_url/join_page_url/invite_url)，否则回退本地 pageMeta URL。
+        //    历史上 courses 分支不渲染任何打开按钮，这几项是"死入口"(B-AGENT-CANVAS)。
+        // 2) 明细——下游客户/各类返佣渲染服务端下发的明细列表(B-AGENT-DATA)。
+        const acServerUrlMap = {
+          agent_proxy: (state.agentCenter && state.agentCenter.backend_url) || "",
+          agent_rules: (state.agentCenter && state.agentCenter.rules_url) || "",
+          agent_join: (state.agentCenter && state.agentCenter.join_page_url) || "",
+          agent_home: (state.agentCenter && state.agentCenter.invite_url) || ""
+        };
+        const acOpenUrlAttr = jsStringInAttr(safeHttpUrl((acServerUrlMap[key] || "").trim() || meta[1]));
+        const acDetailCard = renderAgentCenterDetail(key);
+        const acCopyCard = renderAgentCenterCopy(key);
+        // "邀请下游赚返佣"的招商话术只在 总览/招商 两页展示；其余子页面以本页专属说明为主，避免每页重复。
+        const showJoinPitch = (key === "agent_home" || key === "agent_join");
+
         body = `
-          ${renderAgentJoinExplainer()}
+          ${acCopyCard}
+          ${showJoinPitch ? renderAgentJoinExplainer() : ""}
           <div class="gm-canvas-split">
             <div class="gm-canvas-main-col">
               ${leftCol}
+              ${acDetailCard}
             </div>
             <div class="gm-canvas-sidebar-col">
               ${rightCol}
@@ -3494,9 +3698,9 @@
           <div class="gm-activity-strip gm-scanline" style="margin-top: auto;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="gm-activity-badge gm-tech-num">服务端入口</span>
-              <span class="gm-activity-text gm-tech-num">业务端 [${safeMetaTitle}] 需要打开服务端页面后完成确权与数据同步。</span>
+              <span class="gm-activity-text gm-tech-num">业务端 [${safeMetaTitle}] 打开服务端页面完成确权与数据同步。</span>
             </div>
-            <span class="gm-activity-time gm-tech-num">待命</span>
+            <button class="gm-btn gm-btn-secondary" onclick="window.pywebview.api.open_url('${acOpenUrlAttr}')">打开${safeMetaTitle}页面</button>
           </div>`;
       } else if (mod === "value_added" && key === "ai_subscription") {
         body = renderAiSubscriptionShop();
@@ -3830,7 +4034,12 @@
       Promise.resolve(window.pywebview.api.login(username, password, rememberPwd, autoLogin))
         .then(res => {
           if (res && res.success === false) {
-            setLoginStatus("登录失败：" + (res.message || "请检查账号密码"), "error");
+            // 后端并发护栏（已有登录在途，pending:false）→ 温和提示，不当作账号密码错误。
+            if (res.pending === false && /进行中/.test(res.message || "")) {
+              setLoginStatus(res.message || "登录进行中，请稍候……", "running");
+            } else {
+              setLoginStatus("登录失败：" + (res.message || "请检查账号密码"), "error");
+            }
           }
           // pending:true 时结果由后台线程通过 setLoginStatus / 切界面反映
         })
@@ -3840,9 +4049,9 @@
 
     function openRegister() {
       const rawInvite = document.getElementById("inviteCode").value.trim();
-      window.pywebview.api.build_register_url(rawInvite).then(url => {
-        window.pywebview.api.open_url(url);
-      });
+      Promise.resolve(window.pywebview.api.build_register_url(rawInvite))
+        .then(url => window.pywebview.api.open_url(url))
+        .catch(err => setLoginStatus("打开注册页失败：" + err, "error"));
     }
 
     function toggleSavedAccountsList(e) {
@@ -3896,8 +4105,8 @@
         help:"Codex、OpenClaw、Hermes 这几个 AI 助手都用 OpenAI 的接口格式，彼此通用，所以共用同一把「OpenAI 兼容格式」的 Key。在 aitokenapi.cc 创建这种格式的 Key 填这里就行。把别的格式的 Key 填这里会跑不通。" },
       { id:"anthropic", name:"Anthropic 格式", short:"给 Claude Code 用", agents:["Claude Code"], model:"claude-opus-4-8", modelHint:"如 claude-opus-4-8",
         help:"Claude Code 用的是 Anthropic 的接口格式，和 OpenAI 格式不通用——把 OpenAI 的 Key 填这里跑不通。需要单独创建一把 Anthropic 格式的 Key。" },
-      { id:"gemini", name:"Gemini 格式", short:"给 Gemini 用", agents:["Gemini / agy"], model:"gemini-3.5", modelHint:"如 gemini-3.5",
-        help:"Gemini（agy）用的是 Google Gemini 的接口格式，和前两种都不通用，需要单独一把 Gemini 格式的 Key。" },
+      { id:"gemini", name:"Gemini 格式", short:"给 Gemini 用", agents:["Google 反重力（agy）"], model:"gemini-3.5", modelHint:"如 gemini-3.5",
+        help:"Google 反重力（agy）用的是 Google Gemini 的接口格式，和前两种都不通用，需要单独一把 Gemini 格式的 Key。" },
     ];
     function agentChips(arr){ return (arr||[]).map(a=>`<span class="gm-agent-chip">${a}</span>`).join(""); }
     function renderKeyGroup(g){
@@ -3936,7 +4145,9 @@
       });
       if (!Object.values(keys).some(v => v)) { window.showToast("请至少填写一种格式的 API Key", "warning"); return; }
       window.showToast("正在校验并保存 Key……", "running");
-      const payload = { keys, models, skip_test: document.getElementById("skipKeyTest")?.checked || false };
+      // 读后端下发的 state.skipTest（webview UI 未渲染 #skipKeyTest 复选框，旧代码读不存在的元素恒得 false）。
+      // 默认 false=每次都跑 Key 联网测试；若将来加勾选框，让它写 state.skipTest 即可自动生效。
+      const payload = { keys, models, skip_test: !!state.skipTest };
       Promise.resolve(window.pywebview.api.save_key(payload))
         .then(res => {
           if (res && res.success) { window.showToast(res.message || "Key 已保存", "success"); }
@@ -3962,7 +4173,12 @@
 
     // 客户端内直接付款：创建订单 → 弹二维码（服务端返回支付宝 WAP 链接，本地生成二维码）
     // → 手机支付宝扫码 → 轮询支付状态 → 到账后刷新权益。
+    // 与 buySubscription 同款在途护栏：创建订单请求在途时禁止再次触发，避免双击在服务端
+    // 生成两笔订单（第一笔成悬挂单）。
+    let buyerPaymentOrderInFlight = false;
     function payInAppWithQr() {
+      if (buyerPaymentOrderInFlight) return;
+      buyerPaymentOrderInFlight = true;
       window.showToast("正在创建订单……", "running");
       Promise.resolve(window.pywebview.api.buyer_create_payment_order())
         .then(res => {
@@ -3977,7 +4193,8 @@
             window.showToast("创建订单失败：" + ((res && res.message) || "请稍后再试"), "error");
           }
         })
-        .catch(err => window.showToast("创建订单出错：" + err, "error"));
+        .catch(err => window.showToast("创建订单出错：" + err, "error"))
+        .finally(() => { buyerPaymentOrderInFlight = false; });
     }
 
     let paymentPollTimer = null;
@@ -4093,8 +4310,8 @@
         ...previous,
         serviceProductId: document.getElementById("cslServiceProductId")?.value || previous.serviceProductId || "",
         agentId: document.getElementById("cslAgentId")?.value || previous.agentId || "codex",
-        channel: document.getElementById("cslChannel")?.value || "feishu",
-        agentSource: document.getElementById("cslAgentSource")?.value || "existing_local_agent",
+        channel: document.getElementById("cslChannel")?.value || previous.channel || "feishu",
+        agentSource: document.getElementById("cslAgentSource")?.value || previous.agentSource || "existing_local_agent",
         orderId: document.getElementById("cslOrderId")?.value || previous.orderId || "",
         sessionId: document.getElementById("cslSessionId")?.value || previous.sessionId || "",
         platformAccountId: document.getElementById("cslPlatformAccountId")?.value || previous.platformAccountId || "",
