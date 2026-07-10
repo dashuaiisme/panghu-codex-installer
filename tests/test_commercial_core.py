@@ -500,7 +500,7 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertIn("后台结算账本", text)
         self.assertNotIn("30%", text)
 
-    def test_agent_center_summary_displays_backend_urls_and_three_commission_buckets_from_snapshot(self) -> None:
+    def test_agent_center_summary_displays_backend_urls_and_active_commission_buckets_from_snapshot(self) -> None:
         lines = build_agent_center_summary_lines(
             {
                 "agent_center": {
@@ -533,7 +533,8 @@ class CommercialCoreTests(unittest.TestCase):
         self.assertIn("工具代理后端：已开放", text)
         self.assertIn("代理规则：已开放", text)
         self.assertIn("下游客户：18 人", text)
-        self.assertIn("token 返佣：¥12.34", text)
+        # token 消耗返佣已废弃（服务端已下架、恒 0），摘要不再展示 token 返佣；快照字段仍兼容保留。
+        self.assertNotIn("token 返佣", text)
         self.assertIn("激活返佣：¥25.00", text)
         self.assertIn("安装返佣：¥30.00", text)
         self.assertIn("可结算：¥45.00", text)

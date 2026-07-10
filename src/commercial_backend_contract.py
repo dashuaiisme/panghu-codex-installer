@@ -276,6 +276,7 @@ COMMUNICATION_SOFTWARE_LINK_AGENT_SOURCES = {
 COMMUNICATION_SOFTWARE_LINK_SESSION_TERMINAL_STATUSES = {"acceptance_passed", "failed", "disabled"}
 AGENT_CENTER_REQUIRED_SUMMARY_FIELDS = (
     "downstream_count",
+    # token_commission_cents（token 消耗返佣）已废弃、服务端恒 0；保留兼容，待协同后移除（不再展示）。
     "token_commission_cents",
     "activation_commission_cents",
     "agent_install_commission_cents",
@@ -665,6 +666,7 @@ class CommercialLedgerContract:
         status: str = "active",
     ) -> ContractCommissionPolicyRule:
         if event_type not in {
+            # token_usage_settled 已废弃：服务端无事件源、已下架；保留于兼容集合，待协同后移除。
             "token_usage_settled",
             "activation_paid",
             AGENT_INSTALL_DELIVERED_EVENT,

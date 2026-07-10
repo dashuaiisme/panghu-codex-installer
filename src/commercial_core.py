@@ -817,7 +817,7 @@ def build_agent_center_summary_lines(manifest: dict[str, Any]) -> list[str]:
         if downstream_count is not None:
             lines.append(f"下游客户：{downstream_count} 人")
         for key, label in (
-            ("token_commission_cents", "token 返佣"),
+            # token_commission_cents（token 消耗返佣）已废弃、服务端恒 0，不再进摘要展示；字段暂保留兼容。
             ("activation_commission_cents", "激活返佣"),
             ("agent_install_commission_cents", "安装返佣"),
             ("available_settlement_cents", "可结算"),

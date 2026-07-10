@@ -51,6 +51,8 @@ SENSITIVE_TEXT_PATTERNS = (
 
 AGENT_CENTER_REQUIRED_SUMMARY_FIELDS = (
     "downstream_count",
+    # token_commission_cents（token 消耗返佣）已废弃：业务上从未存在、服务端已下架且恒 0。
+    # 代理中心不再展示该返佣；字段暂保留于契约兼容（服务端仍下发 0），待与服务端窗口协同后再彻底移除。
     "token_commission_cents",
     "activation_commission_cents",
     "agent_install_commission_cents",

@@ -2064,7 +2064,7 @@
     const subnav = {
       site: [["account","控制台"],["key","令牌管理"],["recharge","充值购买"],["register","推广返佣"]],
       value_added: [["ai_subscription","AI订阅服务"],["sms_code","接码控制台"]],
-      courses: [["agent_home","代理总览"],["agent_customers","下游客户"],["agent_token_comm","token 返佣"],["agent_activation_comm","激活返佣"],["agent_install_comm","安装返佣"],["agent_proxy","工具代理后端"],["agent_join","招商介绍"],["agent_rules","代理规则"]]
+      courses: [["agent_home","代理总览"],["agent_customers","下游客户"],["agent_activation_comm","激活返佣"],["agent_install_comm","安装返佣"],["agent_proxy","工具代理后端"],["agent_join","招商介绍"],["agent_rules","代理规则"]]
     };
 
     const pageMeta = {
@@ -2081,7 +2081,6 @@
       courses: {
         agent_home: ["代理总览", `${serviceBase}/agent-center`, "展示胖虎AI服务器上的代理数据，本地不计算返佣。"],
         agent_customers: ["下游客户", `${serviceBase}/agent-center/customers`, "客户归因、绑定与结算以后台账本为准。"],
-        agent_token_comm: ["token 返佣", `${serviceBase}/agent-center/token-commission`, "Token/API 消费返佣来自服务端。"],
         agent_activation_comm: ["激活返佣", `${serviceBase}/agent-center/activation-commission`, "下游付费激活返佣来自服务端。"],
         agent_install_comm: ["安装返佣", `${serviceBase}/agent-center/install-commission`, "安装返佣来自服务端交付事件。"],
         agent_proxy: ["工具代理后端", `${serviceBase}/agent-center/proxy-backend`, "代理经营配置入口在服务端。"],
@@ -3382,9 +3381,8 @@
           <button class="gm-btn gm-btn-primary" onclick="window.pywebview.api.open_url('${joinUrl}')">${isAgent ? "查看升级 / 招商详情" : "查看招商详情 / 申请成为代理"}</button>
         </div>
         <div style="font-size:12.5px;color:var(--g-text-muted);line-height:1.8;">
-          你推广胖虎AI、邀请下游买家使用，可按服务端规则获得推广返佣。返佣是对你真实推广与服务的回报，分三类：
-          <b style="color:var(--g-text);">下游 token / API 用量返佣</b>、
-          <b style="color:var(--g-text);">下游付费激活 / 充值返佣</b>、
+          你推广胖虎AI、邀请下游买家使用，可按服务端规则获得推广返佣。返佣是对你真实推广与服务的回报，主要来自：
+          <b style="color:var(--g-text);">下游付费激活 / 充值 / 购买返佣</b>、
           <b style="color:var(--g-text);">下游付费安装 Agent 返佣</b>。
           代理等级、级数、返佣比例与门槛均由胖虎AI服务端招商页与后台设定，本页不预设；禁止拉人头、刷单、自我邀请或多账号套利。
         </div>
@@ -3426,7 +3424,7 @@
       const ac = state.agentCenter || {};
       let items = null, label = "";
       if (key === "agent_customers") { items = ac.downstreams || []; label = "下游客户明细"; }
-      else if (key === "agent_token_comm" || key === "agent_activation_comm" || key === "agent_install_comm") {
+      else if (key === "agent_activation_comm" || key === "agent_install_comm") {
         items = (ac.commissions && ac.commissions[key]) || []; label = "返佣明细";
       } else { return ""; }
       const rows = (items || []).map(it => {
@@ -3450,7 +3448,7 @@
     const agentCenterCopy = {
       agent_home: { title: "代理总览", intro: "这一页是你的代理“首页”：一眼看清你现在是几级代理、有多少下游、赚了多少、能提多少。数字都来自胖虎AI服务器，本地不改。", points: [
         ["先看这几个数", "上方几个数字——下游客户数、可提现、待结算、冻结金额，就是你现在的收益概况。"],
-        ["收益怎么来", "分三类：下游用得多（用量返佣）、下游付费开通、下游付费安装 Agent，都会自动记到你名下。"],
+        ["收益怎么来", "主要两类：下游付费开通 / 充值 / 购买、下游付费安装 Agent，都会按服务端规则记到你名下。"],
         ["怎么邀请下游", "把专属邀请链接或邀请码发给别人，对方注册就成为你的下游；若对方已有上级，则不会转到你名下。"],
         ["数字为 0 别慌", "金额、冻结、提现都以服务器账本为准；显示为 0 多半是还没同步、或该功能暂未对你开放，不是坏了。"]] },
       agent_customers: { title: "下游客户", intro: "这一页列出通过你邀请进来的下游客户。名单由服务器判定归属，本地不自己推算。", points: [
@@ -3458,11 +3456,6 @@
         ["能看到什么", "当前提供下游客户总数等汇总摘要；逐个客户的明细与状态以服务器代理后台为准。"],
         ["归属规则", "已经有上级代理的客户，不会因为用了你的邀请码就转到你名下。"],
         ["暂时为空怎么办", "还没有下游时这里是空的，先去“代理总览”拿到邀请链接分享出去。"]] },
-      agent_token_comm: { title: "token 返佣", intro: "下游日常使用胖虎AI（按用量/token 计费）产生的返佣，都汇总在这一页。“token”就是“按用量计费”的意思。", points: [
-        ["这笔钱怎么来", "下游每次真实使用消费，都会按比例返你一笔，用得越多返得越多。"],
-        ["只认真实消费", "以服务器结算后的真实用量为准，同一笔不会重复算钱。"],
-        ["什么时候能提", "通常先进“待结算”，过一段等待期转可提现，具体天数以后台为准。"],
-        ["可能被退回", "下游退款或触发风控时，这笔返佣可能被冻结或退回（撤销入账）。"]] },
       agent_activation_comm: { title: "激活返佣", intro: "下游付费开通、充值或购买套餐时产生的返佣看这一页。", points: [
         ["这笔钱怎么来", "下游每完成一笔付费开通或充值，你按当时的规则拿一笔返佣。"],
         ["按下单当时算", "佣金按下单那一刻你的代理关系和返佣比例计算，事后调整不影响已成交订单。"],

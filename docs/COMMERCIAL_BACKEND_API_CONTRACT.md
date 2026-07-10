@@ -438,7 +438,7 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - 订单撤销会回收权益、终止配置会话、释放预占并执行佣金冲正。
 - 后台可通过 `diagnostic_code` 查到完整链路。
 - 代理返佣比例、代理等级升级价格和展示开关全部由后台配置。
-- 代理中心必须区分 token 返佣、下游付费激活返佣和付费安装 Agent 返佣，不能把三者混成一个普通推广返佣字段。
+- 代理中心必须区分下游付费激活返佣和付费安装 Agent 返佣，不能混成一个普通推广返佣字段。（**token 返佣 / token 消耗返佣已废弃**：业务上从未存在、服务端已下架且恒 0，代理中心不再展示；`token_commission_cents` 字段暂保留兼容，待与服务端协同后移除。见 `docs/待办_token消耗返佣废弃_服务端已下架_2026-07-10.md`。）
 - 增值业务服务目录必须由服务端下发，覆盖 Plus 订阅、手机卡/云号码、接码控制台、连接通讯软件等入口、状态、权益和未验收原因。
 - Plus 订阅不得让客户端保存 Session Token、激活服务密钥或履约密钥；接码服务不得让客户端保存短信内容、设备 token 或号码分配规则。
 - 连接通讯软件必须作为独立 `service_type=communication_software_link` 处理，不能复用基础 Agent 配置的订单、权益、配置会话、验收记录或扣费事件。
@@ -461,7 +461,7 @@ Agent 来源不能只限定为“本工具本次基础配置会话已完成”�
 - `agent_chain_snapshots`: 每次订单、token 消费、激活或安装交付事件保存当时 1-5 级上级链路。
 - `commission_policies`: 佣金政策主表，只允许后台启用、停用和发布新版本。
 - `commission_policy_rules`: 按 `event_type + receiver_level + depth` 配置 `rate_bps`，只影响新事件，历史订单使用历史快照。
-- `commission_events`: 基础事件类型限定为 `tool_order_paid`、`token_usage_settled`、`activation_paid`、`agent_install_delivered`；连接通讯软件如参与返佣，必须使用独立 `communication_software_link_delivered`。每个事件必须有唯一 `source_event_id` 防止重复返佣。
+- `commission_events`: 实际在用的事件类型为 `tool_order_paid`、`activation_paid`、`agent_install_delivered` 三类（`token_usage_settled` **已废弃**：服务端无事件源、已下架；字段与枚举暂保留兼容，待协同后移除）；连接通讯软件如参与返佣，必须使用独立 `communication_software_link_delivered`。每个事件必须有唯一 `source_event_id` 防止重复返佣。
 - `commission_ledger`: 佣金账本状态为 `pending`、`frozen`、`available`、`settled`、`reversed`、`manual_review`，金额字段统一使用 `commission_cents`。
 - `settlement_requests`: 提现和结算申请表，记录申请金额、关联佣金、状态、审核人、放款流水和失败原因。
 - `agent_marketing_content`: 招募页、FAQ、素材、话术、等级说明和风险边界。

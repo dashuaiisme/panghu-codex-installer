@@ -57,7 +57,8 @@ AFFILIATE_URL = f"{DEFAULT_BASE_URL}/affiliate"
 SIM_CONTROL_URL = "https://sim.aitokenapi.cc"
 AGENT_CENTER_URL = f"{DEFAULT_BASE_URL}/agent"
 AGENT_CUSTOMERS_URL = f"{DEFAULT_BASE_URL}/agent/customers"
-AGENT_TOKEN_COMM_URL = f"{DEFAULT_BASE_URL}/agent/token-commission"
+# token 消耗返佣已废弃（业务上从未存在、服务端已下架，见 docs/待办_token消耗返佣废弃_服务端已下架_2026-07-10.md）：
+# 代理中心不再展示 token 返佣，故删除其入口 URL 与子导航/页面/说明卡；合同字段 token_commission_cents 暂保留兼容。
 AGENT_ACTIVATION_COMM_URL = f"{DEFAULT_BASE_URL}/agent/activation-commission"
 AGENT_INSTALL_COMM_URL = f"{DEFAULT_BASE_URL}/agent/install-commission"
 AGENT_PROXY_URL = f"{DEFAULT_BASE_URL}/agent/proxy"
@@ -168,7 +169,6 @@ MODULE_SIDE_NAV_ITEMS = {
     MODULE_COURSES: (
         ("agent_home", "代理总览", "代理等级、邀请入口与结算摘要"),
         ("agent_customers", "下游客户", "查看服务端下游客户归因"),
-        ("agent_token_comm", "token 返佣", "下游 token 消费返佣摘要"),
         ("agent_activation_comm", "激活返佣", "下游付费激活返佣摘要"),
         ("agent_install_comm", "安装返佣", "下游客户付费安装 Agent 返佣"),
         ("agent_proxy", "工具代理后端", "进入工具代理业务后台"),
@@ -191,7 +191,6 @@ MODULE_PAGE_META = {
     MODULE_COURSES: {
         "agent_home": ("代理总览", AGENT_CENTER_URL, "查看当前代理状态、等级、邀请入口和结算摘要。"),
         "agent_customers": ("下游客户", AGENT_CUSTOMERS_URL, "查看下游客户归因、绑定时间和服务端客户摘要。"),
-        "agent_token_comm": ("token 返佣", AGENT_TOKEN_COMM_URL, "查看下游 token/API 消费产生的返佣摘要。"),
         "agent_activation_comm": ("激活返佣", AGENT_ACTIVATION_COMM_URL, "查看下游付费激活、充值或购买产生的返佣摘要。"),
         "agent_install_comm": ("安装返佣", AGENT_INSTALL_COMM_URL, "查看下游客户付费安装 Agent 服务产生的返佣摘要。"),
         "agent_proxy": ("工具代理后端", AGENT_PROXY_URL, "进入工具代理业务后台，管理代理业务入口和服务端状态。"),
@@ -253,7 +252,7 @@ MODULE_ACTION_CARDS = {
         # 本表与前端 index.html 的 agentCenterCopy 同源，改动需两处同步。
         "agent_home": (
             ("先看这几个数", "上方几个数字——下游客户数、可提现、待结算、冻结金额，就是你现在的收益概况。"),
-            ("收益怎么来", "分三类：下游用得多（用量返佣）、下游付费开通、下游付费安装 Agent，都会自动记到你名下。"),
+            ("收益怎么来", "主要两类：下游付费开通 / 充值 / 购买、下游付费安装 Agent，都会按服务端规则记到你名下。"),
             ("怎么邀请下游", "把专属邀请链接或邀请码发给别人，对方注册就成为你的下游；若对方已有上级，则不会转到你名下。"),
             ("数字为 0 别慌", "金额、冻结、提现都以服务器账本为准；显示为 0 多半是还没同步、或该功能暂未对你开放，不是坏了。"),
         ),
@@ -262,12 +261,6 @@ MODULE_ACTION_CARDS = {
             ("能看到什么", "当前提供下游客户总数等汇总摘要；逐个客户的明细与状态以服务器代理后台为准。"),
             ("归属规则", "已经有上级代理的客户，不会因为用了你的邀请码就转到你名下。"),
             ("暂时为空怎么办", "还没有下游时这里是空的，先去代理总览拿到邀请链接分享出去。"),
-        ),
-        "agent_token_comm": (
-            ("这笔钱怎么来", "下游每次真实使用消费，都会按比例返你一笔，用得越多返得越多。"),
-            ("只认真实消费", "以服务器结算后的真实用量为准，同一笔不会重复算钱。"),
-            ("什么时候能提", "通常先进待结算，过一段等待期转可提现，具体天数以后台为准。"),
-            ("可能被退回", "下游退款或触发风控时，这笔返佣可能被冻结或退回（撤销入账）。"),
         ),
         "agent_activation_comm": (
             ("这笔钱怎么来", "下游每完成一笔付费开通或充值，你按当时的规则拿一笔返佣。"),

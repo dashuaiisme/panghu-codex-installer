@@ -14,6 +14,11 @@
 - **去多级分销/传销风险话术**：删除 `renderAgentJoinExplainer` 与 agent_rules 里“L1–L5 五级 / 层级越深收益越多”、招商标题“一起赚钱 / 邀请更多下游赚更多”；改中性表述 +“返佣是真实推广/服务的对价、禁止拉人头/刷单/自邀请/多账号套利”+“不构成收益承诺”。
 - **去本地硬编码服务端规则**（`docs/PRODUCT_MANUAL_SINGLE_SOURCE_OF_TRUTH.md` §4 红线）：删除客户端里“默认 T+7 / L1–L5 纯五级 / 按授权节点数量计算 / 功能验收矩阵”等，改“由服务器结算规则、后台决定”；安装返佣补回“付费”限定；下游客户删除超出 `agent_center` 快照字段的“客户分类 / 诊断码”过度承诺；空状态补“暂未对你的账号开放，并非软件故障”。文案两处同源改（`src/ui/index.html` 与 `src/panghu_constants.py` MODULE_ACTION_CARDS[MODULE_COURSES]）。
 
+### token 消耗返佣清理（Codex 服务端窗口 2026-07-10 标记，见 `docs/待办_token消耗返佣废弃_服务端已下架_2026-07-10.md`）
+- 「token 消耗返佣」(`token_usage` / `token_usage_settled` / `token_commission_cents`) 是 2026-07-03 旧设计的纸面残留、业务上从未存在、服务端已下架。**客户端去展示**：代理中心删除 `agent_token_comm`（token 返佣）整项——前端 subnav/pageMeta/agentCenterCopy/renderAgentCenterDetail 分支 + 后端 MODULE_SIDE_NAV_ITEMS/MODULE_PAGE_META/MODULE_ACTION_CARDS/AGENT_TOKEN_COMM_URL + `panghu_ai_client` commission_types 映射与 worker 集合 + `commercial_core` 摘要行，同源同步删；招商/总览文案"收益分三类/用量返佣"改为只讲真实的付费激活/安装返佣。代理中心子导航由 8 项变 7 项。
+- **合同字段保留兼容**（按 Codex"勿单方面删、待协同"）：`token_commission_cents`（AGENT_CENTER_REQUIRED_SUMMARY_FIELDS，服务端恒 0）、`token_usage_settled`（事件类型枚举）**不删**、仅加废弃注释；合同文档 `COMMERCIAL_BACKEND_API_CONTRACT.md` 标注 token 返佣/`token_usage_settled` 已废弃、事件类型收敛为三类(tool_order_paid/activation_paid/agent_install_delivered)。
+- 测试同步：`test_top_modules_and_side_nav_contract` 去掉"token 返佣"项；`test_agent_center_summary_..._commission_buckets` 改断言 token 返佣不再展示。`pytest 375 passed`。
+
 ### 待服务端（已挂 Codex，hub 请求 REQ-20260710-075122）
 - 代理中心买家 API 生产 nginx 仍 404（`/api/agent/*`、`/api/vas/*`、`/api/communication-software-link/*`），需服务端补精确 location 后客户端修复才公网生效。
 - 招商/规则文案应改为渲染服务端 `agent_center` 快照 `benefits`/`boundaries`（SSOT），客户端只留中性脚手架；代理中心页面路由（`/agent` vs `/agent-center`）待确认线上真实值后统一。

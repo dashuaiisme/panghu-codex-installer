@@ -6412,8 +6412,9 @@ class InstallerApp:
         if not self._ensure_commercial_contexts():
             return
         item_id = self.active_subnav.get()
+        # token 消耗返佣(token_usage_settled)已废弃：业务上从未存在、服务端已下架，代理中心不再展示，
+        # 故 agent_token_comm 不再映射任何佣金事件（见 docs/待办_token消耗返佣废弃_服务端已下架_2026-07-10.md）。
         commission_types = {
-            "agent_token_comm": "token_usage_settled",
             "agent_activation_comm": "activation_paid",
             "agent_install_comm": "agent_install_delivered",
         }
@@ -6447,7 +6448,7 @@ class InstallerApp:
                 self.agent_downstreams_live_data = data
                 count = len(data.get("items") or data.get("downstreams") or data.get("customers") or [])
                 self.set_status_from_worker(f"状态：下游客户数据已刷新，服务端返回 {count} 条")
-            elif item_id in {"agent_token_comm", "agent_activation_comm", "agent_install_comm"}:
+            elif item_id in {"agent_activation_comm", "agent_install_comm"}:
                 self.agent_commissions_live_data[item_id] = data
                 count = len(data.get("items") or data.get("commissions") or data.get("ledger") or [])
                 self.set_status_from_worker(f"状态：代理佣金数据已刷新，服务端返回 {count} 条")

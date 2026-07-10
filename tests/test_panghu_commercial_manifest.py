@@ -1658,7 +1658,8 @@ class PanghuCommercialManifestTests(unittest.TestCase):
         self.assertEqual(installer_module.MODULE_PAGE_META[installer_module.MODULE_SITE]["account"][1], installer_module.DEFAULT_BASE_URL + "/console")
         self.assertEqual(
             [title for _item_id, title, _subtitle in installer_module.MODULE_SIDE_NAV_ITEMS[installer_module.MODULE_COURSES]],
-            ["代理总览", "下游客户", "token 返佣", "激活返佣", "安装返佣", "工具代理后端", "招商介绍", "代理规则"],
+            # token 消耗返佣已废弃（服务端已下架），代理中心不再展示，故子导航去掉“token 返佣”一项。
+            ["代理总览", "下游客户", "激活返佣", "安装返佣", "工具代理后端", "招商介绍", "代理规则"],
         )
         for item_id, _title, _subtitle in installer_module.MODULE_SIDE_NAV_ITEMS[installer_module.MODULE_COURSES]:
             self.assertIn(item_id, installer_module.MODULE_PAGE_META[installer_module.MODULE_COURSES])
